@@ -43,4 +43,6 @@ def dayofyear_quantile(da: xr.DataArray, window_size: int, q: float) -> xr.DataA
     # quantile sees every raw sample in the window instead of a daily summary.
     windowed = da.rolling(time=window_size, center=True).construct('window')
 
-    return windowed.groupby('time.dayofyear').quantile(q, dim=['time', 'window'])
+    window_q = windowed.groupby('time.dayofyear').quantile(q, dim=['time', 'window'])
+
+    return window_q
