@@ -1,5 +1,40 @@
 import xarray as xr
 
+
+def split_time(da, parts=('year', 'season'), dim='time'):
+    """Split a time axis into separate dims for each datetime component.
+    Takes a DataArray with a datetime ``dim`` and unstacks it so that each
+    entry in ``parts`` becomes an independent dim. This lets a rolling
+    window move N units within a single group rather than across all of
+    them, e.g. ``parts=('year', 'season')`` on quarterly data gives a
+    window of 20 years in one season rather than 5 years of all four.
+    Component values come from the coordinate labels, so DJF is indexed by
+    its January year under ``QE-DEC`` and by its December year under
+    ``QS-DEC``. Combinations absent from the record are padded with NaN.
+    Parameters
+    ----------
+    da : xr.DataArray
+        Data with a datetime ``dim``.
+    parts : sequence of str
+        Names of ``.dt`` accessors to split on, e.g. ``('year', 'season')``
+        or ``('year', 'month')``. Must be jointly unique over ``dim``.
+        Sets the dim order of the output.
+    dim : str, default 'time'
+        Name of the time dim to replace.
+    Returns
+    -------
+    xr.DataArray
+        Same data with ``dim`` replaced by one dim per entry in ``parts``.
+        Each dim is sorted by its own values, so string-valued components
+        such as ``season`` come out alphabetically, not chronologically.
+    """
+    parts = tuple(parts)
+    return (
+        da.assign_coords({p: getattr(da[dim].dt, p) for p in parts})
+        .set_index({dim: parts})
+        .unstack(dim)
+    )
+
 def dayofyear_climatology(da: xr.DataArray, window_size: int) -> xr.DataArray:
     """Day-of-year climatology smoothed with a centred window.
 
