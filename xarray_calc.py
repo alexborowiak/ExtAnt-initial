@@ -1,4 +1,5 @@
 import xarray as xr
+import cftime
 
 
 def split_time(da, parts=('year', 'season'), dim='time'):
@@ -34,6 +35,39 @@ def split_time(da, parts=('year', 'season'), dim='time'):
         .set_index({dim: parts})
         .unstack(dim)
     )
+
+
+
+def join_doy(da, day_dim='dayofyear', year_dim='year', dim='time'):
+    """Collapse split year/day dims into a 360-day calendar time axis.
+    Takes a DataArray with separate ``year`` and ``dayofyear`` dims on a
+    ``360_day`` calendar and stacks them into a single datetime dim of
+    ``cftime.Datetime360Day`` objects, with month and day derived from the
+    day-of-year by integer division (12 months of 30 days). Assumes the day
+    axis is complete and runs 1 to 360; any NaN padding is carried through
+    rather than dropped.
+    Parameters
+    ----------
+    da : xr.DataArray
+        Data with ``year_dim`` and ``day_dim`` dims.
+    day_dim, year_dim : str
+        Names of the dims to collapse.
+    dim : str, default 'time'
+        Name of the datetime dim to create.
+    Returns
+    -------
+    xr.DataArray
+        Same data with the two dims replaced by a chronological ``dim``.
+    """
+    out = da.stack({dim: (year_dim, day_dim)})
+    yr = out[year_dim].values
+    doy = out[day_dim].values
+    dates = [
+        cftime.Datetime360Day(y, (d - 1) // 30 + 1, (d - 1) % 30 + 1, 12)
+        for y, d in zip(yr, doy)
+    ]
+    return out.reset_index(dim, drop=True).assign_coords({dim: dates})
+    
 
 def dayofyear_climatology(da: xr.DataArray, window_size: int) -> xr.DataArray:
     """Day-of-year climatology smoothed with a centred window.
