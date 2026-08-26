@@ -10,6 +10,8 @@ OPEN_KWARGS_LESFMIP_DERIVED = dict(
     join='override',
     parallel=True,
     chunks={'time': -1},
+    combine='nested',
+    concat_dim='member',
 )
 
 MEMBER_PATTERN = r'_(r\d+i\d+p\d+f\d+)_'
@@ -59,7 +61,5 @@ def open_members(paths, preprocess=None, **kwargs):
     return xr.open_mfdataset(
         paths,
         preprocess=preprocess,
-        combine='nested',
-        concat_dim='member',
         **kwargs,
     )
