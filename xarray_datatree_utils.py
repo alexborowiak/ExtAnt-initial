@@ -1,6 +1,7 @@
 from xarray import DataTree
 import xarray as xr
 import pandas as pd
+import numpy as np
 
 from functools import wraps
 
@@ -23,18 +24,17 @@ def skip_empty(func):
     return wrapper
 
 
-def take_level(dt, key, name=None, skip_missing=False):
-    """Promote the node named `key` out of every child of `dt`."""
-    out = {}
-    for child_name, child in dt.items():
-        if key in child.children:
-            out[child_name] = child[key]
-        elif not skip_missing:
-            raise KeyError(f"{child_name!r} has no node named {key!r}; "
-                           f"its children are {list(child.children)}")
-    if not out:
-        raise KeyError(f"no child of {dt.path!r} has a node named {key!r}")
-    return DataTree.from_dict(out, name=name or key)
+@skip_empty
+def coord_info(ds):
+    name = next(iter(ds.data_vars))
+    arr = ds[name].data
+    return {
+        **{("size", d): n for d, n in ds.sizes.items()},
+        **{("chunk", d): n for d, n in zip(ds[name].dims, arr.chunksize)},
+        ("memory", "mbytes"): int(ds.nbytes / 1024**2),
+        ("memory", "chunk_mbytes"): round(float(np.prod(arr.chunksize) * arr.dtype.itemsize / 1024**2), 1),
+        ("memory", "nchunks"): arr.npartitions
+    }
 
 
 
