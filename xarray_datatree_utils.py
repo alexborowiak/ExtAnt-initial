@@ -119,3 +119,28 @@ def tree_to_dataset(dt: xr.DataTree, dims: list[str], **concat_kwargs) -> xr.Dat
     idx = pd.MultiIndex.from_tuples(keys, names=dims)
     ds = ds.assign_coords(xr.Coordinates.from_pandas_multiindex(idx, "_stacked"))
     return ds.unstack("_stacked")
+
+
+def reduce_to_dataset(dt: xr.DataTree, func, dims=("model", "experiment")) -> xr.Dataset:
+    """Apply a member-reducing function to every node and collapse the result into one Dataset.
+
+    Nodes only differ in their number of members, which is why the data sits in
+    a tree. Once ``func`` removes ``member``, every node shares the same
+    coordinates, so the results stack along ``dims`` instead of staying a tree.
+    Missing combinations are NaN.
+    """
+    return tree_to_dataset(dt.map_over_datasets(skip_empty(func)), list(dims))
+
+
+def dataset_to_tree(ds: xr.Dataset, like: xr.DataTree, dims=("model", "experiment")) -> xr.DataTree:
+    """Split a Dataset back into a tree with the same data nodes as ``like``.
+
+    The inverse of :func:`tree_to_dataset`, for combining a member-free result
+    with member-level data, e.g. ``tree - dataset_to_tree(signal, like=tree)``.
+    """
+    nodes = {}
+    for node in like.leaves:
+        if node.has_data:
+            path = node.relative_to(like)
+            nodes[path] = ds.sel(dict(zip(dims, path.split("/"))), drop=True)
+    return DataTree.from_dict(nodes)
