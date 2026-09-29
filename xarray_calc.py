@@ -307,3 +307,36 @@ def subsample_windows(count_ds, window=11, size=10, n_runs=100):
             xr.Dataset({'exceed': exceed, 'valid': valid, 'p': exceed / valid}).assign_coords(sample=i)
         )
     return xr.concat(runs, dim='sample')
+
+
+
+
+def quantile_ranges(da, pairs=None, dim="qrange"):
+    """Compute the spread between symmetric quantile pairs.
+    Parameters
+    ----------
+    da : xarray.DataArray
+        Array with a `quantile` dimension containing the required levels.
+    pairs : dict, optional
+        Mapping of range label to a dict with `upper` and `lower` quantiles.
+    dim : str, optional
+        Name of the new dimension holding the range labels.
+    Returns
+    -------
+    xarray.DataArray
+        Ranges stacked along `dim`, with `quantile` removed.
+    """
+    if pairs == None:
+        pairs = {
+    80: {"upper": 0.9, "lower": 0.1},
+    90: {"upper": 0.95, "lower": 0.05},
+    98: {"upper": 0.99, "lower": 0.01},
+
+    }
+
+    ranges = []
+    for label, cfg in pairs.items():
+        upper = da.sel(quantile=cfg["upper"])
+        lower = da.sel(quantile=cfg["lower"])
+        ranges.append(upper - lower)
+    return xr.concat(ranges, dim=xr.DataArray(list(pairs), dims=dim, name=dim))
