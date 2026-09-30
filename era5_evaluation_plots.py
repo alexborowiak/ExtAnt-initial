@@ -121,8 +121,7 @@ PERCENTILE_EDGES = (-0.5, *PERCENTILE_BOUNDS[1:-1], 100.5)
 
 def percentile_colormap():
     """Five-class diverging colormap for ERA5's percentile: significant low, low, central, high, significant high."""
-    cmap = ListedColormap(PERCENTILE_COLORS)
-    cmap.set_bad("white")
+    cmap = ListedColormap(PERCENTILE_COLORS).with_extremes(bad="white")
     return cmap, BoundaryNorm(PERCENTILE_EDGES, cmap.N)
 
 
@@ -139,8 +138,8 @@ def _panel_label(ax, text, y=0.97):
 
 
 def _status_line(ax, x, y, ok, message, ha="left", fontsize=7.5):
-    """A ✓ (consistent) or ✗ (flagged) glyph in its status colour, next to a message in ink."""
-    glyph, colour = ("✓", STATUS_OK) if ok else ("✗", STATUS_FLAG)
+    """A ✓ (consistent), ✗ (flagged) or – (untestable: ok is None) glyph, next to a message in ink."""
+    glyph, colour = ("–", MUTED) if ok is None else ("✓", STATUS_OK) if ok else ("✗", STATUS_FLAG)
     step = fontsize * 1.25
     glyph_offset, text_offset = (0, step) if ha == "left" else (0, -step)
     kwargs = dict(xycoords="axes fraction", textcoords="offset points", va="top", zorder=20)
@@ -173,16 +172,25 @@ def where_era5(percentile, rank_test=False):
     return f"ERA5 at {_ordinal(value)} pct"
 
 
+def is_testable(row):
+    """Whether a result could have been flagged at all (enough members); True for results without the flag."""
+    return "testable" not in row or bool(row["testable"] == 1)
+
+
 def verdict(result, statistic, short=False):
     """``(ok, message)`` summarising one statistic of a test result at a single point.
 
-    ``short`` drops the percentile, for compact panels: "Rank dispersion:
-    consistent", or just the reading (e.g. "spread too small (U shape)") if flagged.
+    ``ok`` is True (consistent), False (flagged) or None (too few members for
+    the test to flag anything, so "not flagged" means nothing). ``short`` drops
+    the percentile, for compact panels: "Rank dispersion: consistent", or just
+    the reading (e.g. "spread too small (U shape)") if flagged.
     """
     row = result.sel(statistic=statistic)
     key = str(statistic).split(" (")[0]
     diagnostic = ev.DIAGNOSTICS[key]
     call = int(row["verdict"])
+    if call == 0 and not is_testable(row):
+        return None, "too few members to test" if short else f"{diagnostic.label}: too few members to test"
     reading = None if call == 0 else diagnostic.low if call < 0 else diagnostic.high
     if short:
         return call == 0, f"{diagnostic.label}: consistent" if call == 0 else reading
@@ -864,6 +872,9 @@ def scorecard(table, statistics=None, title=None):
 
     percentile = table["percentile"].transpose("model", "statistic", "season").values.reshape(len(models), -1)
     flagged = (table["verdict"].transpose("model", "statistic", "season").values != 0).reshape(len(models), -1)
+    untestable = np.zeros_like(flagged)
+    if "testable" in table:
+        untestable = (table["testable"].transpose("model", "statistic", "season").values == 0).reshape(len(models), -1)
     cmap, norm = percentile_colormap()
 
     fig, ax = plt.subplots(figsize=(0.44 * percentile.shape[1] + 2.6, 0.46 * len(models) + 2.2), layout="constrained")
@@ -872,8 +883,11 @@ def scorecard(table, statistics=None, title=None):
         if not np.isfinite(value):
             continue
         dark = value < PERCENTILE_BOUNDS[1] or value > PERCENTILE_BOUNDS[-2]
-        ax.text(j, i, f"{value:.0f}", ha="center", va="center", fontsize=7.5,
-                color="white" if dark else INK, fontweight="bold" if flagged[i, j] else "normal")
+        colour = "white" if dark else INK
+        if untestable[i, j]:
+            colour = "#e4e3df" if dark else MUTED
+        ax.text(j, i, f"{value:.0f}", ha="center", va="center", fontsize=7.5, color=colour,
+                fontweight="bold" if flagged[i, j] else "normal", fontstyle="italic" if untestable[i, j] else "normal")
         if flagged[i, j]:
             ax.add_patch(Rectangle((j - 0.46, i - 0.46), 0.92, 0.92, fill=False, ec=INK, lw=1.3, zorder=3))
     for group in range(1, n_groups):
@@ -893,8 +907,11 @@ def scorecard(table, statistics=None, title=None):
     bar.set_label("ERA5 percentile among the members")
     bar.ax.tick_params(labelsize=7.5)
     alpha = table.attrs.get("alpha", ev.ALPHA)
-    ax.set_xlabel(f"Outlined: significant at p < {alpha:g} (ERA5 outside the members' "
-                  f"{100 * alpha / 2:g}–{100 - 100 * alpha / 2:g}% range)", color=INK_2, fontsize=8)
+    note = (f"Outlined: significant at p < {alpha:g} (ERA5 outside the members' "
+            f"{100 * alpha / 2:g}–{100 - 100 * alpha / 2:g}% range)")
+    if untestable.any():
+        note += f".  Faint italic: too few members (N < {int(np.ceil(2 / alpha))}) for the test to flag anything"
+    ax.set_xlabel(note, color=INK_2, fontsize=8)
     _suptitle(fig, title)
     return core.Panels(fig=fig, axes=np.array([[ax]], dtype=object))
 

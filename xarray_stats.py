@@ -3,6 +3,47 @@ import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
 
+def _sorted_quantiles(values, q):
+    """Linear-interpolation quantiles along the last axis, ignoring NaN, for every series at once."""
+    ordered = np.sort(values, axis=-1)  # NaN sorts to the end
+    n = np.sum(~np.isnan(ordered), axis=-1, keepdims=True)
+    position = (n - 1) * q
+    lower = np.clip(np.floor(position), 0, None).astype(int)
+    upper = np.clip(lower + 1, None, np.maximum(n - 1, 0)).astype(int)
+    fraction = position - np.floor(position)
+    low_values = np.take_along_axis(ordered, lower, axis=-1)
+    high_values = np.take_along_axis(ordered, upper, axis=-1)
+    return np.where(n > 0, low_values + fraction * (high_values - low_values), np.nan)
+
+
+def nan_quantile(da, q, dim):
+    """Quantiles over ``dim`` ignoring NaN: the same numbers as ``da.quantile(q, dim)``, much faster on maps.
+
+    numpy's nanquantile, which xarray uses for float data, loops over every
+    series in Python, which takes minutes on a full grid. Sorting once and
+    interpolating between order statistics gives identical results (numpy's
+    default 'linear' method) in one vectorised step.
+
+    Args:
+        da (xr.DataArray): Data.
+        q (float | Sequence[float]): Quantile level(s).
+        dim (str): Dimension to reduce.
+
+    Returns:
+        xr.DataArray: With a ``quantile`` dim (last) if ``q`` is a sequence, without one if it is a scalar.
+    """
+    levels = np.atleast_1d(np.asarray(q, dtype=float))
+    if da.chunks is not None:
+        da = da.chunk({dim: -1})
+    result = xr.apply_ufunc(
+        _sorted_quantiles, da,
+        input_core_dims=[[dim]], output_core_dims=[["quantile"]],
+        kwargs={"q": levels}, dask="parallelized", output_dtypes=[float],
+        dask_gufunc_kwargs={"output_sizes": {"quantile": levels.size}},
+    ).assign_coords(quantile=levels)
+    return result.isel(quantile=0, drop=True) if np.ndim(q) == 0 else result
+
+
 def _fast_kde_block(arr, x, bandwidth):
     """
     arr has shape (..., sample)

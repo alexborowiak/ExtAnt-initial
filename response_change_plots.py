@@ -45,7 +45,7 @@ def _experiments(da, experiments=None):
     return [e for e in order if e in present]
 
 
-def _symmetric_levels(da, n_steps=12, quantile=0.98):
+def symmetric_levels(da, n_steps=12, quantile=0.98):
     """Levels symmetric about zero, on a round step (1, 2, 2.5 or 5 x 10^k), covering the ``quantile`` of |da|."""
     limit = float(np.nanquantile(np.abs(da.values), quantile)) or 1.0
     raw_step = 2 * limit / n_steps
@@ -92,7 +92,7 @@ def joint_change_maps(summary, model, experiments=None, mean_test="robust", leve
     experiments = _experiments(data, experiments)
     data = data.sel(experiment=experiments)
     shown = data["mean_change"].where(data[f"mean_{mean_test}"])
-    levels = _symmetric_levels(data["mean_change"]) if levels is None else levels
+    levels = symmetric_levels(data["mean_change"]) if levels is None else levels
 
     with plt.rc_context(EVAL_RC):
         panels = maps.polar_grid(
@@ -144,9 +144,8 @@ def joint_change_count_maps(counts, season, n_models, experiments=None, title=No
             counts.sel(season=season, experiment=experiments), row_dim="experiment", col_dim="change",
             levels=np.arange(-0.5, n_models + 1.5), cmap=cmap, norm=norm,
             title=title or f"Models where the mean and the width both changed, {season}",
-            cbar_label="Number of models", tag=False, left=1.4,
+            cbar_label="Number of models", tag=False, left=1.4, discrete=True,
         )
-    panels.extras["cbar"].set_ticks(range(n_models + 1))
     return panels
 
 
@@ -257,21 +256,27 @@ def shift_and_widen(samples, shifts, experiment, reference=rc.REFERENCE, test=No
 _SCATTER = {
     "mean_change": ("Mean response (°C)", "cooler", "warmer"),
     "width_change": ("Change in width Q95 − Q05 (°C)", "narrower", "wider"),
-    "tail_asymmetry": ("Tail asymmetry ΔQ05 − ΔQ95 (°C)", "warm tail faster", "cold tail faster"),
+    "upper_tail_change": ("Warm-tail change Δ(Q95 − Q50) (°C)", "warm tail shorter", "warm tail longer"),
+    "lower_tail_change": ("Cold-tail change Δ(Q50 − Q05) (°C)", "cold tail shorter", "cold tail longer"),
+    "tail_asymmetry": ("Tail asymmetry, warm − cold tail change (°C)", "cold tail stretches more",
+                       "warm tail stretches more"),
 }
 
 
 @plot("figure")
-def response_scatter(regional, x="mean_change", y="width_change", experiments=None, title=None):
-    """Regional-mean change in the mean against the change in the width (or the tails), per season.
+def response_scatter(regional, x="mean_change", y="width_change", experiments=None, diagonal=False, title=None):
+    """Regional-mean changes against each other, per season: e.g. the mean against the width, or one tail against the other.
 
     Colour is the experiment (FORCING_COLORS) and the marker the model, so each
-    point is one model's response to one forcing.
+    point is one model's response to one forcing. With ``x="lower_tail_change"``,
+    ``y="upper_tail_change"`` and ``diagonal=True``, points above the 1:1 line
+    are where the warm tail stretched more than the cold tail.
 
     Args:
         regional (xr.Dataset): ``rc.regional_mean`` output, on (model, experiment, season).
         x, y (str): Variables for the axes; keys of ``_SCATTER``.
         experiments (Sequence[str] | None): Experiments shown; the notebook's forcing order by default.
+        diagonal (bool): Draw the 1:1 line.
         title (str | None): Figure title.
 
     Returns:
@@ -296,6 +301,8 @@ def response_scatter(regional, x="mean_change", y="width_change", experiments=No
                     ax.scatter(float(point[x]), float(point[y]), s=48, marker=MODEL_MARKERS[k % len(MODEL_MARKERS)],
                                color=FORCING_COLORS.get(experiment, INK), edgecolor="white", linewidth=0.9, zorder=3)
             ax.set_title(season, loc="left")
+            if diagonal:
+                ax.axline((0, 0), slope=1, color="0.55", lw=0.9, ls=(0, (4, 2)), zorder=0)
             for (tx, ty, ha, va), text in zip(((0.98, 0.98, "right", "top"), (0.02, 0.98, "left", "top"),
                                                (0.02, 0.02, "left", "bottom"), (0.98, 0.02, "right", "bottom")),
                                               (f"{x_high}\n{y_high}", f"{x_low}\n{y_high}",

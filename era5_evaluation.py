@@ -45,8 +45,10 @@ from dataclasses import dataclass
 import numpy as np
 import xarray as xr
 
+from quantile_calc import lowess_matrix_xarray
 from significance import pvalue_two_sided
 from xarray_calc import split_time
+from xarray_stats import nan_quantile
 
 MEMBER_DIM = "member"
 SAMPLE_DIM = "year"
@@ -279,45 +281,6 @@ def lag1_autocorrelation(da, dim=SAMPLE_DIM):
     return xr.corr(da, da.shift({dim: 1}), dim=dim)
 
 
-def _sorted_quantiles(values, q):
-    """Linear-interpolation quantiles along the last axis, ignoring NaN, for every series at once."""
-    ordered = np.sort(values, axis=-1)  # NaN sorts to the end
-    n = np.sum(~np.isnan(ordered), axis=-1, keepdims=True)
-    position = (n - 1) * q
-    lower = np.clip(np.floor(position), 0, None).astype(int)
-    upper = np.clip(lower + 1, None, np.maximum(n - 1, 0)).astype(int)
-    fraction = position - np.floor(position)
-    low_values = np.take_along_axis(ordered, lower, axis=-1)
-    high_values = np.take_along_axis(ordered, upper, axis=-1)
-    return np.where(n > 0, low_values + fraction * (high_values - low_values), np.nan)
-
-
-def nan_quantile(da, q, dim):
-    """Quantiles over ``dim`` ignoring NaN: the same numbers as ``da.quantile(q, dim)``, much faster on maps.
-
-    numpy's nanquantile, which xarray uses for float data, loops over every
-    series in Python, which takes minutes on a full grid. Sorting once and
-    interpolating between order statistics gives identical results (numpy's
-    default 'linear' method) in one vectorised step.
-
-    Args:
-        da (xr.DataArray): Data.
-        q (float | Sequence[float]): Quantile level(s).
-        dim (str): Dimension to reduce.
-
-    Returns:
-        xr.DataArray: With a ``quantile`` dim (last) if ``q`` is a sequence, without one if it is a scalar.
-    """
-    levels = np.atleast_1d(np.asarray(q, dtype=float))
-    result = xr.apply_ufunc(
-        _sorted_quantiles, da,
-        input_core_dims=[[dim]], output_core_dims=[["quantile"]],
-        kwargs={"q": levels}, dask="parallelized", output_dtypes=[float],
-        dask_gufunc_kwargs={"output_sizes": {"quantile": levels.size}},
-    ).assign_coords(quantile=levels)
-    return result.isel(quantile=0, drop=True) if np.ndim(q) == 0 else result
-
-
 #(t): The quantiles behind the width and tail statistics, matching the Q95 - Q05 analysis elsewhere
 LOW_QUANTILE, HIGH_QUANTILE = 0.05, 0.95
 
@@ -339,6 +302,74 @@ def upper_tail_width(da, dim=SAMPLE_DIM):
 def lower_tail_width(da, dim=SAMPLE_DIM):
     """Length of the cold tail, Q50 - Q05."""
     return _quantile(da, 0.5, dim) - _quantile(da, LOW_QUANTILE, dim)
+
+
+#(t): LOWESS window for the emergence statistic, in years (a ~35-year record cannot carry the 81 used elsewhere)
+EMERGENCE_WINDOW = 25
+
+
+def _last_minus_first(values):
+    """Last finite value minus the first, along the last axis."""
+    finite = np.isfinite(values)
+    first = np.argmax(finite, axis=-1)[..., None]
+    last = (values.shape[-1] - 1 - np.argmax(finite[..., ::-1], axis=-1))[..., None]
+    change = np.take_along_axis(values, last, -1)[..., 0] - np.take_along_axis(values, first, -1)[..., 0]
+    return np.where(finite.any(axis=-1), change, np.nan)
+
+
+def self_signal_to_noise(da, dim=SAMPLE_DIM, window=EMERGENCE_WINDOW):
+    """S/N of a series against itself: how far it has moved relative to its own year-to-year noise.
+
+    signal   the change of its LOWESS-smoothed curve from the start of the record to the end
+    noise    the standard deviation of its deviations from that curve
+
+    ERA5 has no counterfactual, so this is the emergence measure that can be
+    computed for ERA5 and, identically, for every member.
+    """
+    smooth = lowess_matrix_xarray(da, core_dims=dim, window=window)
+    signal = xr.apply_ufunc(_last_minus_first, smooth, input_core_dims=[[dim]], dask="parallelized",
+                            output_dtypes=[float])
+    return signal / (da - smooth).std(dim, ddof=1)
+
+
+def _record_flags(values, high=True):
+    """True in each year that beats every earlier year (the first year counts), along the last axis."""
+    x = np.where(np.isfinite(values), values if high else -values, -np.inf)
+    earlier_best = np.concatenate([np.full(x.shape[:-1] + (1,), -np.inf),
+                                   np.maximum.accumulate(x, axis=-1)[..., :-1]], axis=-1)
+    return (x > earlier_best) & np.isfinite(values)
+
+
+def _record_count(values, high=True):
+    return np.where(np.isfinite(values).any(axis=-1), _record_flags(values, high).sum(axis=-1), np.nan)
+
+
+def record_highs(da, dim=SAMPLE_DIM):
+    """Number of record highs: years warmer than every earlier year in the record (the first year counts)."""
+    return xr.apply_ufunc(_record_count, da, input_core_dims=[[dim]], kwargs={"high": True},
+                          dask="parallelized", output_dtypes=[float])
+
+
+def record_lows(da, dim=SAMPLE_DIM):
+    """Number of record lows: years colder than every earlier year in the record (the first year counts)."""
+    return xr.apply_ufunc(_record_count, da, input_core_dims=[[dim]], kwargs={"high": False},
+                          dask="parallelized", output_dtypes=[float])
+
+
+def cumulative_records(da, dim=SAMPLE_DIM, high=True):
+    """Running number of record highs (or lows) up to each year, for plotting record rates."""
+    return xr.apply_ufunc(lambda v: np.cumsum(_record_flags(v, high), axis=-1).astype(float), da,
+                          input_core_dims=[[dim]], output_core_dims=[[dim]], dask="parallelized",
+                          output_dtypes=[float])
+
+
+def expected_records(n_years):
+    """Expected number of records in n years of a stationary, independent series: 1 + 1/2 + ... + 1/n.
+
+    In year k every one of the k years so far is equally likely to be the
+    largest, so year k is a record with probability 1/k.
+    """
+    return float(np.sum(1 / np.arange(1, n_years + 1)))
 
 
 @dataclass(frozen=True)
@@ -366,6 +397,12 @@ MOMENTS = {
                        treatment="raw", func=mean),
     "trend": Diagnostic("Trend", "°C/decade", "model trend too large", "model trend too small",
                         treatment="raw", func=trend),
+    "emergence": Diagnostic("S/N (own change)", "", "model emerges too strongly", "model emerges too weakly",
+                            treatment="raw", func=self_signal_to_noise),
+    "records_high": Diagnostic("Record highs", "count", "model sets too many record highs",
+                               "model sets too few record highs", treatment="raw", func=record_highs),
+    "records_low": Diagnostic("Record lows", "count", "model sets too many record lows",
+                              "model sets too few record lows", treatment="raw", func=record_lows),
     "std": Diagnostic("Std. deviation", "°C", "model too variable", "model not variable enough",
                       treatment="detrended", func=std),
     "width": Diagnostic("Width (Q95 − Q05)", "°C", "model distribution too wide", "model distribution too narrow",
@@ -383,8 +420,9 @@ MOMENTS = {
 }
 
 #(t): The moment statistics grouped by the question they answer
-SIGNAL_STATISTICS = ("mean", "trend")
+SIGNAL_STATISTICS = ("mean", "trend", "emergence")
 NOISE_STATISTICS = ("std", "width", "lower_tail", "upper_tail")
+RECORD_STATISTICS = ("records_high", "records_low")
 SHAPE_STATISTICS = ("skewness", "kurtosis", "lag1")
 
 #(t): Rank-histogram summaries (section 7); the treatment is chosen when the test is run
@@ -405,7 +443,7 @@ DIAGNOSTICS = {**MOMENTS, **RANKS}
 # ---------------------------------------------------------------------------
 
 #(t): The variables every test result carries, so results can be stacked and plotted alike
-RESULT_VARIABLES = ("era5", "members", "lower", "median", "upper", "percentile", "pvalue", "verdict")
+RESULT_VARIABLES = ("era5", "members", "lower", "median", "upper", "percentile", "pvalue", "verdict", "testable")
 
 
 def locate(members, observed, member_dim=MEMBER_DIM, alpha=ALPHA):
@@ -433,7 +471,9 @@ def locate(members, observed, member_dim=MEMBER_DIM, alpha=ALPHA):
             lower, median, upper  the members' alpha/2, 50% and 1 - alpha/2 quantiles
             percentile            % of members below ERA5 (ties count half); 50 is ideal
             pvalue                two-sided p-value (significance.pvalue_two_sided)
-            verdict               -1 ERA5 significantly below the members, +1 above, 0 consistent
+            verdict               -1 ERA5 significantly below the members, +1 above, 0 not flagged
+            testable              whether N is large enough for anything to be flagged at all;
+                                  where it is not, a verdict of 0 means "untestable", not "consistent"
     """
     n = members.notnull().sum(member_dim)
     below = (members < observed).sum(member_dim)
@@ -443,6 +483,8 @@ def locate(members, observed, member_dim=MEMBER_DIM, alpha=ALPHA):
     bounds = nan_quantile(members, [alpha / 2, 0.5, 1 - alpha / 2], member_dim)
     pvalue = pvalue_two_sided(members, observed, dim=member_dim, method="tails")
     verdict = xr.where(pvalue < alpha, np.sign(percentile - 50), 0)
+    #(c): The smallest possible two-sided p-value is 2 / (N + 1); if that is not below alpha nothing can be flagged
+    testable = (2 / (n + 1)) < alpha
 
     result = xr.Dataset({
         "era5": observed,
@@ -453,6 +495,7 @@ def locate(members, observed, member_dim=MEMBER_DIM, alpha=ALPHA):
         "percentile": percentile,
         "pvalue": pvalue,
         "verdict": verdict,
+        "testable": testable,
     })
     return result.where(observed.notnull())
 
@@ -507,6 +550,11 @@ def moment_test(ensemble, obs, statistics=tuple(MOMENTS), sample_dim=SAMPLE_DIM,
         statistic   treatment   tests
         mean        raw         the climatology (mean-state bias)
         trend       raw         the forced response over the record (signal)
+        emergence   raw         the smoothed change over the record in units of the
+                                series' own noise (its S/N against itself)
+        records_high, records_low
+                    raw         how many record highs / lows the record sets;
+                                1/2 + ... + 1/n are expected with no change at all
         std         detrended   the size of year-to-year variability (noise)
         width       detrended   the Q95 - Q05 width of the distribution
         lower_tail  detrended   the length of the cold tail, Q50 - Q05
