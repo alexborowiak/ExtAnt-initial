@@ -7,20 +7,21 @@ influence (hist-nat)? And how much of it does each forcing explain?
 Sections
 --------
 1. Regions              area-weighted regional means (more signal, less noise than a grid point)
-2. Consistency          ERA5's trend (or any moment statistic) among each experiment's members
+2. Consistency          ERA5's trend (or any other statistic) among each experiment's members
 3. Detection maps       ERA5 outside hist-nat's range (detected) and inside historical's (consistent)
 4. Record rates         how many record highs and lows ERA5 sets, against chance and the members
 5. Scaling factors      regression of ERA5 on the models' forced responses ("fingerprinting"),
                         with the uncertainty from a perfect-model test
 
 Everything reuses era5_evaluation: ``ev.align`` for common samples,
-``ev.moment_test`` and ``ev.locate`` for where ERA5 falls among members.
+``ev.statistic_test`` and ``ev.locate`` for where ERA5 falls among members.
 """
 
 import numpy as np
 import xarray as xr
 
 import era5_evaluation as ev
+from xarray_datatree_utils import reduce_to_dataset
 
 #(t): The observed period that ERA5 and LESFMIP historical share
 YEARS = slice(1979, 2014)
@@ -59,7 +60,7 @@ def regional_mean(obj, region):
 # ---------------------------------------------------------------------------
 
 def experiment_consistency(ensembles, obs, statistics=("trend",), years=YEARS, alpha=ev.ALPHA):
-    """Where ERA5 falls among each experiment's members, for one or more moment statistics.
+    """Where ERA5 falls among each experiment's members, for one or more statistics.
 
     ERA5 inside hist-nat's range means the observed change could be natural;
     outside hist-nat but inside historical is the classic detected-and-
@@ -69,14 +70,14 @@ def experiment_consistency(ensembles, obs, statistics=("trend",), years=YEARS, a
     Args:
         ensembles (dict[str, xr.DataArray]): Experiment -> members on (member, year, season, ...).
         obs (xr.DataArray): ERA5 on (year, season, ...).
-        statistics (Sequence[str]): Keys of ``ev.MOMENTS``.
+        statistics (Sequence[str]): Keys of ``ev.MOMENTS`` or ``ev.STATISTICS``.
         years (slice): The shared period.
         alpha (float): Two-sided significance level.
 
     Returns:
-        dict[str, xr.Dataset]: Experiment -> ``ev.moment_test`` output.
+        dict[str, xr.Dataset]: Experiment -> ``ev.statistic_test`` output.
     """
-    return {experiment: ev.moment_test(*ev.align(ensemble, obs, years=years), statistics=statistics, alpha=alpha)
+    return {experiment: ev.statistic_test(*ev.align(ensemble, obs, years=years), statistics=statistics, alpha=alpha)
             for experiment, ensemble in ensembles.items()}
 
 
@@ -84,7 +85,7 @@ def consistency_table(results, statistic="trend"):
     """Stack ``experiment_consistency`` outputs for many models into a scorecard table.
 
     Args:
-        results (dict[str, dict[str, xr.Dataset]]): Model -> experiment -> moment test.
+        results (dict[str, dict[str, xr.Dataset]]): Model -> experiment -> ``ev.statistic_test`` output.
         statistic (str): The statistic to tabulate.
 
     Returns:
@@ -120,7 +121,7 @@ def detection_class(historical, hist_nat):
     """Classify each point from ERA5's tests against historical and against hist-nat.
 
     Args:
-        historical, hist_nat (xr.Dataset): ``ev.locate`` (or one ``ev.moment_test`` statistic) outputs.
+        historical, hist_nat (xr.Dataset): ``ev.locate`` (or one ``ev.statistic_test`` statistic) outputs.
 
     Returns:
         xr.DataArray: Codes of ``DETECTION_CLASSES``; NaN where either test has no
@@ -140,27 +141,26 @@ def detection_maps(tree, obs, statistic="trend", experiment="historical", refere
                    alpha=ev.ALPHA):
     """Detection classes on the whole grid for every model that has both experiments.
 
-    Loads one model's two experiments at a time (1979-2014 only).
+    Loads one experiment of one model at a time (1979-2014 only).
 
     Returns:
         xr.Dataset: ``detection_class`` and ERA5's percentile among each
         experiment's members, on (model, season, lat, lon).
     """
-    out = []
-    for model, branch in tree.children.items():
-        if experiment not in branch.children or reference not in branch.children:
-            continue
-        tests = {}
-        for name in (experiment, reference):
-            ensemble = branch[name]["tas"].sel(year=years).load()
-            tests[name] = ev.moment_test(*ev.align(ensemble, obs, years=years), statistics=(statistic,),
-                                         alpha=alpha).sel(statistic=statistic)
-        out.append(xr.Dataset({
-            "detection_class": detection_class(tests[experiment], tests[reference]),
-            f"{experiment}_percentile": tests[experiment]["percentile"],
-            f"{reference}_percentile": tests[reference]["percentile"],
-        }).drop_vars(["statistic", "label", "units", "treatment"], errors="ignore").expand_dims(model=[model]))
-    return xr.concat(out, "model", coords="minimal", compat="override")
+    def test(ds):
+        ensemble, era5 = ev.align(ds["tas"].sel(year=years).load(), obs, years=years)
+        return ev.statistic_test(ensemble, era5, (statistic,), alpha=alpha).sel(statistic=statistic).drop_dims("member")
+
+    pair = tree.filter(lambda node: node.name in (experiment, reference)
+                       and {experiment, reference} <= set(node.parent.children))
+    tests = reduce_to_dataset(pair, test, coords="minimal", compat="override").drop_vars(
+        ["statistic", "label", "units", "treatment"], errors="ignore")
+    tested, natural = tests.sel(experiment=experiment, drop=True), tests.sel(experiment=reference, drop=True)
+    return xr.Dataset({
+        "detection_class": detection_class(tested, natural),
+        f"{experiment}_percentile": tested["percentile"],
+        f"{reference}_percentile": natural["percentile"],
+    })
 
 
 # ---------------------------------------------------------------------------

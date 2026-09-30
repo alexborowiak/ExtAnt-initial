@@ -49,7 +49,7 @@ def draw_experiment_strips(ax, results, statistic="trend"):
 
     Args:
         ax (matplotlib.axes.Axes): Axes to draw on.
-        results (dict[str, xr.Dataset]): Experiment -> ``ev.moment_test`` output reduced to one season.
+        results (dict[str, xr.Dataset]): Experiment -> ``ev.statistic_test`` output reduced to one season.
         statistic (str): The statistic shown.
     """
     experiments = _ordered(list(results))
@@ -102,7 +102,7 @@ def experiment_strips(results, statistic="trend", title=None):
     """
     first = order_seasons(next(iter(results.values())))
     seasons = list(first["season"].values)
-    diagnostic = ev.MOMENTS[statistic]
+    diagnostic = ev.DIAGNOSTICS[statistic]
     with plt.rc_context(EVAL_RC):
         fig, axes = plt.subplots(1, len(seasons), figsize=(3.6 * len(seasons) + 1, 3.3), layout="constrained",
                                  sharey=True, squeeze=False)

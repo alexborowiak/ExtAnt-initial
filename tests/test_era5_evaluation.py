@@ -176,6 +176,59 @@ def test_locate():
 
 
 # ---------------------------------------------------------------------------
+# 6. Moment test and field test
+# ---------------------------------------------------------------------------
+
+def test_moment_test_is_the_four_moments():
+    ens, obs = ev.align(*ev.simulate_ensemble(n_members=20))
+    assert list(ev.moment_test(ens, obs).statistic.values) == ["mean", "std", "skewness", "kurtosis"]
+    assert not set(ev.statistic_test(ens, obs).statistic.values) & set(ev.MOMENTS)
+
+
+def _map_world(n_members=25, noise=1.0, seed=0):
+    """Independent (ensemble, obs) at every point of a small polar grid: a perfect model if noise == 1."""
+    rng = np.random.default_rng(seed)
+    coords = {"year": np.arange(1979, 2014), "season": list(ev.SEASONS),
+              "lat": np.linspace(-85.0, -50.0, 5), "lon": np.arange(0.0, 360.0, 60.0)}
+    shape = tuple(len(v) for v in coords.values())
+    ens = xr.DataArray(noise * rng.standard_normal((n_members, *shape)), dims=("member", *coords),
+                       coords=coords)
+    obs = xr.DataArray(rng.standard_normal(shape), dims=tuple(coords), coords=coords)
+    return ev.align(ens, obs)
+
+
+def test_field_test_areas_equal_explicit_leave_one_out():
+    ens, obs = _map_world(n_members=23)
+    result = ev.moment_test(ens, obs)
+    field = ev.field_test(result)
+    weights = np.cos(np.deg2rad(result.lat))
+    n = result.sizes["member"]
+
+    def area(flagged):
+        return 100 * flagged.astype(float).weighted(weights).mean(("lat", "lon"))
+
+    members = result["members"]
+    era5 = sum(ev.locate(members.drop_isel(member=j), result["era5"]).verdict != 0 for j in range(n)) / n
+    np.testing.assert_allclose(field["flagged_area"], area(era5))
+    for i in (0, 7, n - 1):
+        pseudo = ev.locate(members.drop_isel(member=i), members.isel(member=i, drop=True)).verdict != 0
+        np.testing.assert_allclose(field["pseudo_flagged_area"].isel(member=i), area(pseudo))
+
+
+def test_field_test_calibration():
+    # A perfect model fails the field test about alpha of the time; one with too much noise fails for std.
+    perfect = [ev.field_test(ev.moment_test(*_map_world(seed=seed))).field_verdict for seed in range(60)]
+    assert float(xr.concat(perfect, "world").mean()) < 2 * ev.ALPHA
+    noisy = ev.field_test(ev.moment_test(*_map_world(noise=1.6)))
+    assert bool((noisy.field_verdict.sel(statistic="std") == 1).all())
+
+
+def test_field_test_untestable_is_nan():
+    field = ev.field_test(ev.moment_test(*_map_world(n_members=15)))
+    assert bool(field.field_verdict.isnull().all()) and bool(field.flagged_area.isnull().all())
+
+
+# ---------------------------------------------------------------------------
 # 7. Rank histograms
 # ---------------------------------------------------------------------------
 
@@ -269,6 +322,7 @@ def test_evaluate_and_summary_table():
     table = ev.summary_table(results)
     assert set(table.dims) == {"model", "statistic", "season"}
     assert "dispersion (anomaly)" in table.statistic and "rank_trend" in table.statistic
+    assert set(ev.MOMENTS) | set(ev.STATISTICS) <= set(table.statistic.values)
     assert table.attrs["alpha"] == ev.ALPHA
 
 
@@ -283,10 +337,11 @@ def calibration(n_worlds=100, n_members=40):
         flags = []
         for seed in range(n_worlds):
             ens, obs = ev.align(*ev.simulate_ensemble(n_members=n_members, seed=seed, **kwargs))
-            moments = ev.moment_test(ens, obs)
+            tests = ev.combine_tests(ev.moment_test(ens, obs), ev.statistic_test(ens, obs))
             ranks_a = ev.rank_histogram_test(ens, obs, "anomaly", ("year", "season"), keep_histograms=False)
             ranks_d = ev.rank_histogram_test(ens, obs, "detrended", ("year", "season"), keep_histograms=False)
-            row = {f"{s} (per season)": float((moments.verdict.sel(statistic=s) != 0).mean()) for s in ev.MOMENTS}
+            row = {f"{s} (per season)": float((tests.verdict.sel(statistic=s) != 0).mean())
+                   for s in tests.statistic.values}
             row.update({
                 "rank dispersion (anomaly)": float(ranks_a.verdict.sel(statistic="dispersion") != 0),
                 "rank dispersion (detrended)": float(ranks_d.verdict.sel(statistic="dispersion") != 0),

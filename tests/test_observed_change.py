@@ -86,3 +86,24 @@ def test_experiment_consistency_and_table(world):
     assert float(results["A"]["hist-nat"].sel(statistic="trend").verdict.mean()) == 1
     table = oc.consistency_table(results)
     assert set(table.dims) == {"model", "statistic", "season"} and set(table.statistic.values) == set(ensembles)
+
+
+def test_detection_maps_on_a_tree():
+    # Model A has both experiments (with different member counts); B lacks hist-nat and is left out.
+    rng = np.random.default_rng(3)
+    coords = {"year": YEARS, "season": SEASONS, "lat": [-80.0, -70.0], "lon": [0.0, 90.0, 180.0]}
+    shape = tuple(len(v) for v in coords.values())
+    trend = xr.DataArray(np.arange(YEARS.size) / 10, dims="year", coords={"year": YEARS})
+
+    def run(n, slope):
+        noise = xr.DataArray(0.3 * rng.standard_normal((n, *shape)), dims=("member", *coords), coords=coords)
+        return xr.Dataset({"tas": slope * trend + noise})
+
+    tree = xr.DataTree.from_dict({"A/historical": run(30, 1.0), "A/hist-nat": run(25, 0.0),
+                                  "B/historical": run(30, 1.0)})
+    obs = trend + xr.DataArray(0.3 * rng.standard_normal(shape), dims=tuple(coords), coords=coords)
+    detections = oc.detection_maps(tree, obs)
+    assert list(detections.model.values) == ["A"]
+    # ERA5 warms like historical and unlike hist-nat: detected everywhere, and consistent bar chance flags.
+    assert bool(detections.detection_class.isin([1, 2]).all())
+    assert float((detections.detection_class == 1).mean()) > 0.7

@@ -106,7 +106,8 @@ def tree_to_dataset(dt: xr.DataTree, dims: list[str], **concat_kwargs) -> xr.Dat
 
     e.g. a tree laid out as /<model>/<experiment> with dims=['model', 'experiment']
     """
-    leaves = [node for node in dt.leaves if node.has_data]
+    #(c): data_vars, not has_data: has_data is also True for a node that only defines coordinates
+    leaves = [node for node in dt.leaves if node.data_vars]
     keys = [tuple(node.relative_to(dt).split("/")) for node in leaves]
 
     if any(len(k) != len(dims) for k in keys):
@@ -121,15 +122,15 @@ def tree_to_dataset(dt: xr.DataTree, dims: list[str], **concat_kwargs) -> xr.Dat
     return ds.unstack("_stacked")
 
 
-def reduce_to_dataset(dt: xr.DataTree, func, dims=("model", "experiment")) -> xr.Dataset:
+def reduce_to_dataset(dt: xr.DataTree, func, dims=("model", "experiment"), **concat_kwargs) -> xr.Dataset:
     """Apply a member-reducing function to every node and collapse the result into one Dataset.
 
     Nodes only differ in their number of members, which is why the data sits in
     a tree. Once ``func`` removes ``member``, every node shares the same
     coordinates, so the results stack along ``dims`` instead of staying a tree.
-    Missing combinations are NaN.
+    Missing combinations are NaN. ``concat_kwargs`` go to ``xr.concat``.
     """
-    return tree_to_dataset(dt.map_over_datasets(skip_empty(func)), list(dims))
+    return tree_to_dataset(dt.map_over_datasets(skip_empty(func)), list(dims), **concat_kwargs)
 
 
 def dataset_to_tree(ds: xr.Dataset, like: xr.DataTree, dims=("model", "experiment")) -> xr.DataTree:
@@ -140,7 +141,7 @@ def dataset_to_tree(ds: xr.Dataset, like: xr.DataTree, dims=("model", "experimen
     """
     nodes = {}
     for node in like.leaves:
-        if node.has_data:
+        if node.data_vars:
             path = node.relative_to(like)
             nodes[path] = ds.sel(dict(zip(dims, path.split("/"))), drop=True)
     return DataTree.from_dict(nodes)

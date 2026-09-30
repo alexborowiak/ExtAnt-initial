@@ -22,7 +22,7 @@ Sections
 1. Style and shared helpers
 2. Distributions: KDE and Q-Q panels
 3. Time series: the ensemble plume, with ERA5 inside or outside it
-4. Moment test: ERA5 among the members' statistics
+4. Moment test (and the other statistics): ERA5 among the members' values
 5. Rank histograms (Suarez-Gutierrez et al., 2021)
 6. Multi-model summaries: scorecard, signal-noise diagram, maps
 7. Method demonstration on synthetic ensembles
@@ -157,7 +157,7 @@ def _status_line(ax, x, y, ok, message, ha="left", fontsize=7.5):
 def where_era5(percentile, rank_test=False):
     """Plain-language position of ERA5's statistic, from its percentile.
 
-    A moment test compares ERA5 with the members' values; a rank-histogram test
+    A moment or statistic test compares ERA5 with the members' values; a rank-histogram test
     compares ERA5's histogram with the perfect-model (pseudo-observation) cases.
     """
     value = float(percentile)
@@ -473,7 +473,7 @@ def plume_grid(plumes, row_dim="season", col_dim="treatment", context=None, unit
 
 
 # ---------------------------------------------------------------------------
-# 4. Moment test: ERA5 among the members' statistics
+# 4. Moment test (and the other statistics): ERA5 among the members' values
 # ---------------------------------------------------------------------------
 
 @plot("axes")
@@ -482,7 +482,7 @@ def draw_member_strip(ax, result):
 
     Args:
         ax (matplotlib.axes.Axes): Axes to draw on.
-        result (xr.Dataset): ``ev.locate`` output (a moment-test row) reduced to ``member``.
+        result (xr.Dataset): ``ev.locate`` output (one statistic of a moment or statistic test) reduced to ``member``.
     """
     members = result["members"].values
     members = np.sort(members[np.isfinite(members)])
@@ -507,15 +507,15 @@ def draw_member_strip(ax, result):
 
 @plot("figure")
 @_styled
-def moment_grid(result, row_dim="season", statistics=None, title=None):
-    """The moment test at one point: rows are seasons, columns are statistics.
+def statistic_grid(result, row_dim="season", statistics=None, title=None):
+    """A moment or statistic test at one point: rows are seasons, columns are statistics.
 
     Each panel shows where ERA5 (black) falls among the members (dots). If the
     model were perfect, ERA5 would land outside the shaded range (the members'
     5-95%) only 10% of the time.
 
     Args:
-        result (xr.Dataset): ``ev.moment_test`` output at one point, with ``row_dim``.
+        result (xr.Dataset): ``ev.moment_test`` or ``ev.statistic_test`` output at one point, with ``row_dim``.
         row_dim (str): Dimension mapped to rows.
         statistics (Sequence[str] | None): Subset and order of the columns.
         title (str | None): Figure title.
@@ -539,12 +539,12 @@ def moment_grid(result, row_dim="season", statistics=None, title=None):
             ax.grid(axis="x", color="0.9", lw=0.6)
             ax.set_axisbelow(True)
             if i == 0:
-                diagnostic = ev.MOMENTS[statistic]
+                diagnostic = ev.DIAGNOSTICS[statistic]
                 ax.set_title(diagnostic.label, loc="left", pad=13)
                 ax.annotate(f"of {ev.TREATMENTS[diagnostic.treatment].lower()}", (0, 1), xycoords="axes fraction",
                             xytext=(0, 3), textcoords="offset points", fontsize=7.5, color=INK_2, va="bottom")
             if i == len(rows) - 1:
-                units = ev.MOMENTS[statistic].units
+                units = ev.DIAGNOSTICS[statistic].units
                 ax.set_xlabel(units if units else "(unitless)")
         axes[i, 0].set_ylabel(str(row), rotation=0, ha="right", va="center", fontsize=10, fontweight="bold")
 
@@ -979,8 +979,15 @@ def signal_noise_diagram(table, x="trend", y="std", title=None):
 def percentile_maps(table, statistic, row_dim="model", col_dim="season", title=None, **grid_kwargs):
     """Maps of ERA5's percentile among the members for one statistic (e.g. models x seasons).
 
+    Where ``table`` carries ``ev.field_test`` output, each panel also says
+    whether the model is acceptable over the whole map: ✓ if ERA5 is flagged
+    over no more area than a perfect model's pseudo-observations would be, ✗
+    if over more (p < alpha). Models with too few members to flag anything
+    are left blank and labelled.
+
     Args:
-        table (xr.Dataset): Test output on a lat/lon grid with ``row_dim`` and ``col_dim``.
+        table (xr.Dataset): Test output on a lat/lon grid with ``row_dim`` and ``col_dim``,
+            optionally merged with ``ev.field_test`` output.
         statistic (str): Which statistic to map.
         row_dim, col_dim (str): Dimensions mapped to rows and columns.
         title (str | None): Figure title.
@@ -992,18 +999,41 @@ def percentile_maps(table, statistic, row_dim="model", col_dim="season", title=N
     from plotting_modules import maps  # needs cartopy
 
     cmap, norm = percentile_colormap()
-    field = order_seasons(table["percentile"].sel(statistic=statistic, drop=True))
-    label = str(table["label"].sel(statistic=statistic).values)
+    table = order_seasons(table.sel(statistic=statistic))
+    field = table["percentile"].drop_vars(["statistic", "label", "units", "treatment"], errors="ignore")
+    #(c): Where too few members can flag nothing, a dark class would mean nothing: leave it blank
+    if "testable" in table:
+        field = field.where(table["testable"] == 1)
+    label = str(table["label"].values)
+    cbar_label = "ERA5 percentile among the members (blue: ERA5 below; red: above; darkest: outside 5–95%)"
+    if "field_verdict" in table:
+        alpha = table.attrs.get("alpha", ev.ALPHA)
+        cbar_label += (f"\nField test, top left: % of the map where ERA5 is flagged, and the most a perfect model "
+                       f"gives ({100 - 100 * alpha:g}% of the time). ✗: more than that (p < {alpha:g})")
     #(c): Room for model names as row labels
     grid_kwargs.setdefault("left", 2.0)
     with plt.rc_context(EVAL_RC):
         panels = maps.polar_grid(
             field, row_dim=row_dim, col_dim=col_dim, levels=np.array(PERCENTILE_EDGES), cmap=cmap, norm=norm,
             title=title or f"ERA5 percentile of the {label.lower()} among each model's members",
-            cbar_label="ERA5 percentile among the members (blue: ERA5 below; red: above; darkest: outside 5–95%)",
+            cbar_label=cbar_label,
             tag=False, **grid_kwargs,
         )
-    panels.extras["cbar"].set_ticks(PERCENTILE_BOUNDS)
+        panels.extras["cbar"].set_ticks(PERCENTILE_BOUNDS)
+
+        rows, cols = field[row_dim].values, field[col_dim].values
+        axes = np.asarray(panels.axes, dtype=object).reshape(len(rows), len(cols))
+        for i, row in enumerate(rows):
+            for j, col in enumerate(cols):
+                cell = table.sel({row_dim: row, col_dim: col})
+                if bool(field.sel({row_dim: row, col_dim: col}).isnull().all()) and "testable" in table:
+                    axes[i, j].text(0.5, 0.5, "too few members\nto test (N < 20)", transform=axes[i, j].transAxes,
+                                    ha="center", va="center", fontsize=8, color=INK_2, zorder=20,
+                                    bbox=dict(facecolor="white", edgecolor="none", alpha=0.9, pad=3))
+                elif "field_verdict" in cell and bool(cell["field_verdict"].notnull()):
+                    _status_line(axes[i, j], 0.0, 1.0, int(cell["field_verdict"]) == 0,
+                                 f"{float(cell['flagged_area']):.1f}% (perfect ≤ {float(cell['perfect_area']):.1f}%)",
+                                 fontsize=7)
     return panels
 
 
@@ -1021,11 +1051,11 @@ def scenario_grid(demo, season="DJF", descriptions=None, n_bins=10, title=None):
 
     Columns: the raw time series with the ensemble plume; the rank histogram
     of anomalies and of detrended anomalies; and ERA5's percentile for the
-    main moment statistics and the two rank dispersions.
+    mean, trend, std and width and the two rank dispersions.
 
     Args:
         demo (dict[str, dict]): Scenario name -> ``ev.evaluate`` output.
-        season (str): Season shown in the time series and the moment column.
+        season (str): Season shown in the time series and the percentile column.
         descriptions (dict[str, str] | None): One line per scenario saying what is wrong;
             ``ev.SCENARIO_DESCRIPTIONS`` by default.
         n_bins (int): Bins in the compact rank histograms.
@@ -1039,7 +1069,8 @@ def scenario_grid(demo, season="DJF", descriptions=None, n_bins=10, title=None):
     fig, axes = plt.subplots(len(names), 4, figsize=(15.5, 2.3 * len(names) + 0.8), layout="constrained",
                              squeeze=False, gridspec_kw={"width_ratios": (1.6, 1, 1, 1.25)})
     #(t): The ladder: (label, where to find the result) for each statistic shown
-    ladder = [(ev.MOMENTS[s].label, "moments", s) for s in DEMO_STATISTICS] + [
+    ladder = [(ev.DIAGNOSTICS[s].label, "moments" if s in ev.MOMENTS else "statistics", s)
+              for s in DEMO_STATISTICS] + [
         ("Rank dispersion (anomalies)", "anomaly", "dispersion"),
         ("Rank dispersion (detrended)", "detrended", "dispersion"),
         ("Rank trend (anomalies)", "anomaly", "rank_trend"),
@@ -1062,8 +1093,8 @@ def scenario_grid(demo, season="DJF", descriptions=None, n_bins=10, title=None):
         ax_ladder.axvspan(100 * alpha / 2, 100 - 100 * alpha / 2, color="#f0efec", lw=0, zorder=0)
         ax_ladder.axvline(50, color="#dcdbd7", lw=0.8, zorder=0)
         for k, (_, source, statistic) in enumerate(ladder):
-            if source == "moments":
-                row = result["moments"].sel(statistic=statistic, season=season)
+            if source in ("moments", "statistics"):
+                row = result[source].sel(statistic=statistic, season=season)
             else:
                 row = result["ranks"][source].sel(statistic=statistic)
             flagged = int(row["verdict"]) != 0

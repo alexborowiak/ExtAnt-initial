@@ -43,8 +43,9 @@ def test_plume_grids(results):
     evp.plume_grid(plumes, row_dim="model", col_dim="season", sharey=True)
 
 
-def test_moment_and_rank_figures(results):
-    evp.moment_grid(results["A"]["moments"], statistics=ev.SIGNAL_STATISTICS + ev.NOISE_STATISTICS)
+def test_statistic_and_rank_figures(results):
+    evp.statistic_grid(results["A"]["moments"])
+    evp.statistic_grid(results["A"]["statistics"], statistics=ev.SIGNAL_STATISTICS + ev.NOISE_STATISTICS)
     evp.rank_histogram_row({t: r for t, r in results["A"]["ranks"].items()})
     evp.rank_histogram_grid({m: r["ranks"] for m, r in results.items()})
     ens, obs = ev.align(*ev.simulate_ensemble(n_members=20))
@@ -71,6 +72,14 @@ def test_maps(results):
                          coords={"model": ["A", "B"], "season": ["DJF", "JJA", "MAM", "SON"], "lat": lat, "lon": lon})
     table = xr.Dataset({"percentile": field.expand_dims(statistic=["std"])}).assign_coords(
         label=("statistic", ["Std. deviation"]))
+    evp.percentile_maps(table, "std")
+    #(c): With the field test, and model B too small to test
+    cell = xr.DataArray([[[10.0, 30.0, 12.0, 8.0]], [[np.nan] * 4]], dims=("model", "statistic", "season"),
+                        coords={"model": ["A", "B"], "statistic": ["std"], "season": ["DJF", "JJA", "MAM", "SON"]})
+    table = table.assign(
+        testable=xr.DataArray([1.0, 0.0], dims="model", coords={"model": ["A", "B"]}),
+        flagged_area=cell, perfect_area=cell * 0 + 15, field_verdict=(cell > 15).where(cell.notnull()),
+    )
     evp.percentile_maps(table, "std")
 
     shape = ("model", "experiment", "season", "lat", "lon")
