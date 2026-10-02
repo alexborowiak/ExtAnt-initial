@@ -1,13 +1,13 @@
 """Where and how each forcing changes the mean and the variability of temperature.
 
 The seasonal notebook tests the parts of the forced change separately. This
-module puts them on one footing, experiment against hist-nat over the same
-final years, and side by side, so the figures can answer the combined
+module puts them side by side, each experiment's final ``WINDOW`` years
+against hist-nat, so the figures can answer the combined
 question: where has the mean shifted, where has the distribution widened or
 narrowed, which tail has stretched, and where have both happened.
 
     the mean     ``member_block_test`` (or ttest_ds) and the S/N section's sn_final
-    the width    qrange_change_ds (permutation test of the change in Q95 - Q05)
+    the width    qrange_change_ds (hist-nat bootstrap test of the change in Q95 - Q05)
     the tails    ``tail_changes``: how each tail's length changes, relative to the median
 
 Sections
@@ -24,7 +24,7 @@ Sections
 import numpy as np
 import xarray as xr
 
-from quantile_calc import lowess_matrix_xarray
+from quantile_calc import WINDOW, lowess_matrix_xarray
 from significance import area_mean, resample_members
 from xarray_datatree_utils import reduce_to_dataset, skip_empty
 from xarray_stats import nan_quantile
@@ -80,7 +80,7 @@ def remove_forced_response(tree, window=81, centre=FORCED_CENTRE):
 # 2. The mean response
 # ---------------------------------------------------------------------------
 
-def mean_response(tree, years=11, reference=REFERENCE, variable="tas"):
+def mean_response(tree, years=WINDOW, reference=REFERENCE, variable="tas"):
     """Ensemble-mean change over the final ``years``: each experiment minus the reference.
 
     Both are averaged over members and the same final years, which is exactly
@@ -100,7 +100,7 @@ def mean_response(tree, years=11, reference=REFERENCE, variable="tas"):
     return change[variable].drop_sel(experiment=reference).drop_vars("height", errors="ignore")
 
 
-def member_block_test(tree, years=11, reference=REFERENCE, n_permutations=5000, batch_size=500, seed=0,
+def member_block_test(tree, years=WINDOW, reference=REFERENCE, n_permutations=5000, batch_size=500, seed=0,
                       variable="tas"):
     """Permutation test of the mean change, resampling whole members as blocks.
 
@@ -108,8 +108,7 @@ def member_block_test(tree, years=11, reference=REFERENCE, n_permutations=5000, 
     but a member's years are serially correlated, so its p-values are too
     small. Members, though, are independent realisations. Permuting whole
     members between the experiment and hist-nat keeps each member's years
-    together (a block) and so respects that correlation, as the Q-range
-    permutation test already does.
+    together (a block) and so respects that correlation.
 
     Because every member contributes the same final years, resampling whole
     members is the same as resampling each member's ``years``-mean, so the
@@ -168,15 +167,17 @@ def member_block_test(tree, years=11, reference=REFERENCE, n_permutations=5000, 
                 "mean_change": template.copy(data=observed.reshape(shape)),
                 "pvalue": template.copy(data=pvalue.reshape(shape)),
             }).drop_vars("height", errors="ignore").expand_dims(model=[model], experiment=[experiment]))
-    return xr.combine_by_coords(results).assign_attrs(n_permutations=n_permutations, years=years)
+    #(c): drop_conflicts: models carry different variable attributes (comments, histories)
+    return xr.combine_by_coords(results, combine_attrs="drop_conflicts").assign_attrs(
+        n_permutations=n_permutations, years=years)
 
 
 # ---------------------------------------------------------------------------
 # 3. The tails
 # ---------------------------------------------------------------------------
 
-def tail_changes(tree, years=11, reference=REFERENCE, variable="tas", low=0.05, high=0.95):
-    """How each tail's length changes, experiment minus hist-nat over the same final years.
+def tail_changes(tree, years=WINDOW, reference=REFERENCE, variable="tas", low=0.05, high=0.95):
+    """How each tail's length changes: each experiment's final ``years`` against hist-nat's full record.
 
     The change in width, Δ(Q95 - Q05), is the same thing as ΔQ95 - ΔQ05: "does
     the warm tail warm faster than the cold tail". So ΔQ05 - ΔQ95 on its own
@@ -189,9 +190,10 @@ def tail_changes(tree, years=11, reference=REFERENCE, variable="tas", low=0.05, 
         tail_asymmetry      upper minus lower: > 0 when the warm tail stretches
                             more than the cold tail (the distribution skews warm)
 
-    Quantiles pool members and years. Pass the same tree as the width test
-    (e.g. ``remove_forced_response`` output) so ``width_change`` matches its
-    ``qrange_period_difference``.
+    Quantiles pool members and years. The reference is hist-nat's full
+    record, as in the width test (``significance.qrange_significance``), so
+    with the same tree (e.g. ``remove_forced_response`` output) ``width_change``
+    equals its ``qrange_change``.
 
     Returns:
         xr.Dataset: The four variables above, plus q05/q50/q95_change, on
@@ -200,11 +202,11 @@ def tail_changes(tree, years=11, reference=REFERENCE, variable="tas", low=0.05, 
     levels = [low, 0.5, high]
 
     def pooled_quantiles(ds):
-        final = ds[variable].isel(year=slice(-years, None)).stack(sample=("member", "year"))
-        return nan_quantile(final, levels, "sample").to_dataset(name=variable)
+        return nan_quantile(ds[variable], levels, ("member", "year")).to_dataset(name=variable)
 
-    quantiles = reduce_to_dataset(tree, pooled_quantiles)[variable]
-    change = (quantiles - quantiles.sel(experiment=reference)).drop_sel(experiment=reference)
+    final = reduce_to_dataset(tree.isel(year=slice(-years, None)), pooled_quantiles)[variable]
+    full = reduce_to_dataset(tree.match(f"*/{reference}"), pooled_quantiles)[variable].sel(experiment=reference, drop=True)
+    change = (final - full).drop_sel(experiment=reference)
     q_low, q_mid, q_high = (change.sel(quantile=level, drop=True) for level in levels)
     upper, lower = q_high - q_mid, q_mid - q_low
     out = xr.Dataset({
@@ -232,10 +234,10 @@ def change_summary(mean_change, mean_pvalue, signal_to_noise, qrange_change, tai
         mean_pvalue (xr.DataArray): p-values for the mean change: ``member_block_test(...)["pvalue"]``,
             or the pooled Welch t-test's ``ttest_ds["p"]``.
         signal_to_noise (xr.DataArray): S/N against hist-nat at the year of interest (``sn_final``).
-        qrange_change (xr.Dataset): ``qrange_change_ds``, with ``qrange_period_difference``
-            and ``qrange_permutation_pvalue`` (experiment vs hist-nat over the same final years).
+        qrange_change (xr.Dataset): ``qrange_change_ds``, with ``qrange_change`` and ``qrange_pvalue``
+            (final years against hist-nat's full record, tested by the hist-nat bootstrap).
         tails (xr.Dataset | None): Output of ``tail_changes``.
-        alpha (float): Significance level for the mean test and the width permutation test.
+        alpha (float): Significance level for the mean test and the width test.
         sn_threshold (float): |S/N| at which a mean change counts as emerged.
 
     Returns:
@@ -246,8 +248,8 @@ def change_summary(mean_change, mean_pvalue, signal_to_noise, qrange_change, tai
             mean_significant   p < alpha: the ensemble mean has shifted
             mean_emerged       |S/N| >= sn_threshold: the shift stands out from year-to-year noise
             mean_robust        both
-            width_change       change in Q95 - Q05 (°C), from the permutation test's inputs
-            width_pvalue       permutation-test p-value
+            width_change       change in Q95 - Q05 (°C), as tested by the hist-nat bootstrap
+            width_pvalue       its bootstrap p-value
             width_significant  p < alpha
             and with ``tails``: upper_tail_change, lower_tail_change, tail_asymmetry,
             q05_change, q50_change, q95_change
@@ -256,8 +258,8 @@ def change_summary(mean_change, mean_pvalue, signal_to_noise, qrange_change, tai
         mean_change.rename("mean_change"),
         mean_pvalue.rename("mean_pvalue"),
         signal_to_noise.rename("signal_to_noise"),
-        qrange_change["qrange_period_difference"].rename("width_change"),
-        qrange_change["qrange_permutation_pvalue"].rename("width_pvalue"),
+        qrange_change["qrange_change"].rename("width_change"),
+        qrange_change["qrange_pvalue"].rename("width_pvalue"),
     ]
     if tails is not None:
         parts += [tails[name] for name in tails.data_vars if name != "width_change"]
@@ -339,7 +341,7 @@ def regional_mean(summary, lat_max=-60.0, variables=REGIONAL_VARIABLES):
 ADDITIVE_PARTS = ("hist-nat", "hist-GHG", "hist-aer", "hist-totalO3")
 
 
-def own_baseline_change(tree, years=11, baseline=slice(1850, 1900), variable="tas"):
+def own_baseline_change(tree, years=WINDOW, baseline=slice(1850, 1900), variable="tas"):
     """Each experiment's ensemble-mean change: its final ``years`` minus its own ``baseline`` years.
 
     A single-forcing run contains only its own forcing, so relative to its own
@@ -414,7 +416,7 @@ def strongest_joint_change(summary, model, experiment, season, lat_max=-60.0, me
     raise ValueError(f"no data for {model} {experiment} {season}")
 
 
-def final_years(tree, model, experiments, point, season, years=11, variable="tas"):
+def final_years(tree, model, experiments, point, season, years=WINDOW, variable="tas"):
     """Each experiment's members over the final ``years`` at one point and season.
 
     Returns:

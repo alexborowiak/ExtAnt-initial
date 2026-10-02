@@ -48,7 +48,7 @@ from dataclasses import dataclass
 import numpy as np
 import xarray as xr
 
-from quantile_calc import lowess_matrix_xarray
+from quantile_calc import lowess_matrix_xarray, seasonal_mean
 from significance import pvalue_two_sided
 from xarray_calc import split_time
 from xarray_stats import nan_quantile
@@ -68,11 +68,16 @@ ALPHA = 0.1
 def seasonal_means(monthly, dim="time", min_months=3):
     """Monthly means to seasonal (DJF/MAM/JJA/SON) means, on ``year`` and ``season`` dims.
 
-    Follows the LESFMIP pre-processing step for step (``QS-DEC`` bins, then
-    ``xarray_calc.split_time``), so DJF is labelled by the year of its December
-    and the result lines up with ``lesfmip_season_tree`` label for label.
-    Seasons with fewer than ``min_months`` months are dropped rather than
-    averaged, e.g. the January-February stub at the start of ERA5.
+    Follows the LESFMIP pre-processing step for step (``quantile_calc.seasonal_mean``,
+    then ``xarray_calc.split_time``), so DJF is labelled by the year of its
+    December and the result lines up with ``lesfmip_season_tree`` label for
+    label. Incomplete seasons, and years without all four, are dropped, e.g.
+    the January-February stub at the start of ERA5.
+
+    ERA5 can stay on its own (standard) calendar: the seasons are matched by
+    their (year, season) labels, not by date. Converting it to the models'
+    360-day calendar with ``align_on='year'`` moves month-start dates into the
+    previous month, which this refuses.
 
     Args:
         monthly (xr.DataArray): Monthly means with a datetime ``dim``.
@@ -82,38 +87,79 @@ def seasonal_means(monthly, dim="time", min_months=3):
     Returns:
         xr.DataArray: Seasonal means with ``year`` and ``season`` in place of ``dim``.
     """
-    seasonal = monthly.resample({dim: "QS-DEC"}).mean()
-    n_months = monthly[dim].resample({dim: "QS-DEC"}).count()
-    seasonal = seasonal.where(n_months >= min_months, drop=True)
-    return split_time(seasonal, ("year", "season"), dim)
+    month_index = monthly[dim].dt.year * 12 + monthly[dim].dt.month
+    if np.unique(month_index).size != month_index.size:
+        raise ValueError(
+            "some months appear more than once, so seasons would get the wrong months. "
+            "convert_calendar('360_day', align_on='year') does this to month-start dates (1 March becomes "
+            "29 February); keep ERA5 on its own calendar, or relabel it with monthly_time_axis"
+        )
+    return split_time(seasonal_mean(monthly, min_months=min_months, dim=dim), ("year", "season"), dim)
+
+
+def monthly_time_axis(monthly, dim="time"):
+    """Relabel consecutive monthly means with month-start dates on the standard calendar.
+
+    Repairs a record whose dates were shifted, e.g. by
+    ``convert_calendar('360_day', align_on='year')``, which moves 1 March to
+    29 February and 1 December to 30 November. Assumes one value per month,
+    with no gaps, starting in the month of the first date.
+
+    Args:
+        monthly (xr.DataArray): Monthly means with a datetime ``dim``.
+        dim (str): Name of the time dimension.
+
+    Returns:
+        xr.DataArray: The same values on month-start dates.
+    """
+    start = f"{int(monthly[dim].dt.year[0]):04d}-{int(monthly[dim].dt.month[0]):02d}-01"
+    return monthly.assign_coords({dim: xr.date_range(start, periods=monthly.sizes[dim], freq="MS")})
 
 
 def match_grid(obs, like, tolerance=0.01, lat="lat", lon="lon"):
-    """Put ``obs`` on exactly the latitudes and longitudes of ``like``.
+    """Put ``obs`` on the latitudes and longitudes of ``like``.
 
-    ERA5 was conservatively regridded onto the LESFMIP grid, so the two sets of
-    coordinates should agree to floating-point noise. This snaps them together
-    so arithmetic between the two aligns, and raises if any point is more than
-    ``tolerance`` degrees from its partner, which would mean the grids really
-    are different.
+    ERA5's grid need not be the LESFMIP grid: it may use 0-360 longitudes where
+    LESFMIP uses -180-180, run north to south, cover a different area, or sit
+    on different points. So this:
+
+    1. puts ``obs``'s longitudes in ``like``'s convention and sorts both axes;
+    2. if every point of ``like`` has a partner in ``obs`` within ``tolerance``
+       degrees, takes those values unchanged, relabelled with ``like``'s exact
+       coordinates so arithmetic between the two aligns;
+    3. otherwise interpolates bilinearly onto ``like``'s points, wrapping round
+       in longitude. Points outside ``obs``'s coverage are NaN.
+
+    Interpolation suits data at a similar resolution, like the ERA5 store
+    (conservatively regridded to 2.5°). Regrid much finer data conservatively
+    first, as the ERA5 processing section does with xesmf.
 
     Args:
-        obs (xr.DataArray): Data to relabel.
+        obs (xr.DataArray): Data to put on the grid.
         like (xr.DataArray): Data on the target grid.
-        tolerance (float): Largest acceptable coordinate difference, in degrees.
+        tolerance (float): Largest coordinate difference, in degrees, still treated as the same point.
 
     Returns:
-        xr.DataArray: ``obs`` carrying ``like``'s ``lat`` and ``lon`` values.
+        xr.DataArray: ``obs`` on ``like``'s ``lat`` and ``lon``.
     """
-    for name in (lat, lon):
-        target = np.asarray(like[name].values, dtype=float)
-        source = obs.indexes[name]
-        nearest = source.get_indexer(target, method="nearest")
-        gap = np.abs(np.asarray(source[nearest], dtype=float) - target).max()
-        if gap > tolerance:
-            raise ValueError(f"{name} grids differ by up to {gap:.3g} degrees; regrid ERA5 first")
-        obs = obs.isel({name: nearest}).assign_coords({name: like[name].values})
-    return obs
+    target = {name: np.asarray(like[name].values, dtype=float) for name in (lat, lon)}
+    #(c): Longitudes into the target's convention: -180-180 if it has any negative longitude, else 0-360.
+    #(c): The range starts `tolerance` early, so -180.000001 stays next to -180 rather than wrapping to +180
+    start = (-180.0 if target[lon].min() < 0 else 0.0) - tolerance
+    wrapped = (obs[lon] - start) % 360 + start
+    obs = obs.assign_coords({lon: wrapped.astype(float), lat: obs[lat].astype(float)}).sortby([lat, lon])
+
+    def gap(name):
+        return np.abs(obs[name].values[:, None] - target[name][None, :]).min(0).max()
+
+    if gap(lat) <= tolerance and gap(lon) <= tolerance:
+        nearest = {name: obs.indexes[name].get_indexer(target[name], method="nearest") for name in (lat, lon)}
+        return obs.isel(nearest).assign_coords(target)
+
+    #(c): One extra column at each end, a full turn away, so interpolation wraps round in longitude
+    padded = xr.concat([obs.isel({lon: [-1]}).assign_coords({lon: obs[lon][-1:] - 360}), obs,
+                        obs.isel({lon: [0]}).assign_coords({lon: obs[lon][:1] + 360})], dim=lon)
+    return padded.interp(target)
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +207,12 @@ def align(ensemble, obs, years=None, member_dim=MEMBER_DIM, sample_dim=SAMPLE_DI
     ensemble = ensemble.dropna(member_dim, how="all")
 
     valid = obs.notnull() & ensemble.notnull().all(member_dim)
-    return ensemble.where(valid), obs.where(valid)
+    ensemble, obs = ensemble.where(valid), obs.where(valid)
+    #(c): A gap this size is a unit mismatch (K against °C), not a model bias
+    offset = float(ensemble.mean()) - float(obs.mean())
+    if abs(offset) > 100:
+        raise ValueError(f"the ensemble is {offset:+.0f} from obs on average: is one in K and the other in °C?")
+    return ensemble, obs
 
 
 # ---------------------------------------------------------------------------

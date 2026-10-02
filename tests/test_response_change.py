@@ -6,6 +6,7 @@ import scipy.stats
 import xarray as xr
 
 import response_change as rc
+import significance as sig
 
 RNG = np.random.default_rng(3)
 LAT = np.array([-80.0, -70.0, -50.0])
@@ -40,7 +41,7 @@ def summary(tree):
     pvalue = xr.full_like(mean, 0.001)
     sn = xr.where(mean.lat == -80.0, 3.0, 1.0) + 0 * mean
     width_p = xr.where(mean.lon == 0.0, 0.01, 0.5) + 0 * mean
-    qrange = xr.Dataset({"qrange_period_difference": xr.full_like(mean, 1.0), "qrange_permutation_pvalue": width_p})
+    qrange = xr.Dataset({"qrange_change": xr.full_like(mean, 1.0), "qrange_pvalue": width_p})
     return rc.change_summary(mean, pvalue, sn.assign_coords(year=2009), qrange, rc.tail_changes(tree, years=11))
 
 
@@ -64,6 +65,14 @@ def test_tail_changes_decompose_the_width(tree):
     # A symmetric 1.5x widening of N(0, 1): each tail stretches by 0.5 x 1.645.
     np.testing.assert_allclose(float(tails.upper_tail_change.mean()), 0.5 * 1.645, atol=0.1)
     np.testing.assert_allclose(float(tails.lower_tail_change.mean()), 0.5 * 1.645, atol=0.1)
+
+
+def test_tail_width_change_is_the_bootstrap_tests_change(tree):
+    """Both measure from hist-nat's full record, so the tails add up to the width change the bootstrap tests."""
+    tails = rc.tail_changes(tree, years=11)
+    width = sig.qrange_significance({"historical": tree["A/historical"].tas}, tree["A/hist-nat"].tas,
+                                    years=11, n_trials=20).qrange_change.sel(experiment="historical")
+    np.testing.assert_allclose(tails.width_change.sel(model="A", experiment="historical").transpose(*width.dims), width)
 
 
 def test_change_summary_flags(summary):
@@ -106,7 +115,7 @@ def test_member_block_test_matches_scipy_and_detects_the_shift(tree):
     small = xr.DataTree.from_dict({"A/hist-nat": xr.Dataset({"tas": _member_data(8)}),
                                    "A/hist-GHG": xr.Dataset({"tas": _member_data(8, 0.4)})})
     point = dict(season="DJF", lat=-80.0, lon=0.0)
-    ours = float(rc.member_block_test(small, n_permutations=20000, seed=2).pvalue.sel(point).squeeze())
+    ours = float(rc.member_block_test(small, years=11, n_permutations=20000, seed=2).pvalue.sel(point).squeeze())
     x, y = (small[f"A/{e}"].tas.isel(year=slice(-11, None)).mean("year").sel(point).values for e in ("hist-GHG", "hist-nat"))
     reference = scipy.stats.permutation_test((x, y), lambda a, b: a.mean() - b.mean(), n_resamples=20000,
                                              random_state=3).pvalue

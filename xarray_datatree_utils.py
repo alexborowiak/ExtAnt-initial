@@ -28,12 +28,14 @@ def skip_empty(func):
 def coord_info(ds):
     name = next(iter(ds.data_vars))
     arr = ds[name].data
+    #(c): Data in memory (e.g. the sample) is one chunk
+    chunksize = getattr(arr, "chunksize", arr.shape)
     return {
         **{("size", d): n for d, n in ds.sizes.items()},
-        **{("chunk", d): n for d, n in zip(ds[name].dims, arr.chunksize)},
+        **{("chunk", d): n for d, n in zip(ds[name].dims, chunksize)},
         ("memory", "mbytes"): int(ds.nbytes / 1024**2),
-        ("memory", "chunk_mbytes"): round(float(np.prod(arr.chunksize) * arr.dtype.itemsize / 1024**2), 1),
-        ("memory", "nchunks"): arr.npartitions
+        ("memory", "chunk_mbytes"): round(float(np.prod(chunksize) * arr.dtype.itemsize / 1024**2), 1),
+        ("memory", "nchunks"): getattr(arr, "npartitions", 1)
     }
 
 

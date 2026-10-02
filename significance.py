@@ -1,20 +1,20 @@
-"""Resampling, permutation and t-test significance for experiment vs reference ensembles.
+"""Resampling and t-test significance for experiment vs reference ensembles.
 
 All resampling works on whole members, so each member's time series stays intact.
 
-The Q-range tests run in numba kernels, compiled (like quantile_calc's)
-parallel over grid points for data in memory and serial for dask blocks.
+The Q-range test is a bootstrap of hist-nat alone (``qrange_significance``):
+its Q-range kernels run in numba, compiled (like quantile_calc's) parallel
+over grid points for data in memory and serial for dask blocks.
 """
-
-from functools import partial
 
 import numpy as np
 import scipy.special
 import xarray as xr
 from numba import njit, prange
 
-from quantile_calc import numpy_lerp, quantile_range
+from quantile_calc import WINDOW, numpy_lerp, quantile_range
 from xarray_datatree_utils import skip_empty
+from xarray_stats import nan_quantile
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ def pvalue_two_sided(samples, observed, dim="trial", method="tails"):
 
 def outside_bounds(samples, observed, alpha=0.05, dim="trial"):
     """Return the central (1 - alpha) bounds of ``samples`` and whether ``observed`` lies outside."""
-    bounds = samples.quantile([alpha / 2, 1 - alpha / 2], dim=dim)
+    bounds = nan_quantile(samples, [alpha / 2, 1 - alpha / 2], dim)
     lower = bounds.sel(quantile=alpha / 2, drop=True)
     upper = bounds.sel(quantile=1 - alpha / 2, drop=True)
     return lower, upper, (observed < lower) | (observed > upper)
@@ -55,11 +55,6 @@ def outside_bounds(samples, observed, alpha=0.05, dim="trial"):
 # ---------------------------------------------------------------------------
 # Member resampling
 # ---------------------------------------------------------------------------
-
-def _batches(n_trials, batch_size):
-    for start in range(0, n_trials, batch_size):
-        yield start, min(batch_size, n_trials - start)
-
 
 def resample_members(da, n_trials, rng, n_samples=None, replace=True, member_dim="member"):
     """Draw members for each trial, returning ``da`` with a new ``trial`` dim.
@@ -77,58 +72,6 @@ def resample_members(da, n_trials, rng, n_samples=None, replace=True, member_dim
         idx = np.argsort(rng.random((n_trials, n_members)), axis=1)[:, :n_samples]
 
     return da.isel({member_dim: xr.DataArray(idx, dims=("trial", member_dim))})
-
-
-def pool_members(exp, reference):
-    """Concatenate two ensembles along a ``pool_member`` dim, experiment members first."""
-    pooled = xr.concat(
-        [exp.rename(member="pool_member"), reference.rename(member="pool_member")],
-        dim="pool_member",
-    )
-    return pooled.assign_coords(pool_member=np.arange(pooled.sizes["pool_member"]))
-
-
-def permutation_batches(exp, reference, statistic, n_trials, batch_size, rng):
-    """Yield computed ``statistic(exp*) - statistic(reference*)`` for random member partitions.
-
-    Members are pooled and randomly split into groups of the original ensemble
-    sizes. ``statistic`` receives a DataArray with a ``member`` dim.
-    """
-    n_exp = exp.sizes["member"]
-    pooled = pool_members(exp, reference)
-    n_total = pooled.sizes["pool_member"]
-
-    for _, n in _batches(n_trials, batch_size):
-        order = np.argsort(rng.random((n, n_total)), axis=1)
-        idx_exp = xr.DataArray(order[:, :n_exp], dims=("trial", "member"))
-        idx_ref = xr.DataArray(order[:, n_exp:], dims=("trial", "member"))
-
-        yield (
-            statistic(pooled.isel(pool_member=idx_exp))
-            - statistic(pooled.isel(pool_member=idx_ref))
-        ).compute()
-
-
-def permutation_samples(exp, reference, statistic=None, n_trials=10_000, batch_size=100, seed=0):
-    """Permutation null distribution of the experiment-minus-reference statistic.
-
-    Args:
-        statistic (callable | None): Maps a DataArray with a ``member`` dim to the
-            test statistic. None is the pooled Q95-Q05 range, run by the fast
-            ``qrange_permutation_samples`` (same draws, same numbers).
-        batch_size (int): Trials per batch for a custom ``statistic``.
-
-    Returns:
-        xr.DataArray: float32 samples along a ``trial`` dim.
-    """
-    if statistic is None:
-        return qrange_permutation_samples(exp, reference, n_trials=n_trials, seed=seed).compute()
-    rng = np.random.default_rng(seed)
-    batches = [
-        b.astype("float32")
-        for b in permutation_batches(exp, reference, statistic, n_trials, batch_size, rng)
-    ]
-    return xr.concat(batches, dim="trial").assign_coords(trial=np.arange(n_trials))
 
 
 # ---------------------------------------------------------------------------
@@ -205,30 +148,6 @@ def _group_qrange(values, members, n_valid, in_group, n_group, q_low, q_high):
             - _group_quantile(values, members, n_valid, in_group, n_group, q_low, False))
 
 
-def _permutation_qrange(pooled, in_exp, q_low, q_high, out):
-    """``out[s, t]``: trial t's experiment-group Q-range minus its reference-group Q-range, at point s.
-
-    Args:
-        pooled (np.ndarray): (point, member, sample), experiment and reference members together.
-        in_exp (np.ndarray): (trial, member) True for the members labelled experiment in that trial.
-    """
-    n_points, n_members, n_samples = pooled.shape
-    for s in prange(n_points):
-        values = np.empty(n_members * n_samples)
-        members = np.empty(n_members * n_samples, dtype=np.int64)
-        counts = np.empty(n_members, dtype=np.int64)
-        in_ref = np.empty(n_members, dtype=np.bool_)
-        n_valid = _sorted_pool(pooled[s], values, members, counts)
-        for t in range(in_exp.shape[0]):
-            n_exp = 0
-            for m in range(n_members):
-                in_ref[m] = not in_exp[t, m]
-                if in_exp[t, m]:
-                    n_exp += counts[m]
-            out[s, t] = (_group_qrange(values, members, n_valid, in_exp[t], n_exp, q_low, q_high)
-                         - _group_qrange(values, members, n_valid, in_ref, n_valid - n_exp, q_low, q_high))
-
-
 def _window_qrange(data, reference, selected, starts, length, trials, first, q_low, q_high, out):
     """``out[s, t]``: the Q-range of trial t's selected members over its window of years, minus ``reference[s]``.
 
@@ -257,17 +176,8 @@ def _window_qrange(data, reference, selected, starts, length, trials, first, q_l
                 out[s, t] = _group_qrange(values, members, n_valid, selected[t], n_group, q_low, q_high) - reference[s]
 
 
-_permutation_qrange_serial = njit(nogil=True)(_permutation_qrange)
-_permutation_qrange_parallel = njit(parallel=True)(_permutation_qrange)
 _window_qrange_serial = njit(nogil=True)(_window_qrange)
 _window_qrange_parallel = njit(parallel=True)(_window_qrange)
-
-
-def _permutation_block(pooled, in_exp, q_low, q_high, parallel):
-    points = np.ascontiguousarray(pooled.reshape(-1, *pooled.shape[-2:]))
-    out = np.empty((points.shape[0], in_exp.shape[0]), dtype=np.float32)
-    (_permutation_qrange_parallel if parallel else _permutation_qrange_serial)(points, in_exp, q_low, q_high, out)
-    return out.reshape(*pooled.shape[:-2], in_exp.shape[0])
 
 
 def _window_block(data, reference, selected, starts, length, trials, first, q_low, q_high, parallel):
@@ -294,39 +204,24 @@ def _per_trial(block, inputs, core_dims, n_trials, **kwargs):
     return out.transpose("trial", ...).assign_coords(trial=np.arange(n_trials))
 
 
-def qrange_permutation_samples(exp, reference, quantiles=(0.05, 0.95), n_trials=10_000, seed=0):
-    """Permutation null of the experiment-minus-reference pooled Q-range, in one numba pass.
-
-    Whole members are randomly relabelled between the two ensembles, keeping
-    their sizes, exactly as ``permutation_samples`` does (the same random
-    draws for the same seed, so the same numbers). Lazy for dask input.
-
-    Returns:
-        xr.DataArray: float32 samples along a ``trial`` dim (first).
-    """
-    rng = np.random.default_rng(seed)
-    pooled = pool_members(exp, reference)
-    n_exp, n_total = exp.sizes["member"], pooled.sizes["pool_member"]
-    in_exp = np.zeros((n_trials, n_total), dtype=np.bool_)
-    np.put_along_axis(in_exp, np.argsort(rng.random((n_trials, n_total)), axis=1)[:, :n_exp], True, axis=1)
-    return _per_trial(_permutation_block, [pooled], [["pool_member", "year"]], n_trials,
-                      in_exp=in_exp, q_low=quantiles[0], q_high=quantiles[1])
+#(t): Members in every hist-nat bootstrap draw: the smallest LESFMIP ensemble, so one null serves every experiment
+N_BOOTSTRAP_MEMBERS = 10
 
 
 def sample_hist_nat_qrange_changes(
     hist_nat_da,
     hist_nat_reference_qrange_da,
-    n_members_to_sample,
-    years=11,
+    n_members_to_sample=N_BOOTSTRAP_MEMBERS,
+    years=WINDOW,
     quantiles=(0.05, 0.95),
     n_trials=10_000,
     seed=0,
 ):
-    """Sample N distinct hist-nat members over random ``years``-year windows.
+    """The hist-nat bootstrap behind ``qrange_significance``: N different members over a random ``years``-year window.
 
     Returns each trial's Q-range minus ``hist_nat_reference_qrange_da``: the
     changes obtainable from natural variability and sample size alone.
-    Windows are used approximately equally across trials.
+    Windows come from anywhere in the record, each used about equally often.
     """
     rng = np.random.default_rng(seed)
 
@@ -381,77 +276,74 @@ def sample_hist_nat_qrange_changes(
 def qrange_significance(
     experiments,
     hist_nat,
-    n_members_to_sample=None,
-    years=11,
+    n_members=N_BOOTSTRAP_MEMBERS,
+    years=WINDOW,
     quantiles=(0.05, 0.95),
-    n_trials=10_000,
+    n_trials=1000,
     alpha=0.05,
     seed=0,
 ):
-    """Both Q-range significance tests for every experiment of one model.
+    """Is each experiment's change in Q-range more than hist-nat's natural variability can produce?
 
-    1. Sample size: is the experiment's final-``years`` Q-range change (vs the
-       full hist-nat record) outside what ``n_members_to_sample`` hist-nat members
-       over a ``years`` window can produce? The hist-nat sampling depends only on
-       hist-nat, so it runs once and is shared by every experiment.
-    2. Permutation: does the experiment differ from hist-nat over the same final
-       ``years``? Whole members are permuted between the two.
+    The change is the experiment's Q-range over its final ``years`` (members
+    and years pooled) minus hist-nat's over its full record. Its null is a
+    bootstrap of hist-nat alone: each trial pools ``n_members`` different
+    hist-nat members over a random ``years``-year window, and subtracts the
+    same full-record Q-range. So the trials are the changes that natural
+    variability and sampling produce on their own.
+
+    The null depends only on hist-nat, so it is drawn once per model and
+    shared by every experiment. With a fixed number of members (the smallest
+    LESFMIP ensemble), it is the same test for every experiment, whatever its
+    ensemble size. A larger ensemble pins its Q-range down more precisely than
+    10 members can, so for it the test is conservative.
 
     Args:
         experiments (dict[str, xr.DataArray]): Experiment name -> data with
             ``member`` and ``year`` dims.
         hist_nat (xr.DataArray): The model's hist-nat, full record.
-        n_members_to_sample (int | None): Defaults to the smallest ensemble
-            among ``experiments`` and ``hist_nat``.
+        n_members (int): hist-nat members pooled in each trial.
+        years (int): Length of the final period and of each trial's window (odd).
+        quantiles (tuple[float, float]): The Q-range's lower and upper quantiles.
+        n_trials (int): Bootstrap trials.
+        alpha (float): Two-sided significance level.
+        seed (int): Random seed.
 
     Returns:
-        xr.Dataset: One variable per statistic, with an ``experiment`` dim.
+        xr.Dataset, with an ``experiment`` dim:
+            hist_nat_qrange      hist-nat's Q-range over its full record
+            experiment_qrange    the experiment's over its final ``years``
+            qrange_change        experiment_qrange - hist_nat_qrange
+            null_lower           the bootstrap changes' alpha/2 quantile
+            null_upper           and their 1 - alpha/2 quantile
+            qrange_pvalue        two-sided bootstrap p-value of qrange_change
+            qrange_significant   qrange_pvalue < alpha
     """
-    if n_members_to_sample is None:
-        n_members_to_sample = min(da.sizes["member"] for da in [hist_nat, *experiments.values()])
-
-    qrange = partial(quantile_range, quantiles=quantiles)
-    hist_nat_period = hist_nat.isel(year=slice(-years, None))
-    hist_nat_qrange = qrange(hist_nat).compute()
-    hist_nat_period_qrange = qrange(hist_nat_period).compute()
-
-    hist_nat_samples = sample_hist_nat_qrange_changes(
-        hist_nat, hist_nat_qrange, n_members_to_sample,
+    hist_nat_qrange = quantile_range(hist_nat, quantiles).compute()
+    null = sample_hist_nat_qrange_changes(
+        hist_nat, hist_nat_qrange, n_members,
         years=years, quantiles=quantiles, n_trials=n_trials, seed=seed,
     )
+    null_range = nan_quantile(null, [alpha / 2, 1 - alpha / 2], "trial")
 
     results = []
     for exp_da in experiments.values():
-        exp_da = exp_da.isel(year=slice(-years, None))
-        exp_qrange = qrange(exp_da).compute()
-
-        # 1. Experiment vs the long-term hist-nat reference.
-        change = exp_qrange - hist_nat_qrange
-        lower, upper, outside = outside_bounds(hist_nat_samples, change, alpha=alpha)
-
-        # 2. Experiment vs hist-nat over the same years.
-        #(c): Reduced to a p-value where the samples are made (on the workers, for dask input)
-        period_difference = exp_qrange - hist_nat_period_qrange
-        permutations = qrange_permutation_samples(exp_da, hist_nat_period, quantiles=quantiles,
-                                                  n_trials=n_trials, seed=seed)
-        pvalue = pvalue_two_sided(permutations, period_difference, method="tails").compute()
-
+        experiment_qrange = quantile_range(exp_da.isel(year=slice(-years, None)), quantiles).compute()
+        change = experiment_qrange - hist_nat_qrange
+        pvalue = pvalue_two_sided(null, change, method="tails").where(change.notnull())
         results.append(xr.Dataset({
             "hist_nat_qrange": hist_nat_qrange,
-            "hist_nat_period_qrange": hist_nat_period_qrange,
-            "hist_exp_qrange": exp_qrange,
-            # Experiment minus long-term hist-nat; sampling uncertainty of N hist-nat members.
+            "experiment_qrange": experiment_qrange,
             "qrange_change": change,
-            "hist_nat_qrange_change_lower_95": lower,
-            "hist_nat_qrange_change_upper_95": upper,
-            "qrange_outside_hist_nat_range": outside,
-            # Experiment versus hist-nat over the same years.
-            "qrange_period_difference": period_difference,
-            "qrange_permutation_pvalue": pvalue,
-            "qrange_permutation_significant": pvalue < alpha,
+            "null_lower": null_range.isel(quantile=0, drop=True),
+            "null_upper": null_range.isel(quantile=1, drop=True),
+            "qrange_pvalue": pvalue,
+            "qrange_significant": pvalue < alpha,
         }))
 
-    return xr.concat(results, dim="experiment").assign_coords(experiment=list(experiments))
+    out = xr.concat(results, dim="experiment").assign_coords(experiment=list(experiments))
+    return out.assign_attrs(n_members=n_members, years=years, n_trials=n_trials, alpha=alpha,
+                            quantiles=list(quantiles))
 
 
 # ---------------------------------------------------------------------------

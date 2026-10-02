@@ -1,4 +1,4 @@
-"""The numba Q-range tests give exactly the numbers of the original per-trial xarray code."""
+"""The hist-nat bootstrap gives exactly the numbers of the original per-trial xarray code, and detects a widening."""
 
 import numpy as np
 import pytest
@@ -48,18 +48,6 @@ def _slow_hist_nat_samples(hist_nat, reference, n_sample, years, quantiles, n_tr
 
 
 @pytest.mark.parametrize("dask", [False, True])
-def test_permutation_samples_equal_the_per_trial_code(dask):
-    exp, ref = _ensemble(9, shift=1.0, scale=1.5), _ensemble(12)
-    slow = sig.permutation_samples(exp, ref, statistic=_slow_quantile_range, n_trials=150, batch_size=40, seed=3)
-    if dask:
-        exp, ref = exp.chunk({"lat": 1}), ref.chunk({"lat": 1})
-    fast = sig.qrange_permutation_samples(exp, ref, n_trials=150, seed=3).compute()
-    np.testing.assert_array_equal(fast.transpose(*slow.dims).values, slow.values)
-    # statistic=None takes the same fast path
-    np.testing.assert_array_equal(sig.permutation_samples(exp, ref, n_trials=150, seed=3).values, fast.values)
-
-
-@pytest.mark.parametrize("dask", [False, True])
 def test_hist_nat_sampling_equals_the_per_trial_code(dask):
     hist_nat = _ensemble(14, n_years=40)
     reference = _slow_quantile_range(hist_nat)
@@ -71,11 +59,31 @@ def test_hist_nat_sampling_equals_the_per_trial_code(dask):
 
 def test_qrange_significance_detects_a_wider_experiment():
     hist_nat = _ensemble(30, n_years=60)
-    experiments = {"wide": _ensemble(30, scale=2.0), "same": _ensemble(30)}
-    result = sig.qrange_significance(experiments, hist_nat, n_trials=300, alpha=0.05)
+    experiments = {"wide": _ensemble(30, n_years=21, scale=2.0), "same": _ensemble(30, n_years=21)}
+    result = sig.qrange_significance(experiments, hist_nat, n_members=10, years=21, n_trials=300, alpha=0.05)
     assert set(result.experiment.values) == set(experiments)
-    pvalue = result.qrange_permutation_pvalue
+    pvalue = result.qrange_pvalue
     assert float(pvalue.min()) >= 1 / 301 and float(pvalue.max()) <= 1
-    assert float(result.qrange_permutation_significant.sel(experiment="wide").mean()) > 0.9
-    assert float(result.qrange_permutation_significant.sel(experiment="same").mean()) < 0.3
-    assert bool(result.qrange_outside_hist_nat_range.sel(experiment="wide").mean() > 0.9)
+    assert float(result.qrange_significant.sel(experiment="wide").mean()) > 0.9
+    assert float(result.qrange_significant.sel(experiment="same").mean()) < 0.3
+    # The all-NaN point has no change and no p-value, and is not significant
+    assert result.qrange_pvalue.isel(season=1, lat=1, lon=2).isnull().all()
+    assert not result.qrange_significant.isel(season=1, lat=1, lon=2).any()
+
+
+def test_qrange_significance_shares_one_hist_nat_null():
+    """The null depends on hist-nat alone: the same for every experiment, whatever its ensemble size."""
+    hist_nat = _ensemble(30, n_years=60)
+    result = sig.qrange_significance({"small": _ensemble(10, n_years=21), "big": _ensemble(30, n_years=21)},
+                                     hist_nat, n_trials=200)
+    for name in ("hist_nat_qrange", "null_lower", "null_upper"):
+        np.testing.assert_array_equal(result[name].sel(experiment="small"), result[name].sel(experiment="big"))
+    np.testing.assert_allclose(result.qrange_change, result.experiment_qrange - result.hist_nat_qrange)
+    reference = _slow_quantile_range(hist_nat)
+    null = sig.sample_hist_nat_qrange_changes(hist_nat, reference, 10, years=21, n_trials=200, seed=0)
+    np.testing.assert_allclose(result.null_lower.isel(experiment=0), null.quantile(0.025, "trial", skipna=False).drop_vars("quantile"))
+
+
+def test_hist_nat_bootstrap_needs_enough_members():
+    with pytest.raises(ValueError):
+        sig.qrange_significance({"a": _ensemble(10, n_years=21)}, _ensemble(8, n_years=40))

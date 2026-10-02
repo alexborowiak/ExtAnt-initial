@@ -17,14 +17,30 @@ from scipy import sparse
 from xarray_datatree_utils import reduce_to_dataset, skip_empty
 from xarray_stats import nan_quantile
 
+#(t): Length in years of every window: the rolling quantiles and noise, and the final period compared with hist-nat
+WINDOW = 21
+
 
 # ---------------------------------------------------------------------------
 # Aggregation
 # ---------------------------------------------------------------------------
 
 @skip_empty
-def seasonal_mean(ds):
-    return ds.resample(time='QS-DEC').mean()
+def seasonal_mean(ds, min_months=3, dim='time'):
+    """Seasonal (DJF/MAM/JJA/SON) means of complete seasons, in whole years only.
+
+    ``QS-DEC`` bins, so DJF is labelled by the year of its December and a year
+    runs from March to the next February. Seasons with fewer than
+    ``min_months`` months (the Jan-Feb stub at the start of a record, a season
+    cut short at its end) are dropped rather than averaged, and so is any year
+    left without all four seasons. Every season then covers the same years, so
+    "the final N years" means the same years in each. Which bins to keep is
+    read off the time labels alone, so nothing is computed.
+    """
+    n_months = ds[dim].resample({dim: 'QS-DEC'}).count()
+    seasonal = ds.resample({dim: 'QS-DEC'}).mean().where(n_months >= min_months, drop=True)
+    years, n_seasons = np.unique(seasonal[dim].dt.year, return_counts=True)
+    return seasonal.isel({dim: np.isin(seasonal[dim].dt.year, years[n_seasons == 4])})
 
 
 @skip_empty
@@ -33,7 +49,7 @@ def space_mean(ds):
 
 
 @skip_empty
-def rolling_std(da, window=11, dim=['window', 'member']):
+def rolling_std(da, window=WINDOW, dim=['window', 'member']):
     return da.rolling(year=window, center=True).construct('window').std(dim=dim)
 
 
@@ -152,7 +168,7 @@ def _rolling_quantiles_block(x, window, quantiles, n_pooled, parallel):
 def rolling_percentile_xr(
     da,
     rolling_dim="year",
-    window=11,
+    window=WINDOW,
     quantiles=(0.1, 0.5, 0.9),
     extra_dims=("member",),
 ):
@@ -204,7 +220,7 @@ def quantile_range(da, quantiles=(0.05, 0.95), dims=("member", "year")):
     return q_da.isel(quantile=1, drop=True) - q_da.isel(quantile=0, drop=True)
 
 
-def rolling_quantile_range(da, window=11, quantiles=(0.05, 0.95), rolling_dim="year", member_dim="member"):
+def rolling_quantile_range(da, window=WINDOW, quantiles=(0.05, 0.95), rolling_dim="year", member_dim="member"):
     """Return the rolling pooled upper-minus-lower quantile range."""
     q_da = rolling_percentile_xr(
         da,
@@ -220,7 +236,7 @@ def rolling_quantile_range(da, window=11, quantiles=(0.05, 0.95), rolling_dim="y
     )
 
 
-def quantile_response(tree, quantiles, years=11, reference="hist-nat", variable="tas"):
+def quantile_response(tree, quantiles, years=WINDOW, reference="hist-nat", variable="tas"):
     """Experiment quantiles over the final ``years`` minus reference quantiles over its full record.
 
     Quantiles pool members and years. The tree is laid out as /<model>/<experiment>;

@@ -219,9 +219,9 @@ def shift_and_widen(samples, shifts, experiment, reference=rc.REFERENCE, test=No
         lines = [f"Width Q95 − Q05: {width[reference]:.2f} → {width[experiment]:.2f} {units}"]
         if test is not None:
             lines += [
-                f"Mean: {float(test['mean_change']):+.2f} {units}, t-test p = {float(test['mean_pvalue']):.2g}, "
+                f"Mean: {float(test['mean_change']):+.2f} {units}, mean test p = {float(test['mean_pvalue']):.2g}, "
                 f"S/N = {float(test['signal_to_noise']):.1f}",
-                f"Width: {float(test['width_change']):+.2f} {units}, permutation p = {float(test['width_pvalue']):.2g}",
+                f"Width: {float(test['width_change']):+.2f} {units}, bootstrap p = {float(test['width_pvalue']):.2g}",
             ]
         ax_dist.text(0.99, 0.98, "\n".join(lines), transform=ax_dist.transAxes, ha="right", va="top", fontsize=8,
                      color=INK_2, bbox=dict(facecolor="white", edgecolor="none", alpha=0.85, pad=2))
