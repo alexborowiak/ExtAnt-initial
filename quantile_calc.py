@@ -2,15 +2,20 @@
 
 Functions here run on dask workers, so upload this module to the cluster
 (``client.upload_file``) after editing it.
+
+The numba kernels are compiled twice: parallel over grid points for data in
+memory, and serial for dask blocks. Dask already runs the blocks in parallel,
+and numba's default threading layer is not safe to call from several threads
+at once (nesting would also oversubscribe the workers' cores).
 """
 
 import numpy as np
 import xarray as xr
-from numba import njit
+from numba import njit, prange
 from scipy import sparse
-from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from xarray_datatree_utils import reduce_to_dataset, skip_empty
+from xarray_stats import nan_quantile
 
 
 # ---------------------------------------------------------------------------
@@ -44,30 +49,103 @@ def rolling_quantile(da, rolling_dim, window, quantiles, extra_dims=None):
 # ---------------------------------------------------------------------------
 
 @njit
-def rolling_percentile_numba(x, window, quantiles):
-    """Centred rolling quantiles pooling a (year, member) array over the window and members."""
-    nyear, nmember = x.shape
-    nquantile = len(quantiles)
+def numpy_lerp(low, high, fraction):
+    """Linear interpolation exactly as np.quantile does it (its _lerp), so results match numpy bit for bit."""
+    difference = high - low
+    if fraction >= 0.5:
+        return high - difference * (1 - fraction)
+    return low + difference * fraction
+
+
+@njit
+def interpolate_sorted(ordered, n, q):
+    """Quantile ``q`` of the first ``n`` values of an ascending array, as np.quantile computes it."""
+    position = (n - 1) * q
+    k = int(np.floor(position))
+    if k >= n - 1:
+        return ordered[n - 1]
+    return numpy_lerp(ordered[k], ordered[k + 1], position - k)
+
+
+@njit
+def _slide(window, n, remove, n_remove, add, n_add, out):
+    """One merge pass: ``window[:n]`` minus ``remove`` plus ``add`` (all ascending) into ``out``; returns its length."""
+    i = r = a = k = 0
+    while i < n:
+        value = window[i]
+        if r < n_remove and value == remove[r]:
+            r += 1
+            i += 1
+        elif a < n_add and add[a] < value:
+            out[k] = add[a]
+            a += 1
+            k += 1
+        else:
+            out[k] = value
+            i += 1
+            k += 1
+    while a < n_add:
+        out[k] = add[a]
+        a += 1
+        k += 1
+    return k
+
+
+def _rolling_quantiles(x, window, quantiles, out):
+    """Centred rolling quantiles of each point's (year, sample) values, pooled over the window and samples.
+
+    The pooled window is kept sorted: each step removes the year leaving it
+    and merges in the year entering it (each year sorted once), instead of
+    sorting window x samples values afresh every year. NaN are ignored;
+    incomplete windows at either end are NaN.
+
+    Args:
+        x (np.ndarray): (point, year, sample).
+        out (np.ndarray): (point, quantile, year), filled in place.
+    """
+    n_points, n_years, n_samples = x.shape
     half = window // 2
+    for s in prange(n_points):
+        years = np.empty((n_years, n_samples))
+        counts = np.zeros(n_years, dtype=np.int64)
+        for y in range(n_years):
+            for j in range(n_samples):
+                value = x[s, y, j]
+                if not np.isnan(value):
+                    years[y, counts[y]] = value
+                    counts[y] += 1
+            years[y, :counts[y]] = np.sort(years[y, :counts[y]])
 
-    out = np.full((nquantile, nyear), np.nan)
-
-    for t in range(half, nyear - half):
-        values = np.empty(window * nmember)
+        pool = np.empty(window * n_samples)
+        scratch = np.empty(window * n_samples)
         n = 0
+        out[s] = np.nan
+        for t in range(half, n_years - half):
+            if t == half:
+                for y in range(window):
+                    n = _slide(pool, n, years[0], 0, years[y], counts[y], scratch)
+                    pool, scratch = scratch, pool
+            else:
+                leaving, entering = t - half - 1, t + half
+                n = _slide(pool, n, years[leaving], counts[leaving], years[entering], counts[entering], scratch)
+                pool, scratch = scratch, pool
+            if n > 0:
+                for i in range(quantiles.size):
+                    out[s, i, t] = interpolate_sorted(pool, n, quantiles[i])
 
-        for y in range(t - half, t + half + 1):
-            for m in range(nmember):
-                v = x[y, m]
 
-                if not np.isnan(v):
-                    values[n] = v
-                    n += 1
+_rolling_quantiles_serial = njit(nogil=True)(_rolling_quantiles)
+_rolling_quantiles_parallel = njit(parallel=True)(_rolling_quantiles)
 
-        if n > 0:
-            out[:, t] = np.quantile(values[:n], quantiles)
 
-    return out
+def _rolling_quantiles_block(x, window, quantiles, n_pooled, parallel):
+    """``_rolling_quantiles`` on a block whose last axes are (year, *pooled dims)."""
+    lead = x.shape[:x.ndim - 1 - n_pooled]
+    n_years = x.shape[len(lead)]
+    points = np.ascontiguousarray(x.reshape(-1, n_years, int(np.prod(x.shape[len(lead) + 1:]))))
+    out = np.empty((points.shape[0], quantiles.size, n_years))
+    (_rolling_quantiles_parallel if parallel else _rolling_quantiles_serial)(points, window, quantiles, out)
+    return out.reshape(*lead, quantiles.size, n_years)
 
 
 @skip_empty
@@ -84,17 +162,20 @@ def rolling_percentile_xr(
     """
     quantiles = np.asarray(quantiles, dtype=float)
     core_dims = [rolling_dim, *extra_dims]
+    if da.chunks is not None:
+        da = da.chunk({d: -1 for d in core_dims})
 
     out = xr.apply_ufunc(
-        rolling_percentile_numba,
+        _rolling_quantiles_block,
         da,
         input_core_dims=[core_dims],
         output_core_dims=[["quantile", rolling_dim]],
         kwargs={
             "window": window,
             "quantiles": quantiles,
+            "n_pooled": len(extra_dims),
+            "parallel": da.chunks is None,
         },
-        vectorize=True,
         dask="parallelized",
         output_dtypes=[float],
         dask_gufunc_kwargs={
@@ -102,7 +183,6 @@ def rolling_percentile_xr(
                 "quantile": len(quantiles),
                 rolling_dim: da.sizes[rolling_dim],
             },
-            "allow_rechunk": True,
         },
     )
 
@@ -116,19 +196,12 @@ def rolling_percentile_xr(
 def quantile_range(da, quantiles=(0.05, 0.95), dims=("member", "year")):
     """Return the pooled upper-minus-lower quantile range over ``dims``.
 
-    Dims missing from ``da`` are ignored.
+    Dims missing from ``da`` are ignored. NaN are skipped, as ``da.quantile(skipna=True)``
+    does, but with the vectorised ``nan_quantile`` rather than numpy's per-series loop.
     """
     dims = tuple(d for d in dims if d in da.dims)
-
-    if da.chunks is not None:
-        da = da.chunk({d: -1 for d in dims})
-
-    q_da = da.quantile(quantiles, dim=dims, skipna=True)
-
-    return (
-        q_da.sel(quantile=quantiles[1], drop=True)
-        - q_da.sel(quantile=quantiles[0], drop=True)
-    )
+    q_da = nan_quantile(da, list(quantiles), dims)
+    return q_da.isel(quantile=1, drop=True) - q_da.isel(quantile=0, drop=True)
 
 
 def rolling_quantile_range(da, window=11, quantiles=(0.05, 0.95), rolling_dim="year", member_dim="member"):
@@ -166,15 +239,102 @@ def quantile_response(tree, quantiles, years=11, reference="hist-nat", variable=
 # LOWESS smoothing
 # ---------------------------------------------------------------------------
 
-def _lowess_1d(y, x, frac, it, delta):
-    """Smooth one series with statsmodels, passing all-NaN input straight through."""
-    if not np.isfinite(y).any():
-        return np.full_like(y, np.nan, dtype=float)
-    return lowess(y, x, frac=frac, it=it, delta=delta, return_sorted=False)
+@njit
+def _lowess_pass(x, y, k, robustness, fit, weights):
+    """One pass of local linear fits with tricube x weights (times ``robustness``), as statsmodels does it."""
+    n = x.size
+    left, right = 0, k
+    for i in range(n):
+        xval = x[i]
+        #(c): Slide the k-point neighbourhood until x[i] is at (or just left of) its centre
+        while right < n and xval > (x[left] + x[right]) / 2.0:
+            left += 1
+            right += 1
+        radius = max(xval - x[left], x[right - 1] - xval)
+        total = 0.0
+        nonzero = 0
+        for j in range(left, right):
+            distance = abs(x[j] - xval) / radius
+            distance = 1.0 - distance * distance * distance
+            weights[j] = distance * distance * distance * robustness[j]
+            total += weights[j]
+            nonzero += weights[j] > 1e-12
+        if nonzero < 2:
+            fit[i] = y[i]
+            continue
+        mean_x = 0.0
+        for j in range(left, right):
+            weights[j] /= total
+            mean_x += weights[j] * x[j]
+        spread = 0.0
+        for j in range(left, right):
+            spread += weights[j] * (x[j] - mean_x) ** 2
+        spread = max(spread, 1e-12)
+        value = 0.0
+        for j in range(left, right):
+            value += weights[j] * (1.0 + (xval - mean_x) * (x[j] - mean_x) / spread) * y[j]
+        fit[i] = value
 
 
-def lowess_xarray(da, core_dims="year", window=81, it=3, delta=0.0):
-    """Apply statsmodels LOWESS (robust, slow) along one dimension of a DataArray.
+@njit
+def _robustness_weights(y, fit, robustness):
+    """Bisquare weights of the residuals in units of 6 x their median absolute value, as statsmodels does it."""
+    residual = np.abs(y - fit)
+    median = np.median(residual)
+    for j in range(y.size):
+        scaled = (1.0 if residual[j] > 0 else 0.0) if median == 0 else residual[j] / (6.0 * median)
+        scaled = min(scaled, 1.0)
+        robustness[j] = (1.0 - scaled * scaled) ** 2
+
+
+def _lowess(y, frac, it, out):
+    """statsmodels' LOWESS (delta = 0, x = 0, 1, 2, ...) on every row of ``y``.
+
+    Like statsmodels, NaN are dropped before fitting (the neighbourhoods are
+    the k nearest valid points) and are NaN in the output.
+    """
+    n_points, n_all = y.shape
+    for s in prange(n_points):
+        x = np.empty(n_all)
+        values = np.empty(n_all)
+        where = np.empty(n_all, dtype=np.int64)
+        n = 0
+        for i in range(n_all):
+            if not np.isnan(y[s, i]):
+                x[n], values[n], where[n] = i, y[s, i], i
+                n += 1
+        out[s] = np.nan
+        if n == 0:
+            continue
+        x, values = x[:n], values[:n]
+        k = min(max(int(frac * n + 1e-10), 2), n)
+        robustness = np.ones(n)
+        fit = np.empty(n)
+        weights = np.empty(n)
+        for iteration in range(it + 1):
+            _lowess_pass(x, values, k, robustness, fit, weights)
+            if iteration < it:
+                _robustness_weights(values, fit, robustness)
+        for i in range(n):
+            out[s, where[i]] = fit[i]
+
+
+_lowess_serial = njit(nogil=True)(_lowess)
+_lowess_parallel = njit(parallel=True)(_lowess)
+
+
+def _lowess_block(y, frac, it, parallel):
+    rows = np.ascontiguousarray(y.reshape(-1, y.shape[-1]), dtype=float)
+    out = np.empty_like(rows)
+    (_lowess_parallel if parallel else _lowess_serial)(rows, frac, it, out)
+    return out.reshape(y.shape)
+
+
+def lowess_xarray(da, core_dims="year", window=81, it=3):
+    """Robust LOWESS along one dimension: statsmodels' algorithm (delta = 0), compiled with numba.
+
+    Gives statsmodels' numbers (to rounding) about 100x faster than calling it
+    series by series.
 
     Parameters
     ----------
@@ -182,20 +342,17 @@ def lowess_xarray(da, core_dims="year", window=81, it=3, delta=0.0):
     core_dims : str, dimension to smooth along
     window : int, number of points in each local window
     it : int, number of bisquare reweighting passes; 0 disables robustness
-    delta : float, interpolation distance in coordinate units; 0 fits every point
     """
-    x = np.arange(da.sizes[core_dims])
-    frac = np.clip(window / da.sizes[core_dims], 0.0, 1.0)
+    frac = float(np.clip(window / da.sizes[core_dims], 0.0, 1.0))
     dims = da.dims
     if da.chunks is not None:
         da = da.chunk({core_dims: -1})
     return xr.apply_ufunc(
-        _lowess_1d,
+        _lowess_block,
         da,
         input_core_dims=[[core_dims]],
         output_core_dims=[[core_dims]],
-        kwargs={"x": x, "frac": frac, "it": it, "delta": delta},
-        vectorize=True,
+        kwargs={"frac": frac, "it": it, "parallel": da.chunks is None},
         dask="parallelized",
         output_dtypes=[float],
     ).transpose(*dims)

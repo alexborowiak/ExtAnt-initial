@@ -3,8 +3,9 @@ import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
 
-def _sorted_quantiles(values, q):
-    """Linear-interpolation quantiles along the last axis, ignoring NaN, for every series at once."""
+def _sorted_quantiles(values, q, n_dims=1):
+    """Linear-interpolation quantiles over the last ``n_dims`` axes, ignoring NaN, for every series at once."""
+    values = values.reshape(*values.shape[:values.ndim - n_dims], -1)
     ordered = np.sort(values, axis=-1)  # NaN sorts to the end
     n = np.sum(~np.isnan(ordered), axis=-1, keepdims=True)
     position = (n - 1) * q
@@ -13,7 +14,11 @@ def _sorted_quantiles(values, q):
     fraction = position - np.floor(position)
     low_values = np.take_along_axis(ordered, lower, axis=-1)
     high_values = np.take_along_axis(ordered, upper, axis=-1)
-    return np.where(n > 0, low_values + fraction * (high_values - low_values), np.nan)
+    #(c): numpy's own interpolation (np.lib._function_base_impl._lerp), so the results match it bit for bit
+    difference = high_values - low_values
+    interpolated = np.where(fraction >= 0.5, high_values - difference * (1 - fraction),
+                            low_values + difference * fraction)
+    return np.where(n > 0, interpolated, np.nan)
 
 
 def nan_quantile(da, q, dim):
@@ -27,18 +32,19 @@ def nan_quantile(da, q, dim):
     Args:
         da (xr.DataArray): Data.
         q (float | Sequence[float]): Quantile level(s).
-        dim (str): Dimension to reduce.
+        dim (str | Sequence[str]): Dimension(s) to reduce; several are pooled.
 
     Returns:
         xr.DataArray: With a ``quantile`` dim (last) if ``q`` is a sequence, without one if it is a scalar.
     """
     levels = np.atleast_1d(np.asarray(q, dtype=float))
+    dims = [dim] if isinstance(dim, str) else list(dim)
     if da.chunks is not None:
-        da = da.chunk({dim: -1})
+        da = da.chunk({d: -1 for d in dims})
     result = xr.apply_ufunc(
         _sorted_quantiles, da,
-        input_core_dims=[[dim]], output_core_dims=[["quantile"]],
-        kwargs={"q": levels}, dask="parallelized", output_dtypes=[float],
+        input_core_dims=[dims], output_core_dims=[["quantile"]],
+        kwargs={"q": levels, "n_dims": len(dims)}, dask="parallelized", output_dtypes=[float],
         dask_gufunc_kwargs={"output_sizes": {"quantile": levels.size}},
     ).assign_coords(quantile=levels)
     return result.isel(quantile=0, drop=True) if np.ndim(q) == 0 else result

@@ -1,6 +1,9 @@
 """Resampling, permutation and t-test significance for experiment vs reference ensembles.
 
 All resampling works on whole members, so each member's time series stays intact.
+
+The Q-range tests run in numba kernels, compiled (like quantile_calc's)
+parallel over grid points for data in memory and serial for dask blocks.
 """
 
 from functools import partial
@@ -8,8 +11,9 @@ from functools import partial
 import numpy as np
 import scipy.special
 import xarray as xr
+from numba import njit, prange
 
-from quantile_calc import quantile_range
+from quantile_calc import numpy_lerp, quantile_range
 from xarray_datatree_utils import skip_empty
 
 
@@ -110,18 +114,203 @@ def permutation_samples(exp, reference, statistic=None, n_trials=10_000, batch_s
 
     Args:
         statistic (callable | None): Maps a DataArray with a ``member`` dim to the
-            test statistic. Defaults to the pooled Q95-Q05 range.
+            test statistic. None is the pooled Q95-Q05 range, run by the fast
+            ``qrange_permutation_samples`` (same draws, same numbers).
+        batch_size (int): Trials per batch for a custom ``statistic``.
 
     Returns:
         xr.DataArray: float32 samples along a ``trial`` dim.
     """
-    statistic = statistic or quantile_range
+    if statistic is None:
+        return qrange_permutation_samples(exp, reference, n_trials=n_trials, seed=seed).compute()
     rng = np.random.default_rng(seed)
     batches = [
         b.astype("float32")
         for b in permutation_batches(exp, reference, statistic, n_trials, batch_size, rng)
     ]
     return xr.concat(batches, dim="trial").assign_coords(trial=np.arange(n_trials))
+
+
+# ---------------------------------------------------------------------------
+# Q-range kernels (numba)
+# ---------------------------------------------------------------------------
+# A trial's Q-range pools some members' values. Instead of gathering and sorting
+# those values for every trial, each grid point's pool is sorted once, and each
+# trial reads its quantiles off it by walking in from the nearer end and counting
+# only its own members' values: a few dozen steps for Q05 and Q95 instead of a sort.
+
+@njit
+def _sorted_pool(block, values, members, counts):
+    """Sort one point's (member, sample) values ascending, dropping NaN; returns how many are valid.
+
+    ``members`` gets the member of each sorted value and ``counts`` each member's number of valid values.
+    """
+    n_members, n_samples = block.shape
+    n = 0
+    for m in range(n_members):
+        counts[m] = 0
+        for j in range(n_samples):
+            value = block[m, j]
+            if not np.isnan(value):
+                values[n] = value
+                members[n] = m
+                counts[m] += 1
+                n += 1
+    order = np.argsort(values[:n])
+    values[:n] = values[:n][order]
+    members[:n] = members[:n][order]
+    return n
+
+
+@njit
+def _group_quantile(values, members, n_valid, in_group, n_group, q, from_top):
+    """Quantile ``q`` of the group's values, read off the pool (``values``, sorted ascending).
+
+    Gives np.quantile's number for those values alone. Walks from the top for
+    high quantiles and from the bottom for low ones, counting only the group.
+    """
+    position = (n_group - 1) * q
+    k = int(np.floor(position))
+    low = high = np.nan
+    count = -1
+    if from_top:
+        #(c): Counting down from the largest, value k is number n_group - 1 - k and value k + 1 the one before it
+        for i in range(n_valid - 1, -1, -1):
+            if in_group[members[i]]:
+                count += 1
+                if count == n_group - 2 - k:
+                    high = values[i]
+                elif count == n_group - 1 - k:
+                    low = values[i]
+                    break
+    else:
+        for i in range(n_valid):
+            if in_group[members[i]]:
+                count += 1
+                if count == k:
+                    low = values[i]
+                elif count == k + 1:
+                    high = values[i]
+                    break
+    if k >= n_group - 1:
+        return low
+    return numpy_lerp(low, high, position - k)
+
+
+@njit
+def _group_qrange(values, members, n_valid, in_group, n_group, q_low, q_high):
+    if n_group == 0:
+        return np.nan
+    return (_group_quantile(values, members, n_valid, in_group, n_group, q_high, True)
+            - _group_quantile(values, members, n_valid, in_group, n_group, q_low, False))
+
+
+def _permutation_qrange(pooled, in_exp, q_low, q_high, out):
+    """``out[s, t]``: trial t's experiment-group Q-range minus its reference-group Q-range, at point s.
+
+    Args:
+        pooled (np.ndarray): (point, member, sample), experiment and reference members together.
+        in_exp (np.ndarray): (trial, member) True for the members labelled experiment in that trial.
+    """
+    n_points, n_members, n_samples = pooled.shape
+    for s in prange(n_points):
+        values = np.empty(n_members * n_samples)
+        members = np.empty(n_members * n_samples, dtype=np.int64)
+        counts = np.empty(n_members, dtype=np.int64)
+        in_ref = np.empty(n_members, dtype=np.bool_)
+        n_valid = _sorted_pool(pooled[s], values, members, counts)
+        for t in range(in_exp.shape[0]):
+            n_exp = 0
+            for m in range(n_members):
+                in_ref[m] = not in_exp[t, m]
+                if in_exp[t, m]:
+                    n_exp += counts[m]
+            out[s, t] = (_group_qrange(values, members, n_valid, in_exp[t], n_exp, q_low, q_high)
+                         - _group_qrange(values, members, n_valid, in_ref, n_valid - n_exp, q_low, q_high))
+
+
+def _window_qrange(data, reference, selected, starts, length, trials, first, q_low, q_high, out):
+    """``out[s, t]``: the Q-range of trial t's selected members over its window of years, minus ``reference[s]``.
+
+    Trials are grouped by window, so each point's window is sorted once for all
+    the trials that use it: trials ``trials[first[w]:first[w + 1]]`` use the
+    years ``starts[w]:starts[w] + length``.
+
+    Args:
+        data (np.ndarray): (point, member, year).
+        reference (np.ndarray): (point,).
+        selected (np.ndarray): (trial, member) True for the members each trial samples.
+    """
+    n_points, n_members, _ = data.shape
+    for s in prange(n_points):
+        values = np.empty(n_members * length)
+        members = np.empty(n_members * length, dtype=np.int64)
+        counts = np.empty(n_members, dtype=np.int64)
+        for w in range(starts.size):
+            n_valid = _sorted_pool(data[s, :, starts[w]:starts[w] + length], values, members, counts)
+            for i in range(first[w], first[w + 1]):
+                t = trials[i]
+                n_group = 0
+                for m in range(n_members):
+                    if selected[t, m]:
+                        n_group += counts[m]
+                out[s, t] = _group_qrange(values, members, n_valid, selected[t], n_group, q_low, q_high) - reference[s]
+
+
+_permutation_qrange_serial = njit(nogil=True)(_permutation_qrange)
+_permutation_qrange_parallel = njit(parallel=True)(_permutation_qrange)
+_window_qrange_serial = njit(nogil=True)(_window_qrange)
+_window_qrange_parallel = njit(parallel=True)(_window_qrange)
+
+
+def _permutation_block(pooled, in_exp, q_low, q_high, parallel):
+    points = np.ascontiguousarray(pooled.reshape(-1, *pooled.shape[-2:]))
+    out = np.empty((points.shape[0], in_exp.shape[0]), dtype=np.float32)
+    (_permutation_qrange_parallel if parallel else _permutation_qrange_serial)(points, in_exp, q_low, q_high, out)
+    return out.reshape(*pooled.shape[:-2], in_exp.shape[0])
+
+
+def _window_block(data, reference, selected, starts, length, trials, first, q_low, q_high, parallel):
+    points = np.ascontiguousarray(data.reshape(-1, *data.shape[-2:]))
+    out = np.empty((points.shape[0], selected.shape[0]), dtype=np.float32)
+    kernel = _window_qrange_parallel if parallel else _window_qrange_serial
+    reference = np.ascontiguousarray(np.broadcast_to(reference, data.shape[:-2]), dtype=float).reshape(-1)
+    kernel(points, reference, selected, starts, length, trials, first, q_low, q_high, out)
+    return out.reshape(*data.shape[:-2], selected.shape[0])
+
+
+def _per_trial(block, inputs, core_dims, n_trials, **kwargs):
+    """Run a kernel block function over every point of ``inputs``, adding a ``trial`` dim (first)."""
+    first = inputs[0]
+    if first.chunks is not None:
+        inputs = [inputs[0].chunk({d: -1 for d in core_dims[0]}), *inputs[1:]]
+    out = xr.apply_ufunc(
+        block, *inputs,
+        input_core_dims=core_dims, output_core_dims=[["trial"]],
+        kwargs={**kwargs, "parallel": first.chunks is None},
+        dask="parallelized", output_dtypes=[np.float32],
+        dask_gufunc_kwargs={"output_sizes": {"trial": n_trials}},
+    )
+    return out.transpose("trial", ...).assign_coords(trial=np.arange(n_trials))
+
+
+def qrange_permutation_samples(exp, reference, quantiles=(0.05, 0.95), n_trials=10_000, seed=0):
+    """Permutation null of the experiment-minus-reference pooled Q-range, in one numba pass.
+
+    Whole members are randomly relabelled between the two ensembles, keeping
+    their sizes, exactly as ``permutation_samples`` does (the same random
+    draws for the same seed, so the same numbers). Lazy for dask input.
+
+    Returns:
+        xr.DataArray: float32 samples along a ``trial`` dim (first).
+    """
+    rng = np.random.default_rng(seed)
+    pooled = pool_members(exp, reference)
+    n_exp, n_total = exp.sizes["member"], pooled.sizes["pool_member"]
+    in_exp = np.zeros((n_trials, n_total), dtype=np.bool_)
+    np.put_along_axis(in_exp, np.argsort(rng.random((n_trials, n_total)), axis=1)[:, :n_exp], True, axis=1)
+    return _per_trial(_permutation_block, [pooled], [["pool_member", "year"]], n_trials,
+                      in_exp=in_exp, q_low=quantiles[0], q_high=quantiles[1])
 
 
 def sample_hist_nat_qrange_changes(
@@ -131,7 +320,6 @@ def sample_hist_nat_qrange_changes(
     years=11,
     quantiles=(0.05, 0.95),
     n_trials=10_000,
-    batch_size=100,
     seed=0,
 ):
     """Sample N distinct hist-nat members over random ``years``-year windows.
@@ -170,43 +358,24 @@ def sample_hist_nat_qrange_changes(
 
     rng.shuffle(sampled_centre_indices)
 
-    year_offsets = np.arange(-half_window, half_window + 1)
+    # N distinct members per trial (the N smallest of one uniform draw per member).
+    sampled_member_indices = np.argpartition(
+        rng.random((n_trials, n_hist_nat_members)), n_members_to_sample - 1, axis=1,
+    )[:, :n_members_to_sample]
+    selected = np.zeros((n_trials, n_hist_nat_members), dtype=np.bool_)
+    np.put_along_axis(selected, sampled_member_indices, True, axis=1)
 
-    qrange_change_batches = []
+    # Trials grouped by window, so each window is sorted once.
+    window_starts = sampled_centre_indices - half_window
+    trials = np.argsort(window_starts, kind="stable")
+    starts, counts = np.unique(window_starts, return_counts=True)
+    first = np.concatenate([[0], np.cumsum(counts)])
 
-    for start, n in _batches(n_trials, batch_size):
-        # N distinct members per trial.
-        sampled_member_indices = np.argpartition(
-            rng.random((n, n_hist_nat_members)),
-            n_members_to_sample - 1,
-            axis=1,
-        )[:, :n_members_to_sample]
-
-        # The window of years for each trial.
-        sampled_year_indices = (
-            sampled_centre_indices[start:start + n][:, None]
-            + year_offsets[None, :]
-        )
-
-        # trial x sample_member x sample_year x season x lat x lon
-        sampled_hist_nat_da = hist_nat_da.isel(
-            member=xr.DataArray(sampled_member_indices, dims=("trial", "sample_member")),
-            year=xr.DataArray(sampled_year_indices, dims=("trial", "sample_year")),
-        )
-
-        sampled_qrange_da = quantile_range(
-            sampled_hist_nat_da,
-            quantiles=quantiles,
-            dims=("sample_member", "sample_year"),
-        )
-
-        qrange_change_batches.append(
-            (sampled_qrange_da - hist_nat_reference_qrange_da)
-            .compute()
-            .astype("float32")
-        )
-
-    return xr.concat(qrange_change_batches, dim="trial").assign_coords(trial=np.arange(n_trials))
+    return _per_trial(
+        _window_block, [hist_nat_da, hist_nat_reference_qrange_da], [["member", "year"], []], n_trials,
+        selected=selected, starts=starts, length=years, trials=trials, first=first,
+        q_low=quantiles[0], q_high=quantiles[1],
+    ).compute()
 
 
 def qrange_significance(
@@ -216,7 +385,6 @@ def qrange_significance(
     years=11,
     quantiles=(0.05, 0.95),
     n_trials=10_000,
-    batch_size=100,
     alpha=0.05,
     seed=0,
 ):
@@ -249,7 +417,7 @@ def qrange_significance(
 
     hist_nat_samples = sample_hist_nat_qrange_changes(
         hist_nat, hist_nat_qrange, n_members_to_sample,
-        years=years, quantiles=quantiles, n_trials=n_trials, batch_size=batch_size, seed=seed,
+        years=years, quantiles=quantiles, n_trials=n_trials, seed=seed,
     )
 
     results = []
@@ -262,12 +430,11 @@ def qrange_significance(
         lower, upper, outside = outside_bounds(hist_nat_samples, change, alpha=alpha)
 
         # 2. Experiment vs hist-nat over the same years.
+        #(c): Reduced to a p-value where the samples are made (on the workers, for dask input)
         period_difference = exp_qrange - hist_nat_period_qrange
-        permutations = permutation_samples(
-            exp_da, hist_nat_period, statistic=qrange,
-            n_trials=n_trials, batch_size=batch_size, seed=seed,
-        )
-        pvalue = pvalue_two_sided(permutations, period_difference, method="tails")
+        permutations = qrange_permutation_samples(exp_da, hist_nat_period, quantiles=quantiles,
+                                                  n_trials=n_trials, seed=seed)
+        pvalue = pvalue_two_sided(permutations, period_difference, method="tails").compute()
 
         results.append(xr.Dataset({
             "hist_nat_qrange": hist_nat_qrange,
