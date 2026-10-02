@@ -111,3 +111,32 @@ def test_shift_and_widen_and_scatter():
                           attrs={"lat_max": -60})
     rcp.response_scatter(regional)
     rcp.response_scatter(regional, y="tail_asymmetry")
+
+
+@pytest.fixture(scope="module")
+def spatial_table():
+    """``ev.spatial_evaluation`` with step 8 for two toy models on a small map (B with too little variability)."""
+    rng = np.random.default_rng(5)
+    coords = {"year": np.arange(1979, 2014), "season": ["DJF", "JJA"], "lat": [-80.0, -75.0, -70.0],
+              "lon": [0.0, 90.0, 180.0, 270.0]}
+    shape = tuple(len(v) for v in coords.values())
+    obs = xr.DataArray(rng.standard_normal(shape), dims=tuple(coords), coords=coords)
+    tables = []
+    for model, noise in (("A", 1.0), ("B", 0.5)):
+        ensemble, aligned = ev.align(xr.DataArray(noise * rng.standard_normal((25, *shape)),
+                                                  dims=("member", *coords), coords=coords), obs)
+        whole = ev.spatial_evaluation(ensemble, aligned)
+        early, late = (ev.spatial_evaluation(ensemble, aligned, period=p)
+                       for p in (slice(1979, 1996), slice(1997, 2013)))
+        tables.append(whole.assign(period_diagnosis=ev.period_comparison(whole, early, late))
+                      .expand_dims(model=[model]))
+    return xr.concat(tables, "model")
+
+
+def test_spatial_evaluation_figures(spatial_table):
+    pytest.importorskip("cartopy")
+    evp.spatial_maps(spatial_table)
+    evp.diagnosis_maps(spatial_table)
+    evp.diagnosis_maps(spatial_table, variable="period_diagnosis")
+    evp.adequate_count_maps(ev.adequate_count(spatial_table))
+

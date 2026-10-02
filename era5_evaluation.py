@@ -27,7 +27,9 @@ Sections
 7.  Rank histograms     the Suarez-Gutierrez et al. (2021) test
 8.  Distributions       kernel density estimates and quantiles
 9.  Plume membership    is ERA5 inside the ensemble range?
-10. Synthetic data      toy ensembles with a known answer, to demonstrate the tests
+10. Spatial evaluation  Suarez-Gutierrez et al. (2021), section 2.2.2: at every grid point, how
+                        often ERA5 is below, above and in the middle of the ensemble, and why
+11. Synthetic data      toy ensembles with a known answer, to demonstrate the tests
 
 Conventions
 -----------
@@ -46,10 +48,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
+import scipy.stats
 import xarray as xr
 
 from quantile_calc import lowess_matrix_xarray, seasonal_mean
-from significance import pvalue_two_sided
+from significance import area_mean, pvalue_two_sided
 from xarray_calc import split_time
 from xarray_stats import nan_quantile
 
@@ -1056,7 +1059,8 @@ def distribution_summary(ensemble, obs, treatments=("raw", "anomaly"), sample_di
 # ---------------------------------------------------------------------------
 
 #(t): Ensemble quantiles drawn as the plume, widest band first
-PLUME_QUANTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
+#(c): 12.5-87.5% is the central 75% of Suarez-Gutierrez et al. (2021)
+PLUME_QUANTILES = (0.05, 0.125, 0.5, 0.875, 0.95)
 
 
 def ensemble_plume(ensemble, obs, treatment="raw", quantiles=PLUME_QUANTILES, sample_dim=SAMPLE_DIM,
@@ -1074,6 +1078,7 @@ def ensemble_plume(ensemble, obs, treatment="raw", quantiles=PLUME_QUANTILES, sa
             minimum, maximum  the ensemble range at each sample
             obs               ERA5 (treated)
             below, above      where ERA5 is outside the range (1.0 or 0.0; NaN where missing)
+            central           where ERA5 is inside the members' central 75%, 12.5-87.5% (1.0 or 0.0)
             n_members         N
             expected_outside  % expected outside by chance
         ``n_members`` and ``expected_outside`` are variables rather than
@@ -1085,6 +1090,7 @@ def ensemble_plume(ensemble, obs, treatment="raw", quantiles=PLUME_QUANTILES, sa
     minimum = ensemble.min(member_dim)
     maximum = ensemble.max(member_dim)
     present = obs.notnull()
+    central = ensemble.quantile(list(CENTRAL_RANGE), dim=member_dim)
     return xr.Dataset({
         "quantiles": ensemble.quantile(list(quantiles), dim=member_dim),
         "minimum": minimum,
@@ -1092,19 +1098,22 @@ def ensemble_plume(ensemble, obs, treatment="raw", quantiles=PLUME_QUANTILES, sa
         "obs": obs,
         "below": (obs < minimum).where(present),
         "above": (obs > maximum).where(present),
+        "central": ((obs >= central.isel(quantile=0, drop=True))
+                    & (obs <= central.isel(quantile=1, drop=True))).where(present),
         "n_members": n_members,
         "expected_outside": 200 / (n_members + 1),
     }, attrs={"treatment": treatment})
 
 
 def outside_frequency(plume, dims=SAMPLE_DIM):
-    """% of samples with ERA5 below, above and outside the ensemble range, and the number of samples."""
+    """% of samples with ERA5 below, above and outside the ensemble range, and inside its central 75%."""
     below = 100 * plume["below"].mean(dims)
     above = 100 * plume["above"].mean(dims)
     return xr.Dataset({
         "below": below,
         "above": above,
         "outside": below + above,
+        "central": 100 * plume["central"].mean(dims),
         "expected_outside": plume["expected_outside"],
         "n_samples": plume["below"].count(dims),
     })
@@ -1178,7 +1187,276 @@ def summary_table(results, rank_statistics=SUMMARY_RANKS, member_dim=MEMBER_DIM)
 
 
 # ---------------------------------------------------------------------------
-# 10. Synthetic ensembles with a known answer
+# 10. Spatial evaluation (Suarez-Gutierrez et al., 2021, section 2.2.2)
+# ---------------------------------------------------------------------------
+# At a grid point the paper does not test rank histograms against pseudo-
+# observations (that is for the global mean). It reduces the histogram to three
+# numbers, how often the observations are below every member, above every
+# member, and inside the members' central 75%, and compares them with what a
+# perfect model would give, using generous fixed thresholds. When the edge
+# years happen then says whether the forced response or the variability is wrong.
+
+#(t): The members' central 75%
+CENTRAL_RANGE = (0.125, 0.875)
+
+#(t): The paper's thresholds, generous because short records push the percentages up by chance:
+#(c): a perfect model puts ERA5 below (or above) every member 100 / (N + 1) % of the time, and 75% in the middle
+EDGE_THRESHOLD = 10       # % of years below (or above) every member: at least this is a problem
+CENTRAL_THRESHOLD = 80    # % of years inside the central 75%: more than this is a problem
+
+#(t): Too few years, or too few members for the fixed 10% (N = 10 puts ERA5 beyond a member 9% of the time
+#(c): by chance), and a grid point is not tested. 20 is the smallest ensemble in the paper (5% by chance)
+MIN_YEARS = 10
+MIN_MEMBERS = 20
+
+#(t): Share of a problem's years in one half of the period for it to count as happening "mostly" then
+TIMING_SHARE = 2 / 3
+
+#(t): Step 7, what is wrong at a grid point
+DIAGNOSES = {
+    0: "adequate",                 # none of the problems below
+    1: "warms too much",           # ERA5 below the members late (or above them early): forced response too strong
+    2: "warms too little",         # ERA5 above the members late (or below them early): forced response too weak
+    3: "too little variability",   # ERA5 both below and above the members, throughout: spread too narrow
+    4: "too much variability",     # ERA5 inside the central 75% too often: spread too wide
+    5: "one tail too short",       # ERA5 beyond one edge only, throughout: the shape of the distribution
+}
+
+#(t): Step 8, for a problem over the whole record: does it stay the same in an early and a late period?
+PERIOD_ALPHA = 0.1
+PERIOD_DIAGNOSES = {
+    0: "no problem over the whole record",
+    1: "same problem in both: variability",
+    2: "problem changes: forced response",
+}
+
+
+def _central_of_others(values, low, high):
+    """For each member (last axis), whether it lies inside the [low, high] quantiles of the other members.
+
+    The quantiles of the other N - 1 are read off the sorted full ensemble,
+    skipping the member itself, so there is no loop over members.
+    """
+    ordered = np.sort(values, axis=-1)
+    position = np.argsort(np.argsort(values, axis=-1), axis=-1)
+    n_others = values.shape[-1] - 1
+
+    def others_quantile(q):
+        index = (n_others - 1) * q
+        k = int(np.floor(index))
+
+        def order_statistic(j):
+            #(c): The j-th smallest of the others is the j-th of the ensemble, or the next one once past the member
+            return np.take_along_axis(ordered, np.where(j < position, j, j + 1), axis=-1)
+
+        lower, upper = order_statistic(k), order_statistic(min(k + 1, n_others - 1))
+        return lower + (index - k) * (upper - lower)
+
+    return (values >= others_quantile(low)) & (values <= others_quantile(high))
+
+
+def _perfect_model_thresholds(ensemble, present, member_dim, sample_dim, quantile=0.95):
+    """Optional step 6, not in the paper: the same three percentages for each member treated as ERA5.
+
+    Each member is placed among the other N - 1; the ``quantile`` across
+    members of each percentage is what a perfect model exceeds only
+    1 - ``quantile`` of the time.
+    """
+    position = pseudo_observation_ranks(ensemble, member_dim)
+    n_members = ensemble.sizes[member_dim]
+    central = xr.apply_ufunc(
+        _central_of_others, ensemble, input_core_dims=[[member_dim]], output_core_dims=[[member_dim]],
+        kwargs={"low": CENTRAL_RANGE[0], "high": CENTRAL_RANGE[1]}, dask="parallelized", output_dtypes=[bool],
+    )
+    pseudo = {
+        "below": (position == 0).where(present),
+        "above": (position == n_members - 1).where(present),
+        "central": central.where(present),
+    }
+    return {name: nan_quantile(100 * flag.mean(sample_dim), quantile, member_dim) for name, flag in pseudo.items()}
+
+
+def spatial_evaluation(ensemble, obs, reference=None, period=None, thresholds="fixed",
+                       sample_dim=SAMPLE_DIM, member_dim=MEMBER_DIM):
+    """The grid-point evaluation of Suarez-Gutierrez et al. (2021), at every grid point (and season) at once.
+
+    1-2. Anomalies: each member and ERA5 minus its own mean over ``reference``
+         (all the years by default). The constant offset is gone; the forced
+         change and the variability are left.
+    3.   Only years ERA5 has (``align`` has already masked the rest, in ERA5
+         and every member); with fewer than ``MIN_YEARS``, a point is untested.
+    4.   Each year, is ERA5 below every member (rank 0) or above every member (rank N)?
+    5.   % of years below, % above, and % inside the members' central 75% (12.5-87.5%).
+    6.   Compare with a perfect model: ``thresholds="fixed"`` uses the paper's
+         10%, 10% and 80%; ``"perfect_model"`` (not in the paper) treats each
+         member in turn as ERA5 against the other N - 1 and flags a percentage
+         above the 95th percentile of theirs.
+    7.   Diagnose (``DIAGNOSES``), using when the edge years fall: in the first
+         or the second half of the period. ERA5 below the members late, or
+         above them early, means the model warms too much (anomalies are
+         relative to the whole record, so a model that warms too fast looks too
+         warm late and too cold early, relative to ERA5); the reverse, too
+         little. Both edges throughout means too little variability; too often
+         in the middle, too much; one edge throughout, a tail of the wrong length.
+
+    Step 8 is ``period_comparison``; step 9 (the area score and the model
+    count) is ``adequate_area`` and ``adequate_count``.
+
+    Args:
+        ensemble (xr.DataArray): Members with ``member_dim`` and ``sample_dim``, from ``align``.
+        obs (xr.DataArray): ERA5 from ``align``.
+        reference (slice | None): Years whose mean is removed from every series (all if None).
+        period (slice | None): Years to evaluate, after the anomalies are taken, for step 8.
+        thresholds (str): "fixed" (the paper) or "perfect_model".
+        sample_dim, member_dim (str): Dimension names.
+
+    Returns:
+        xr.Dataset on the remaining dims (season, lat, lon):
+            below, above, central                   % of years
+            below_late, above_late                  share of those below / above years in the second half
+            below_threshold, ...                    the thresholds used (step 6)
+            below_flag, above_flag, central_flag    each beyond its threshold (1/0, NaN if untested)
+            diagnosis                               key of ``DIAGNOSES`` (NaN if untested)
+            adequate                                1 adequate, 0 not, NaN untested
+            n_years, n_members
+    """
+    if thresholds not in ("fixed", "perfect_model"):
+        raise ValueError(f"thresholds must be 'fixed' or 'perfect_model', got {thresholds!r}")
+    ensemble = treat(ensemble, "anomaly", sample_dim, reference)
+    obs = treat(obs, "anomaly", sample_dim, reference)
+    if period is not None:
+        ensemble, obs = ensemble.sel({sample_dim: period}), obs.sel({sample_dim: period})
+
+    #(t): Steps 3-5
+    present = obs.notnull()
+    n_years = present.sum(sample_dim)
+    n_members = ensemble.sizes[member_dim]
+    central_range = nan_quantile(ensemble, list(CENTRAL_RANGE), member_dim)
+    flags = {
+        "below": (obs < ensemble.min(member_dim)).where(present),
+        "above": (obs > ensemble.max(member_dim)).where(present),
+        "central": ((obs >= central_range.isel(quantile=0, drop=True))
+                    & (obs <= central_range.isel(quantile=1, drop=True))).where(present),
+    }
+    percent = {name: 100 * flag.mean(sample_dim) for name, flag in flags.items()}
+    years = obs[sample_dim]
+    late = years > (years.min() + years.max()) / 2
+    late_share = {name: flags[name].where(late, 0).sum(sample_dim) / flags[name].sum(sample_dim)
+                  for name in ("below", "above")}
+
+    #(t): Step 6
+    if thresholds == "fixed":
+        limit = {"below": EDGE_THRESHOLD, "above": EDGE_THRESHOLD, "central": CENTRAL_THRESHOLD}
+        beyond = {"below": percent["below"] >= EDGE_THRESHOLD, "above": percent["above"] >= EDGE_THRESHOLD,
+                  "central": percent["central"] > CENTRAL_THRESHOLD}
+        testable = (n_years >= MIN_YEARS) & (n_members >= MIN_MEMBERS)
+    else:
+        limit = _perfect_model_thresholds(ensemble, present, member_dim, sample_dim)
+        beyond = {name: percent[name] > limit[name] for name in percent}
+        testable = n_years >= MIN_YEARS
+
+    #(t): Step 7, each later rule overriding the earlier ones, so a timed edge (the forced response) wins
+    below, above = beyond["below"], beyond["above"]
+    both = below & above
+    below_late, below_early = late_share["below"] >= TIMING_SHARE, late_share["below"] <= 1 - TIMING_SHARE
+    above_late, above_early = late_share["above"] >= TIMING_SHARE, late_share["above"] <= 1 - TIMING_SHARE
+    #(c): With both edges beyond, both must point the same way: a few edge years bunching in one half by chance
+    #(c): is common, and too little variability would otherwise often pass for a forced-response error
+    too_much = xr.where(both, below_late & above_early, (below & below_late) | (above & above_early))
+    too_little = xr.where(both, above_late & below_early, (above & above_late) | (below & below_early))
+    diagnosis = xr.zeros_like(n_years, dtype=float)
+    diagnosis = xr.where(beyond["central"], 4, diagnosis)
+    diagnosis = xr.where(below ^ above, 5, diagnosis)
+    diagnosis = xr.where(both, 3, diagnosis)
+    diagnosis = xr.where(too_little, 2, diagnosis)
+    diagnosis = xr.where(too_much, 1, diagnosis)
+
+    def tested(da):
+        return da.astype(float).where(testable)
+
+    return xr.Dataset({
+        **{name: value.where(testable) for name, value in percent.items()},
+        **{f"{name}_late": share.where(testable) for name, share in late_share.items()},
+        **{f"{name}_threshold": xr.full_like(n_years, value, dtype=float) if np.isscalar(value) else value
+           for name, value in limit.items()},
+        **{f"{name}_flag": tested(flag) for name, flag in beyond.items()},
+        "diagnosis": diagnosis.where(testable),
+        "adequate": tested(diagnosis == 0),
+        "n_years": n_years,
+        "n_members": n_members,
+    }, attrs={"thresholds": thresholds})
+
+
+def _binomial_pvalue(k, n, share):
+    """Two-sided binomial p-value of k successes in n trials with success probability ``share``."""
+    lower = scipy.stats.binom.cdf(k, n, share)
+    upper = scipy.stats.binom.sf(k - 1, n, share)
+    return np.minimum(1, 2 * np.minimum(lower, upper))
+
+
+def period_comparison(whole, early, late, alpha=PERIOD_ALPHA):
+    """Step 8: is a problem over the whole record the same in an early and a late period?
+
+    A model's variability changes little over time, but the forcing does: a
+    problem from the variability shows up as often in both periods, one from
+    the forced response appears, grows or flips between them. Each period is
+    short (~17 years per season), so which thresholds it crosses on its own is
+    largely chance (in 17 years a perfect model is in the central 75% more than
+    80% of the time in about a third of cases). So each problem the whole
+    record flags is tested for an uneven split between the periods instead,
+    with a two-sided binomial test (p < ``alpha``: the forced response):
+
+    - ERA5 beyond the edges: a forced-response error puts ERA5 above the
+      members in one period and below them in the other (or beyond one edge in
+      one period only). So of all the years beyond either edge, the share that
+      fits "too much warming" (above early, below late) is tested against what
+      an even spread over the two periods gives. Pooling both edges is what
+      gives the test its power: each edge alone has only a few years.
+    - ERA5 too often in the middle: its years in the central 75% are tested
+      for being shared between the periods in proportion to their lengths.
+
+    Args:
+        whole, early, late (xr.Dataset): ``spatial_evaluation`` of the whole
+            record and of each period, with the same ``reference``.
+        alpha (float): Significance level of the split tests.
+
+    Returns:
+        xr.DataArray: Key of ``PERIOD_DIAGNOSES``; NaN where untested.
+    """
+    n_early, n_late = early["n_years"], late["n_years"]
+    count = {(name, when): np.round(period[name] * period["n_years"] / 100)
+             for name in ("below", "above", "central") for when, period in (("early", early), ("late", late))}
+    above, below = count["above", "early"] + count["above", "late"], count["below", "early"] + count["below", "late"]
+    #(c): Under an even spread an edge year is early with probability n_early / n
+    expected = (above * n_early + below * n_late) / ((n_early + n_late) * (above + below))
+    edge_p = xr.apply_ufunc(_binomial_pvalue, count["above", "early"] + count["below", "late"], above + below, expected)
+    central_p = xr.apply_ufunc(_binomial_pvalue, count["central", "late"],
+                               count["central", "early"] + count["central", "late"], n_late / (n_early + n_late))
+    edge_problem = (whole["below_flag"] == 1) | (whole["above_flag"] == 1)
+    changed = (edge_problem & (edge_p < alpha)) | ((whole["central_flag"] == 1) & (central_p < alpha))
+    out = xr.where(whole["adequate"] == 1, 0, xr.where(changed, 2, 1))
+    return out.where(whole["adequate"].notnull()).rename("period_diagnosis")
+
+
+def adequate_area(result, lat="lat", lon="lon"):
+    """Step 9: % of the tested area (cos-latitude weighted) where the model has no problem."""
+    return 100 * area_mean(result["adequate"], lat=lat, lon=lon)
+
+
+def adequate_count(results, model_dim="model"):
+    """Step 9 across models (Fig. 8 of the paper): how many tested models are adequate at each grid point.
+
+    Returns:
+        xr.Dataset: ``n_adequate`` and ``n_tested``, with ``model_dim`` reduced.
+    """
+    return xr.Dataset({
+        "n_adequate": (results["adequate"] == 1).sum(model_dim),
+        "n_tested": results["adequate"].notnull().sum(model_dim),
+    })
+
+
+# ---------------------------------------------------------------------------
+# 11. Synthetic ensembles with a known answer
 # ---------------------------------------------------------------------------
 
 #(t): Toy cases for demonstrating the tests: keyword arguments for simulate_ensemble

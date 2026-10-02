@@ -63,7 +63,7 @@ ENSEMBLE = {
     "range": "#cde2fb",    # full member range
     "outer": "#9ec5f4",    # 5-95%
     "member": "#86b6ef",   # individual members
-    "inner": "#5598e7",    # 25-75%
+    "inner": "#5598e7",    # central 75%, 12.5-87.5%
     "pooled": "#1c5cab",   # pooled ensemble
     "median": "#104281",   # ensemble median
 }
@@ -379,7 +379,7 @@ def draw_plume_panel(ax, plume, context=None, x_dim="year", note=True):
     ax.fill_between(x, plume["minimum"], plume["maximum"], color=ENSEMBLE["range"], lw=0, zorder=1)
     ax.fill_between(x, quantiles.sel(quantile=0.05), quantiles.sel(quantile=0.95),
                     color=ENSEMBLE["outer"], lw=0, zorder=2)
-    ax.fill_between(x, quantiles.sel(quantile=0.25), quantiles.sel(quantile=0.75),
+    ax.fill_between(x, quantiles.sel(quantile=0.125), quantiles.sel(quantile=0.875),
                     color=ENSEMBLE["inner"], lw=0, zorder=3)
     ax.plot(x, quantiles.sel(quantile=0.5), color=ENSEMBLE["median"], lw=1.3, zorder=4)
 
@@ -400,7 +400,9 @@ def draw_plume_panel(ax, plume, context=None, x_dim="year", note=True):
         n = int(plume["below"].count())
         outside = int((plume["below"] + plume["above"]).sum())
         expected = float(plume["expected_outside"])
-        ax.text(0.99, 0.03, f"outside {outside}/{n} ({100 * outside / max(n, 1):.0f}%) · chance {expected:.0f}%",
+        central = 100 * float(plume["central"].mean()) if "central" in plume else np.nan
+        ax.text(0.99, 0.03, f"outside {outside}/{n} ({100 * outside / max(n, 1):.0f}%) · chance {expected:.0f}%"
+                            f" · central 75%: {central:.0f}%",
                 transform=ax.transAxes, ha="right", va="bottom", fontsize=7.5, color=INK_2, zorder=20,
                 bbox=dict(facecolor="white", edgecolor="none", alpha=0.8, pad=1))
 
@@ -462,7 +464,8 @@ def plume_grid(plumes, row_dim="season", col_dim="treatment", context=None, unit
         Patch(color=ENSEMBLE["outer"]),
         Patch(color=ENSEMBLE["range"]),
     ]
-    labels = ["ERA5", "ERA5 above / below every member", "Ensemble median", "25–75%", "5–95%", "Full range"]
+    labels = ["ERA5", "ERA5 above / below every member", "Ensemble median", "Central 75% (12.5–87.5%)", "5–95%",
+              "Full range"]
     if context is not None:
         handles += [Line2D([], [], color=CONTEXT_COLOR, lw=1.2, ls=(0, (4, 2))), Line2D([], [], color=CONTEXT_COLOR, lw=1)]
         labels += ["hist-nat median", "hist-nat 5–95%"]
@@ -1128,3 +1131,148 @@ def scenario_grid(demo, season="DJF", descriptions=None, n_bins=10, title=None):
     ])
     _suptitle(fig, title)
     return core.Panels(fig=fig, axes=axes)
+
+
+# ---------------------------------------------------------------------------
+# 8. Spatial evaluation (Suarez-Gutierrez et al., 2021, section 2.2.2)
+# ---------------------------------------------------------------------------
+
+#(t): The paper's map: ERA5 above every member (red) or below (blue) in >= 10% (light) or >= 20% (dark) of years
+EDGE_CLASSES = ("neither", "above ≥ 10%", "above ≥ 20%", "below ≥ 10%", "below ≥ 20%", "both ≥ 10%")
+EDGE_COLORS = ("#ffffff", "#f7aba4", "#a6272a", "#9ec5f4", "#1c5cab", "#8a5fbf")
+
+#(t): One colour per ev.DIAGNOSES class (white: adequate), and per ev.PERIOD_DIAGNOSES class
+DIAGNOSIS_COLORS = ("#ffffff", "#d03b3b", "#2a78d6", "#eda100", "#8a8985", "#1baf7a")
+PERIOD_COLORS = ("#ffffff", "#eda100", "#d03b3b")
+
+#(t): Hatching where ERA5 sits in the members' central 75% too often: > 80% and > 90% of years
+CENTRAL_HATCHES = ((ev.CENTRAL_THRESHOLD, "////"), (90, "xxxx"))
+
+
+def edge_class(table):
+    """The paper's colour class at each point: index into ``EDGE_CLASSES``; NaN where untested."""
+    above, below = table["above"], table["below"]
+    edge, strong = ev.EDGE_THRESHOLD, 2 * ev.EDGE_THRESHOLD
+    out = xr.zeros_like(above)
+    out = xr.where(above >= edge, 1, out)
+    out = xr.where(above >= strong, 2, out)
+    out = xr.where(below >= edge, 3, out)
+    out = xr.where(below >= strong, 4, out)
+    out = xr.where((above >= edge) & (below >= edge), 5, out)
+    return out.where(table["adequate"].notnull())
+
+
+def _class_maps(field, table, labels, colors, row_dim, col_dim, title, cbar_label, hatch=False, **grid_kwargs):
+    """Categorical polar maps, one panel per (row, col), with the adequate area in each panel's corner."""
+    from plotting_modules import maps  # needs cartopy
+
+    cmap = ListedColormap(colors).with_extremes(bad="white")
+    levels = np.arange(-0.5, len(labels))
+    grid_kwargs.setdefault("left", 2.0)
+    panels = maps.polar_grid(field, row_dim=row_dim, col_dim=col_dim, levels=levels, cmap=cmap,
+                             norm=BoundaryNorm(levels, cmap.N), discrete=True, ticklabels=list(labels),
+                             title=title, cbar_label=cbar_label, tag=False, **grid_kwargs)
+    rows = field[row_dim].values if row_dim in field.dims else [None]
+    cols = field[col_dim].values if col_dim in field.dims else [None]
+    axes = np.asarray(panels.axes, dtype=object).reshape(len(rows), len(cols))
+    for i, row in enumerate(rows):
+        for j, col in enumerate(cols):
+            cell = table.sel({d: v for d, v in ((row_dim, row), (col_dim, col)) if v is not None})
+            ax = axes[i, j]
+            if bool(cell["adequate"].isnull().all()):
+                ax.text(0.5, 0.5, f"not tested\n(N < {ev.MIN_MEMBERS} or < {ev.MIN_YEARS} years)",
+                        transform=ax.transAxes, ha="center", va="center", fontsize=8, color=INK_2, zorder=20,
+                        bbox=dict(facecolor="white", edgecolor="none", alpha=0.9, pad=3))
+                continue
+            if hatch:
+                for threshold, pattern in CENTRAL_HATCHES:
+                    maps.plot_hatch(ax, cell["central"] > threshold, hatch=pattern, color=(0, 0, 0, 0.45),
+                                    linewidth=0.4)
+            ax.text(0.0, 1.0, f"adequate {float(ev.adequate_area(cell)):.0f}%", transform=ax.transAxes,
+                    ha="left", va="top", fontsize=7.5, color=INK_2, zorder=20)
+    return panels
+
+
+@plot("figure")
+@_styled
+def spatial_maps(table, row_dim="model", col_dim="season", title=None, **grid_kwargs):
+    """Fig. 5 of Suarez-Gutierrez et al. (2021): where ERA5 is beyond the members, or too often in their middle.
+
+    Colour: ERA5 above every member (red) or below every member (blue) in at
+    least 10% (light) or 20% (dark) of the years; purple, both. Hatching: ERA5
+    inside the members' central 75% in more than 80% (////) or 90% (xxxx) of
+    the years, i.e. the model's spread is too wide. White without hatching is
+    adequate; each panel's corner gives the adequate share of the area.
+
+    Args:
+        table (xr.Dataset): ``ev.spatial_evaluation`` output with ``row_dim`` and ``col_dim``.
+        row_dim, col_dim (str): Dimensions mapped to rows and columns.
+        title (str | None): Figure title.
+        **grid_kwargs: Passed to ``maps.polar_grid``.
+
+    Returns:
+        core.Panels
+    """
+    table = order_seasons(table)
+    return _class_maps(
+        edge_class(table), table, EDGE_CLASSES, EDGE_COLORS, row_dim, col_dim,
+        title or "Where ERA5 is beyond the ensemble, or too often in its middle",
+        "ERA5 above (red) / below (blue) every member in ≥ 10% or ≥ 20% of years.  "
+        "Hatched: ERA5 in the members' central 75% in > 80% (////) or > 90% (xxxx) of years",
+        hatch=True, **grid_kwargs,
+    )
+
+
+@plot("figure")
+@_styled
+def diagnosis_maps(table, row_dim="model", col_dim="season", variable="diagnosis", title=None, **grid_kwargs):
+    """Step 7 (or step 8, with ``variable="period_diagnosis"``): what is wrong at each grid point.
+
+    Args:
+        table (xr.Dataset): ``ev.spatial_evaluation`` output (with ``period_diagnosis`` for step 8).
+        row_dim, col_dim (str): Dimensions mapped to rows and columns.
+        variable (str): "diagnosis" (``ev.DIAGNOSES``) or "period_diagnosis" (``ev.PERIOD_DIAGNOSES``).
+        title (str | None): Figure title.
+        **grid_kwargs: Passed to ``maps.polar_grid``.
+
+    Returns:
+        core.Panels
+    """
+    table = order_seasons(table)
+    if variable == "period_diagnosis":
+        labels, colors = ev.PERIOD_DIAGNOSES.values(), PERIOD_COLORS
+        title = title or "Each problem early vs late: the same (variability) or changing (forced response)?"
+    else:
+        labels, colors = ev.DIAGNOSES.values(), DIAGNOSIS_COLORS
+        title = title or "What is wrong at each grid point"
+    return _class_maps(table[variable], table, tuple(labels), colors, row_dim, col_dim, title, None,
+                       **grid_kwargs)
+
+
+@plot("figure")
+@_styled
+def adequate_count_maps(counts, row_dim=None, col_dim="season", title=None, **grid_kwargs):
+    """Fig. 8 of Suarez-Gutierrez et al. (2021): how many models are adequate at each grid point.
+
+    Args:
+        counts (xr.Dataset): ``ev.adequate_count`` output.
+        row_dim, col_dim (str | None): Dimensions mapped to rows and columns.
+        title (str | None): Figure title.
+        **grid_kwargs: Passed to ``maps.polar_grid``.
+
+    Returns:
+        core.Panels
+    """
+    from plotting_modules import maps  # needs cartopy
+
+    counts = order_seasons(counts)
+    n_models = int(counts["n_tested"].max())
+    cmap = ListedColormap(["#ffffff", *plt.get_cmap("Blues")(np.linspace(0.3, 1, max(n_models, 1)))])
+    levels = np.arange(-0.5, n_models + 1)
+    return maps.polar_grid(
+        counts["n_adequate"].where(counts["n_tested"] > 0), row_dim=row_dim, col_dim=col_dim, levels=levels,
+        cmap=cmap, norm=BoundaryNorm(levels, cmap.N), discrete=True,
+        ticklabels=[str(n) for n in range(n_models + 1)],
+        title=title or "Number of models that adequately capture ERA5",
+        cbar_label=f"Models with no problem (of the {n_models} tested)", tag=False, **grid_kwargs,
+    )

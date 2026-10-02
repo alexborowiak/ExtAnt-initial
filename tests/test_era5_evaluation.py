@@ -377,6 +377,74 @@ def test_evaluate_and_summary_table():
 # Calibration (run this file directly)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# 10. Spatial evaluation (Suarez-Gutierrez et al., 2021, section 2.2.2)
+# ---------------------------------------------------------------------------
+
+#(t): 60 independent grid points, one per "season" of the toy ensembles
+SPATIAL_CELLS = [f"cell{i}" for i in range(60)]
+
+
+def _spatial(n_members=50, thresholds="fixed", **world):
+    ens, obs = ev.align(*ev.simulate_ensemble(n_members=n_members, seasons=SPATIAL_CELLS, seed=1, **world))
+    whole = ev.spatial_evaluation(ens, obs, thresholds=thresholds)
+    early = ev.spatial_evaluation(ens, obs, period=slice(1979, 1996), thresholds=thresholds)
+    late = ev.spatial_evaluation(ens, obs, period=slice(1997, 2013), thresholds=thresholds)
+    return whole, ev.period_comparison(whole, early, late)
+
+
+@pytest.mark.parametrize("world, diagnosis, period", [
+    ({}, "adequate", "no problem over the whole record"),
+    ({"trend": 2.0}, "warms too much", "problem changes: forced response"),
+    ({"trend": -1.5}, "warms too little", "problem changes: forced response"),
+    ({"noise": 0.5}, "too little variability", "same problem in both: variability"),
+    ({"noise": 2.0}, "too much variability", "same problem in both: variability"),
+])
+def test_spatial_evaluation_diagnoses_known_worlds(world, diagnosis, period):
+    """Most grid points of each toy world get its diagnosis (step 7) and its period verdict (step 8)."""
+    whole, periods = _spatial(**world)
+    codes = {name: code for code, name in ev.DIAGNOSES.items()}
+    period_codes = {name: code for code, name in ev.PERIOD_DIAGNOSES.items()}
+    assert float((whole.diagnosis == codes[diagnosis]).mean()) > 0.6
+    assert float((periods == period_codes[period]).mean()) > 0.6
+
+
+def test_spatial_evaluation_of_a_perfect_model_matches_theory():
+    whole, _ = _spatial()
+    np.testing.assert_allclose(float(whole.below.mean()), 100 / 51, atol=1)
+    np.testing.assert_allclose(float(whole.above.mean()), 100 / 51, atol=1)
+    assert 65 < float(whole.central.mean()) < 80
+    assert (whole.n_years == 35).all() and (whole.n_members == 50)
+
+
+def test_perfect_model_thresholds():
+    """Not in the paper: each member against the others sets the thresholds, so a perfect model passes ~90%."""
+    whole, _ = _spatial(thresholds="perfect_model")
+    assert float(whole.adequate.mean()) > 0.75
+    assert float(whole.below_threshold.min()) >= 0 and float(whole.central_threshold.mean()) > 75
+    # Any ensemble size can be tested this way; the fixed 10% needs at least MIN_MEMBERS
+    assert _spatial(n_members=10, thresholds="perfect_model")[0].adequate.notnull().all()
+    assert _spatial(n_members=10)[0].adequate.isnull().all()
+
+
+def test_central_of_others_equals_explicit_loop():
+    values = np.random.default_rng(0).standard_normal((7, 12))
+    ours = ev._central_of_others(values, *ev.CENTRAL_RANGE)
+    for m in range(values.shape[-1]):
+        low, high = np.quantile(np.delete(values, m, axis=-1), ev.CENTRAL_RANGE, axis=-1)
+        np.testing.assert_array_equal(ours[:, m], (values[:, m] >= low) & (values[:, m] <= high))
+
+
+def test_adequate_area_and_count():
+    adequate = xr.DataArray([[1.0, 0.0], [np.nan, 1.0]], dims=("lat", "lon"), coords={"lat": [-80.0, -60.0], "lon": [0, 90]})
+    table = xr.Dataset({"adequate": adequate})
+    weights = np.cos(np.deg2rad([-80.0, -60.0]))
+    np.testing.assert_allclose(float(ev.adequate_area(table)), 100 * (weights[0] + weights[1]) / (2 * weights[0] + weights[1]))
+    counts = ev.adequate_count(xr.concat([table, table.fillna(0)], "model"))
+    np.testing.assert_array_equal(counts.n_adequate, [[2, 0], [0, 2]])
+    np.testing.assert_array_equal(counts.n_tested, [[2, 2], [1, 2]])
+
+
 def calibration(n_worlds=100, n_members=40):
     """Fraction of synthetic worlds in which each test flags each scenario (a perfect model: ~ALPHA)."""
     table = {}
