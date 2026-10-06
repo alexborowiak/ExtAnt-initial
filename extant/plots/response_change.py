@@ -10,9 +10,12 @@ Colour and pattern mean the same thing in every figure:
     white             no robust change in the mean
     experiment        FORCING_COLORS (hist-nat green, hist-GHG red, ...)
 
+The sea-ice edge (15% contour; experiment solid, hist-nat dashed) can be added
+to the maps, from ``sea_ice.concentration_climatology``.
+
 Sections
 --------
-1. Maps: the mean response, with the width change hatched on top
+1. Maps: the mean response, with the width change hatched on top; the mean, extremes and width side by side
 2. Local: how the distribution shifts and widens at one grid point
 3. Summary: mean change against width change, every model and experiment
 """
@@ -27,12 +30,14 @@ from matplotlib.patches import Patch
 from .. import era5_evaluation as ev
 from .. import response_change as rc
 from .era5_evaluation import EVAL_RC, INK, INK_2, MODEL_MARKERS, order_seasons
+from .sea_ice import draw_ice_edges, ice_edge_handles
 from plotting_modules import core
 from plotting_modules.constants import FORCING_COLORS, FORCING_REVEAL_ORDER
 from plotting_modules.utils import plot
 
 WIDER_HATCH = "////"
 NARROWER_HATCH = "\\\\\\\\"
+NOT_SIGNIFICANT_HATCH = "..."
 HATCH_COLOR = (0, 0, 0, 0.6)
 HATCH_WIDTH = 0.6
 
@@ -55,6 +60,13 @@ def symmetric_levels(da, n_steps=12, quantile=0.98):
     return np.arange(-half, half + 1) * step
 
 
+def _model_ice(ice, model):
+    """One model's concentration climatology, or None if there is none for it."""
+    if ice is None or model not in ice["model"].values:
+        return None
+    return ice.sel(model=model)
+
+
 def count_colormap(n_models, base_cmap="Purples"):
     """Discrete colormap for a number of models: white for none, one step per model."""
     base = plt.get_cmap(base_cmap)
@@ -67,7 +79,7 @@ def count_colormap(n_models, base_cmap="Purples"):
 # ---------------------------------------------------------------------------
 
 @plot("figure")
-def joint_change_maps(summary, model, experiments=None, mean_test="robust", levels=None, title=None):
+def joint_change_maps(summary, model, experiments=None, mean_test="robust", levels=None, ice=None, title=None):
     """Where the mean and the width have changed: one model, experiments down, seasons across.
 
     Colour is the mean response, shown only where the mean change passes
@@ -81,6 +93,7 @@ def joint_change_maps(summary, model, experiments=None, mean_test="robust", leve
         experiments (Sequence[str] | None): Rows; FORCING_REVEAL_ORDER by default.
         mean_test (str): Key of ``rc.MEAN_TESTS``.
         levels (array-like | None): Colour levels; symmetric about zero by default.
+        ice (xr.DataArray | None): ``sea_ice.concentration_climatology`` output; adds the ice edges.
         title (str | None): Figure title.
 
     Returns:
@@ -88,6 +101,7 @@ def joint_change_maps(summary, model, experiments=None, mean_test="robust", leve
     """
     from plotting_modules import maps  # needs cartopy
 
+    ice = _model_ice(ice, model)
     data = order_seasons(summary.sel(model=model))
     experiments = _experiments(data, experiments)
     data = data.sel(experiment=experiments)
@@ -109,14 +123,95 @@ def joint_change_maps(summary, model, experiments=None, mean_test="robust", leve
                                 color=HATCH_COLOR, linewidth=HATCH_WIDTH)
                 maps.plot_hatch(panels.axes[i, j], changed & (cell["width_change"] < 0), hatch=NARROWER_HATCH,
                                 color=HATCH_COLOR, linewidth=HATCH_WIDTH)
+                draw_ice_edges(panels.axes[i, j], ice, experiment, season)
         panels.fig.legend(
             handles=[
                 Patch(facecolor="white", edgecolor="0.25", hatch=WIDER_HATCH, label="Significantly wider (Q95 − Q05)"),
                 Patch(facecolor="white", edgecolor="0.25", hatch=NARROWER_HATCH, label="Significantly narrower"),
                 Patch(facecolor="white", edgecolor="0.6", label="White: no robust mean change"),
+                *(ice_edge_handles() if ice is not None else []),
             ],
-            loc="lower center", ncol=3, frameon=False, handlelength=2.2, handleheight=1.2,
+            loc="lower center", ncol=3 if ice is None else 5, frameon=False, handlelength=2.2, handleheight=1.2,
             bbox_to_anchor=(0.5, 0.0),
+        )
+    return panels
+
+
+#(t): Column titles of ``extreme_change_maps``
+EXTREME_TITLES = {
+    "mean_change": "Mean",
+    "low_extreme_change": "Low extremes",
+    "high_extreme_change": "High extremes",
+    "width_change": "Width",
+}
+
+
+@plot("figure")
+def extreme_change_maps(summary, model, experiment, seasons=("DJF", "JJA"), mean_test="robust", ice=None,
+                        units="°C", title=None):
+    """The change in the mean, the low and high extremes and the width, mapped: one model and experiment, seasons down.
+
+    The maps behind ``plots.zonal.zonal_change_grid``, in the form of
+    Bracegirdle et al. (2024) Figs 1 and 3 (``rc.extreme_changes``): the
+    extremes are measured from the median, so the width is the high column
+    minus the low. The mean has its own colour scale; the other three share
+    one. Dotted where the change is not significant: the mean by
+    ``mean_test``, the width by the hist-nat bootstrap. The extremes have no
+    test, so are never dotted.
+
+    Args:
+        summary (xr.Dataset): ``rc.change_summary`` output, made with ``tails``.
+        model, experiment (str): What to show.
+        seasons (Sequence[str]): Rows.
+        mean_test (str): Key of ``rc.MEAN_TESTS``.
+        ice (xr.DataArray | None): ``sea_ice.concentration_climatology`` output; adds the ice edges.
+        units (str): Units of the variable.
+        title (str | None): Figure title.
+
+    Returns:
+        core.Panels
+    """
+    import cartopy.crs as ccrs
+    from plotting_modules import maps  # needs cartopy
+
+    ice = _model_ice(ice, model)
+    cell = summary.sel(model=model, experiment=experiment, season=list(seasons))
+    fields = rc.extreme_changes(cell)
+    columns = list(rc.EXTREMES)
+    not_significant = {
+        "mean_change": ~cell[f"mean_{mean_test}"] & cell["mean_change"].notnull(),
+        "width_change": ~cell["width_significant"] & cell["width_change"].notnull(),
+    }
+    levels = {"mean_change": symmetric_levels(fields["mean_change"])}
+    shared = symmetric_levels(fields[columns[1:]].to_dataarray())
+    levels.update({column: shared for column in columns[1:]})
+
+    with plt.rc_context(EVAL_RC):
+        panels = core.panel_grid(len(seasons), len(columns), projection=ccrs.SouthPolarStereo(), colorbar=True,
+                                 row_labels=True, has_title=True, has_cbar_label=True, panel_w=2.6, panel_h=2.6,
+                                 bottom=0.55)
+        for i, season in enumerate(seasons):
+            for j, column in enumerate(columns):
+                ax = panels.axes[i, j]
+                panels.artists[i, j] = maps.draw_polar_contour(ax, fields[column].sel(season=season), levels[column],
+                                                               cmap="RdBu_r")
+                if column in not_significant:
+                    maps.plot_hatch(ax, not_significant[column].sel(season=season), hatch=NOT_SIGNIFICANT_HATCH,
+                                    color=HATCH_COLOR, linewidth=HATCH_WIDTH)
+                draw_ice_edges(ax, ice, experiment, season)
+        core.label_cols(panels.axes, [f"{EXTREME_TITLES[c]}\n{rc.EXTREMES[c]}" for c in columns], fontsize=9.5)
+        core.label_rows(panels.axes, list(seasons))
+        core.add_colorbar(panels.fig, panels.artists[0, 0], panels.colorbar_ax(0, 0), levels=levels[columns[0]],
+                          label=f"Mean ({units})")
+        core.add_colorbar(panels.fig, panels.artists[0, 1], panels.colorbar_ax(1, len(columns) - 1),
+                          levels=shared, label=f"Extremes and width ({units})")
+        core.add_suptitle(panels.fig, panels.layout,
+                          title or f"{model}, {experiment}: final years against {rc.REFERENCE}", fontsize=11)
+        panels.fig.legend(
+            handles=[Patch(facecolor="white", edgecolor="0.25", hatch=NOT_SIGNIFICANT_HATCH,
+                           label="Not significant (mean, width)"),
+                     *(ice_edge_handles() if ice is not None else [])],
+            loc="lower center", ncol=3, frameon=False, handlelength=2.2, handleheight=1.2, bbox_to_anchor=(0.5, 0.0),
         )
     return panels
 

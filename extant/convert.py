@@ -44,7 +44,7 @@ MEMBER_PATTERNS = (
     re.compile(r"(?:^|[_/])(\d{2,3})(?=[_.]|$)"),                 # SFLE: 009
 )
 
-#(t): Folders in paths.LESFMIP_RAW that are not experiments
+#(t): Folders of raw files (``paths.lesfmip_raw``) that are not experiments
 NOT_EXPERIMENTS = ("nhsum", "reanalysis")
 
 
@@ -74,13 +74,13 @@ def availability(variable, experiments=None):
     """Which models have raw files for which experiment: a True/False table, the best-covered models first.
 
     Args:
-        variable (str): Variable name (a folder of ``paths.LESFMIP_RAW``).
+        variable (str): Key of ``config.VARIABLES``.
         experiments (Sequence[str] | None): Experiments to check; every folder if None.
 
     Returns:
         pd.DataFrame: models x experiments.
     """
-    raw = paths.LESFMIP_RAW / variable
+    raw = paths.lesfmip_raw(variable)
     if experiments is None:
         experiments = sorted(p.name for p in raw.iterdir() if p.is_dir() and p.name not in NOT_EXPERIMENTS)
     models = {experiment: [p.name for p in (raw / experiment).iterdir() if p.is_dir()] for experiment in experiments}
@@ -118,7 +118,7 @@ def convert_experiment(variable, model, experiment, overwrite=False, open_kwargs
     Returns:
         dict: group -> {'error', 'files', 'store'} for each group that failed.
     """
-    files = sorted((paths.LESFMIP_RAW / variable / experiment / model).rglob("*.nc"))
+    files = sorted((paths.lesfmip_raw(variable) / experiment / model).rglob("*.nc"))
 
     def group_of(file):
         return file.name.removesuffix(".nc").split("_")[-1]
@@ -149,7 +149,7 @@ def convert_lesfmip(variable, models, experiments, overwrite=False, open_kwargs=
     failures = {}
     for experiment in experiments:
         for model in models:
-            if not (paths.LESFMIP_RAW / variable / experiment / model).exists():
+            if not (paths.lesfmip_raw(variable) / experiment / model).exists():
                 continue
             failed = convert_experiment(variable, model, experiment, overwrite, open_kwargs)
             if failed:

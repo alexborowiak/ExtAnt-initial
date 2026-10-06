@@ -15,7 +15,8 @@ Sections
 1. Internal variability   members minus the smoothed forced response
 2. The mean response      final-years change against hist-nat, and a member-block test of it
 3. The tails              the change in the length of each tail
-4. One summary dataset    every change and test on (model, experiment, season, lat, lon)
+4. One summary dataset    every change and test on (model, experiment, season, lat, lon), and its
+                          split into mean, low and high extremes and width (``extreme_changes``)
 5. Classifying changes    neither / mean only / width only / both
 6. Additivity             does historical equal the sum of the single forcings?
 7. Local distributions    samples, quantiles and quantile shifts at one grid point
@@ -336,6 +337,48 @@ def change_summary(mean_change, mean_pvalue, signal_to_noise, qrange_change, tai
     summary["width_significant"] = summary["width_pvalue"] < alpha
     summary.attrs.update(alpha=alpha, sn_threshold=sn_threshold)
     return summary
+
+
+#(t): The four parts of the change in ``extreme_changes``, in the order the figures show them, with their formulas
+EXTREMES = {
+    "mean_change": "Δ mean",
+    "low_extreme_change": "Δ(Q05 − Q50)",
+    "high_extreme_change": "Δ(Q95 − Q50)",
+    "width_change": "Δ(Q95 − Q05)",
+}
+
+
+def extreme_changes(summary):
+    """The change in the mean, the low extremes, the high extremes and the width, as Bracegirdle et al. (2024) split it.
+
+    Their low and high extremes are the 10th and 90th percentiles of the
+    residuals about the background climate (the smoothed ensemble mean),
+    added back to it, so p10 - background is how far the low extremes sit
+    from the middle. Here the extremes are Q05 and Q95 of the internal
+    variability (``remove_forced_response``), measured from the median:
+
+        mean_change          the mean response (their background climate)
+        low_extreme_change   Δ(Q05 - Q50) > 0: the low extremes have moved up towards the middle
+                             (cold extremes warming faster than the median); = -lower_tail_change
+        high_extreme_change  Δ(Q95 - Q50) > 0: the high extremes have moved away from the middle;
+                             = upper_tail_change
+        width_change         Δ(Q95 - Q05) = high_extreme_change - low_extreme_change
+
+    so the two extremes correspond to the paper's p10 and p90 changes minus
+    its background change, and the width to its p90 - p10.
+
+    Args:
+        summary (xr.Dataset): ``change_summary`` output, made with ``tails``.
+
+    Returns:
+        xr.Dataset: The four variables of ``EXTREMES``, on the dims of ``summary``.
+    """
+    return xr.Dataset({
+        "mean_change": summary["mean_change"],
+        "low_extreme_change": -summary["lower_tail_change"],
+        "high_extreme_change": summary["upper_tail_change"],
+        "width_change": summary["width_change"],
+    })
 
 
 # ---------------------------------------------------------------------------

@@ -27,6 +27,8 @@ temporary folder.
 import os
 from pathlib import Path
 
+from . import config
+
 REPO = Path(__file__).resolve().parents[1]
 
 # ---------------------------------------------------------------------------
@@ -35,8 +37,9 @@ REPO = Path(__file__).resolve().parents[1]
 
 LEADER_EPESC = Path("/gws/ssde/j25b/leader_epesc")
 
-#(t): The LESFMIP model output: /<variable>/<experiment>/<model>/*.nc, monthly, one file per member
-LESFMIP_RAW = LEADER_EPESC / "CMIP6_SinglForcHistSimul" / "InterpolatedFlds" / "Amon"
+#(t): The LESFMIP model output on the common grid: /<table>/<variable>/<experiment>/<model>/*.nc, monthly, one
+#(t): file per member; <table> is the CMIP table of the variable (``config.VARIABLES``), e.g. Amon
+LESFMIP_RAW = LEADER_EPESC / "CMIP6_SinglForcHistSimul" / "InterpolatedFlds"
 LESFMIP_CATALOG = LEADER_EPESC / "catalogs" / "all-catalog_v1.csv"
 
 #(t): Hourly ERA5 analyses: /<year>/<month>/<day>/*.<code>.nc
@@ -63,6 +66,11 @@ DATA_DIR = Path(os.environ.get("EXTANT_DATA", JASMIN_DATA if ON_JASMIN else LOCA
 
 #(t): Figures saved for slides and papers (small, so straight into the repository's figures/ folder)
 FIGURE_DIR = Path(os.environ.get("EXTANT_FIGURES", REPO / "figures"))
+
+
+def lesfmip_raw(variable):
+    """Folder of one variable's raw LESFMIP files: /<experiment>/<model>/*.nc."""
+    return LESFMIP_RAW / config.VARIABLES[variable].table / variable
 
 
 # ---------------------------------------------------------------------------

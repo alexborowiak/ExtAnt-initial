@@ -183,3 +183,60 @@ def test_method_figures():
     tree = xr.DataTree.from_dict({e: xr.Dataset({"tas": m.expand_dims(season=["DJF"])}) for e, m in
                                   (("historical", hist), ("hist-nat", nat))})
     methods.members_by_experiment(tree, ["hist-nat", "historical", "hist-GHG"])
+
+
+@pytest.fixture(scope="module")
+def zonal_inputs():
+    """A change summary with tails and zonal tests, sea-ice edges and a concentration climatology, all synthetic."""
+    from extant import sea_ice, zonal
+
+    rng = np.random.default_rng(7)
+    lat, lon = np.arange(-87.5, -39.9, 5.0), np.arange(-180.0, 180.0, 30.0)
+    coords = {"model": ["A", "B"], "experiment": ["hist-GHG", "historical"], "season": ["DJF", "JJA", "MAM", "SON"],
+              "lat": lat, "lon": lon}
+    dims = tuple(coords)
+    random = lambda: xr.DataArray(rng.standard_normal(tuple(len(v) for v in coords.values())), dims=dims, coords=coords)
+    summary = xr.Dataset({
+        "mean_change": random() + 2, "width_change": random(), "upper_tail_change": random(),
+        "lower_tail_change": random(), "mean_robust": random() > 0, "width_significant": random() > 0.5,
+    })
+    pvalue = abs(random().mean("lon")) / 3
+    null = xr.full_like(pvalue.isel(experiment=0, drop=True), 0.3)
+    width = xr.Dataset({"width_pvalue": pvalue, "hist_nat_width": null * 10, "null_lower": -null, "null_upper": null})
+    zonal_ds = zonal.zonal_summary(summary, xr.Dataset({"pvalue": pvalue}), width)
+
+    ice = (100 / (1 + np.exp((xr.DataArray(lat, dims="lat", coords={"lat": lat}) + 62) / 2))
+           ).expand_dims(lon=lon, model=["A", "B"], experiment=["hist-nat", "hist-GHG", "historical"],
+                         season=coords["season"]).transpose("model", "experiment", "season", "lat", "lon")
+    ice = ice.where(ice.lat > -75)
+    area = sea_ice.cell_area(ice.lat, ice.lon)
+    edges = sea_ice.equivalent_latitude(sea_ice.extent(ice, area)
+                                        + sea_ice.continent_area(ice.isel(model=0, experiment=0, season=0).isnull(), area))
+    return summary, zonal_ds, ice, edges
+
+
+def test_zonal_figures(zonal_inputs):
+    from extant.plots import zonal as zp
+
+    _, zonal_ds, _, edges = zonal_inputs
+    zp.zonal_change_grid(zonal_ds, "JJA", edges=edges)
+    zp.zonal_change_grid(zonal_ds, "DJF", rows="experiment", lines="model")
+    zp.zonal_reference_width(zonal_ds, edges=edges)
+
+
+def test_sea_ice_figures(zonal_inputs):
+    pytest.importorskip("cartopy")
+    from extant import sea_ice
+    from extant.plots import sea_ice as sip
+
+    summary, _, ice, _ = zonal_inputs
+    rcp.extreme_change_maps(summary, "A", "historical", ice=ice)
+    rcp.joint_change_maps(summary, "B", ice=ice)
+    sip.edge_schematic(sea_ice.edge_example(ice.sel(model="A", experiment="hist-nat", season="JJA")))
+
+    years = np.arange(1950, 1960)
+    extent = xr.DataArray(np.random.default_rng(8).uniform(2e6, 4e6, (5, years.size, 2)),
+                          dims=("member", "year", "season"), coords={"year": years, "season": ["DJF", "JJA"]})
+    extents = xr.DataTree.from_dict({f"A/{e}": xr.Dataset({"extent": extent, "continent_area": 13.9e6})
+                                     for e in ("hist-nat", "historical")})
+    sip.extent_timeseries(sea_ice.extent_summary(extents))

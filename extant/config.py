@@ -76,6 +76,7 @@ class Variable:
         scale, offset: analysis value = raw value * scale + offset.
         era5_code: Code in the hourly ERA5 file names (``*.2t.nc``); None if there is no ERA5 recipe yet.
         era5_name: Name of the variable inside those files.
+        table: CMIP table, the folder of ``paths.LESFMIP_RAW`` the raw files are in.
     """
 
     name: str
@@ -85,6 +86,7 @@ class Variable:
     offset: float = 0.0
     era5_code: str | None = None
     era5_name: str | None = None
+    table: str = "Amon"
 
     def to_analysis_units(self, obj):
         """Convert from the units of the raw files to ``units``."""
@@ -103,8 +105,11 @@ class Variable:
 #(c): pr and sfcWind follow the CMIP conventions (kg m-2 s-1 and m s-1) but have not been run yet. ERA5
 #(c): precipitation is a forecast accumulation (fc_sfc, not an_sfc) and wind speed has to be built from 10u
 #(c): and 10v, so neither has an ERA5 recipe in convert.py yet.
+#(c): siconc (sea-ice concentration, %) is not analysed itself: it gives the sea-ice edge (``sea_ice``). Its
+#(c): table, SImon, is a guess at where the interpolated files are; check it against the folders on JASMIN.
 VARIABLES = {
     "tas": Variable("tas", "Near-surface air temperature", "°C", offset=-273.15, era5_code="2t", era5_name="t2m"),
     "pr": Variable("pr", "Precipitation", "mm day⁻¹", scale=86400.0),
     "sfcWind": Variable("sfcWind", "Near-surface wind speed", "m s⁻¹"),
+    "siconc": Variable("siconc", "Sea-ice concentration", "%", table="SImon"),
 }

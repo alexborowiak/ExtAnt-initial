@@ -1,7 +1,7 @@
 """The JASMIN-only path, on fake raw files: member files -> monthly stores -> seasonal means -> saved and reopened.
 
 Built from the sample, laid out as on JASMIN (one netCDF file per member under
-LESFMIP_RAW/<variable>/<experiment>/<model>/), so everything but the Dask
+LESFMIP_RAW/<table>/<variable>/<experiment>/<model>/), so everything but the Dask
 Gateway cluster and the xesmf regridding runs as it does there.
 """
 
@@ -24,14 +24,14 @@ def jasmin(tmp_path_factory):
     root = tmp_path_factory.mktemp("jasmin")
     sample = loading.open_lesfmip_sample(models=MODELS, experiments=EXPERIMENTS)
     for node in sample.leaves:
-        folder = root / "raw" / "tas" / node.name / node.parent.name
+        folder = root / "raw" / "Amon" / "tas" / node.name / node.parent.name
         folder.mkdir(parents=True)
         ds = node.to_dataset()
         for k, member in enumerate(ds.member.values[:12]):
             label = f"r{k + 1}i1p1f1"
             one = ds.sel(member=member).drop_vars("member")
             one.to_netcdf(folder / f"tas_mon_{node.name}_{node.parent.name}_{label}_interp.nc")
-    (root / "raw" / "tas" / "reanalysis").mkdir()
+    (root / "raw" / "Amon" / "tas" / "reanalysis").mkdir()
     return root
 
 
