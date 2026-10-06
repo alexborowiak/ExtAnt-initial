@@ -5,8 +5,8 @@ import pytest
 import xarray as xr
 from statsmodels.nonparametric.smoothers_lowess import lowess
 
-import quantile_calc as qc
-from xarray_stats import nan_quantile
+from extant import quantiles as qc
+from extant.stats import nan_quantile
 
 RNG = np.random.default_rng(5)
 
@@ -89,3 +89,30 @@ def test_lowess_on_dask_equals_in_memory():
     da = _field(n_years=100).isel(member=0, drop=True)
     in_memory = qc.lowess_xarray(da, window=31)
     np.testing.assert_array_equal(qc.lowess_xarray(da.chunk({"lat": 1}), window=31).values, in_memory.values)
+
+
+@pytest.mark.parametrize("dask", [False, True])
+def test_rolling_std_matches_the_construct_version(dask):
+    """Running sums give the window-copy numbers: ddof=0, NaN skipped, windows shortened at the ends."""
+    da = _field(n_years=40) * 3 + 20
+    expected = da.rolling(year=11, center=True).construct("window").std(["window", "member"])
+    result = qc.rolling_std(da.chunk({"lat": 1}) if dask else da, window=11).compute()
+    assert result.dims == expected.dims
+    np.testing.assert_allclose(result.values, expected.values, rtol=1e-9, atol=1e-9)
+    # On a Dataset, as reduce_to_dataset passes it
+    ds_result = qc.rolling_std(da.to_dataset(name="tas"), window=11)
+    np.testing.assert_allclose(ds_result.tas.values, expected.values, rtol=1e-9, atol=1e-9)
+
+
+def test_pooled_quantiles_and_quantile_response_are_xarray_quantile_exactly():
+    da = _field()
+    ds = da.to_dataset(name="tas")
+    expected = ds.quantile([0.05, 0.5, 0.95], dim=("member", "year"), skipna=True)
+    result = qc.pooled_quantiles(ds, [0.05, 0.5, 0.95])
+    np.testing.assert_array_equal(result.tas.transpose(*expected.tas.dims).values, expected.tas.values)
+
+    tree = xr.DataTree.from_dict({"A/hist-nat": ds, "A/historical": ds + 1.0})
+    response = qc.quantile_response(tree, [0.05, 0.95], years=11)
+    final = (ds + 1.0).isel(year=slice(-11, None)).quantile([0.05, 0.95], dim=("member", "year"))
+    slow = (final - ds.quantile([0.05, 0.95], dim=("member", "year"))).tas
+    np.testing.assert_allclose(response.sel(model="A", experiment="historical").transpose(*slow.dims), slow)

@@ -1,6 +1,6 @@
 """Where and how each forcing changes the mean and the variability of temperature.
 
-The seasonal notebook tests the parts of the forced change separately. This
+The forced-response notebook tests the parts of the forced change separately. This
 module puts them side by side, each experiment's final ``WINDOW`` years
 against hist-nat, so the figures can answer the combined
 question: where has the mean shifted, where has the distribution widened or
@@ -24,10 +24,11 @@ Sections
 import numpy as np
 import xarray as xr
 
-from quantile_calc import WINDOW, lowess_matrix_xarray
-from significance import area_mean, resample_members
-from xarray_datatree_utils import reduce_to_dataset, skip_empty
-from xarray_stats import nan_quantile
+from .config import WINDOW
+from .quantiles import lowess_matrix_xarray
+from .significance import area_mean, resample_members
+from .datatree import reduce_to_dataset, skip_empty
+from .stats import nan_quantile
 
 REFERENCE = "hist-nat"
 
@@ -67,13 +68,24 @@ def remove_forced_response(tree, window=81, centre=FORCED_CENTRE):
     Returns:
         xr.DataTree: Same layout, internal-variability anomalies.
     """
-    def remove(ds):
-        forced = ds.mean("member") if centre == "mean" else ds.median("member")
-        if forced.chunks:
-            forced = forced.chunk({"year": -1})
-        return ds - lowess_matrix_xarray(forced, core_dims="year", window=window)
+    return tree.map_over_datasets(skip_empty(lambda ds: ds - forced_response(ds, window, centre)))
 
-    return tree.map_over_datasets(skip_empty(remove))
+
+def forced_response(members, window=81, centre=FORCED_CENTRE):
+    """The forced response that ``remove_forced_response`` removes: the LOWESS-smoothed ensemble median (or mean).
+
+    Args:
+        members (xr.Dataset | xr.DataArray): With ``member`` and ``year`` dims.
+        window (int): LOWESS window in years.
+        centre (str): "median" or "mean" across members.
+
+    Returns:
+        The same type, without ``member``.
+    """
+    forced = members.mean("member") if centre == "mean" else members.median("member")
+    if forced.chunks:
+        forced = forced.chunk({"year": -1})
+    return lowess_matrix_xarray(forced, core_dims="year", window=window)
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +110,62 @@ def mean_response(tree, years=WINDOW, reference=REFERENCE, variable="tas"):
     final = reduce_to_dataset(tree.isel(year=slice(-years, None)), lambda ds: ds.mean(("year", "member")))
     change = final - final.sel(experiment=reference)
     return change[variable].drop_sel(experiment=reference).drop_vars("height", errors="ignore")
+
+
+def permutation_weights(n_permutations, n_exp, n_ref, rng):
+    """Random relabellings of ``n_exp + n_ref`` members, each as a row of weights.
+
+    A row has +1/n_exp on the members relabelled as the experiment and
+    -1/n_ref on the rest, so ``weights @ member_means`` is each relabelling's
+    difference in means. The experiment's members come first in the pool.
+
+    Returns:
+        np.ndarray: (n_permutations, n_exp + n_ref).
+    """
+    order = np.argsort(rng.random((n_permutations, n_exp + n_ref)), axis=1)
+    weights = np.full((n_permutations, n_exp + n_ref), -1 / n_ref)
+    np.put_along_axis(weights, order[:, :n_exp], 1 / n_exp, axis=1)
+    return weights
+
+
+def permutation_example(experiment, reference, years=WINDOW, n_permutations=5000, seed=0):
+    """The member-block test at one point, keeping every permutation, for ``plots.methods.permutation_schematic``.
+
+    The same test as ``member_block_test`` (whole members relabelled, the
+    difference in the means of their final ``years``), with its own random draws.
+
+    Args:
+        experiment, reference (xr.DataArray): One point and season, on (member, year).
+        years (int): Final years compared.
+        n_permutations (int): Relabellings.
+        seed (int): Random seed.
+
+    Returns:
+        xr.Dataset: ``experiment`` (exp_member, final_year) and ``reference``
+        (ref_member, final_year) values; ``permutations`` (trial), each
+        relabelling's difference in means; ``is_experiment`` (trial, pool_member),
+        which members each relabelling calls the experiment (the experiment's
+        own members first in the pool); ``mean_change`` and ``pvalue``.
+    """
+    exp = experiment.dropna("member", how="all").isel(year=slice(-years, None)).transpose("member", "year")
+    ref = reference.dropna("member", how="all").isel(year=slice(-years, None)).transpose("member", "year")
+    n_exp, n_ref = exp.sizes["member"], ref.sizes["member"]
+    member_means = np.concatenate([exp.mean("year").values, ref.mean("year").values])
+    observed = member_means[:n_exp].mean() - member_means[n_exp:].mean()
+
+    weights = permutation_weights(n_permutations, n_exp, n_ref, np.random.default_rng(seed))
+    permutations = weights @ member_means
+    at_least, at_most = (permutations >= observed).sum(), (permutations <= observed).sum()
+    pvalue = min(1.0, 2 * min(at_least + 1, at_most + 1) / (n_permutations + 1))
+    return xr.Dataset({
+        "experiment": (("exp_member", "final_year"), exp.values),
+        "reference": (("ref_member", "final_year"), ref.values),
+        "permutations": ("trial", permutations),
+        "is_experiment": (("trial", "pool_member"), weights > 0),
+        "mean_change": observed,
+        "pvalue": pvalue,
+    }, coords={"trial": np.arange(1, n_permutations + 1), "final_year": exp["year"].values}).assign_attrs(
+        years=years)
 
 
 def member_block_test(tree, years=WINDOW, reference=REFERENCE, n_permutations=5000, batch_size=500, seed=0,
@@ -148,14 +216,10 @@ def member_block_test(tree, years=WINDOW, reference=REFERENCE, n_permutations=50
             pooled = pooled.reshape(n_exp + n_ref, -1)
             observed = pooled[:n_exp].mean(0) - pooled[n_exp:].mean(0)
 
-            #(c): A permutation is a weight row: +1/n_exp on the members labelled experiment, -1/n_ref on the rest
             at_least, at_most, done = np.zeros_like(observed), np.zeros_like(observed), 0
             while done < n_permutations:
                 n = min(batch_size, n_permutations - done)
-                order = np.argsort(rng.random((n, n_exp + n_ref)), axis=1)
-                weights = np.full((n, n_exp + n_ref), -1 / n_ref)
-                np.put_along_axis(weights, order[:, :n_exp], 1 / n_exp, axis=1)
-                differences = weights @ np.nan_to_num(pooled)
+                differences = permutation_weights(n, n_exp, n_ref, rng) @ np.nan_to_num(pooled)
                 at_least += (differences >= observed).sum(0)
                 at_most += (differences <= observed).sum(0)
                 done += n

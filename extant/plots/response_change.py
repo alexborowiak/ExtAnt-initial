@@ -1,7 +1,7 @@
 """Figures for where and how the forced change affects the mean and the variability.
 
 Draws the output of response_change. Follows the plotting_modules conventions
-(``@plot``, ``core.Panels``) and shares its style with era5_evaluation_plots.
+(``@plot``, ``core.Panels``) and shares its style with plots.era5_evaluation.
 
 Colour and pattern mean the same thing in every figure:
     red <-> blue      warmer <-> cooler mean (maps)
@@ -24,9 +24,9 @@ from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-import era5_evaluation as ev
-import response_change as rc
-from era5_evaluation_plots import EVAL_RC, INK, INK_2, MODEL_MARKERS, order_seasons
+from .. import era5_evaluation as ev
+from .. import response_change as rc
+from .era5_evaluation import EVAL_RC, INK, INK_2, MODEL_MARKERS, order_seasons
 from plotting_modules import core
 from plotting_modules.constants import FORCING_COLORS, FORCING_REVEAL_ORDER
 from plotting_modules.utils import plot
@@ -38,7 +38,7 @@ HATCH_WIDTH = 0.6
 
 
 def _experiments(da, experiments=None):
-    """Experiments in the notebook's reveal order, keeping only those present."""
+    """Experiments in the forcings' reveal order (FORCING_REVEAL_ORDER), keeping only those present."""
     present = [str(e) for e in da["experiment"].values]
     order = experiments or [e for e in FORCING_REVEAL_ORDER if e in present] + \
         [e for e in present if e not in FORCING_REVEAL_ORDER]
@@ -78,7 +78,7 @@ def joint_change_maps(summary, model, experiments=None, mean_test="robust", leve
     Args:
         summary (xr.Dataset): ``rc.change_summary`` output.
         model (str): Model to show.
-        experiments (Sequence[str] | None): Rows; the notebook's forcing order by default.
+        experiments (Sequence[str] | None): Rows; FORCING_REVEAL_ORDER by default.
         mean_test (str): Key of ``rc.MEAN_TESTS``.
         levels (array-like | None): Colour levels; symmetric about zero by default.
         title (str | None): Figure title.
@@ -129,7 +129,7 @@ def joint_change_count_maps(counts, season, n_models, experiments=None, title=No
         counts (xr.DataArray): ``rc.joint_change_counts`` output.
         season (str): Season to show.
         n_models (int): Number of models, for the colour scale.
-        experiments (Sequence[str] | None): Rows; the notebook's forcing order by default.
+        experiments (Sequence[str] | None): Rows; FORCING_REVEAL_ORDER by default.
         title (str | None): Figure title.
 
     Returns:
@@ -275,7 +275,7 @@ def response_scatter(regional, x="mean_change", y="width_change", experiments=No
     Args:
         regional (xr.Dataset): ``rc.regional_mean`` output, on (model, experiment, season).
         x, y (str): Variables for the axes; keys of ``_SCATTER``.
-        experiments (Sequence[str] | None): Experiments shown; the notebook's forcing order by default.
+        experiments (Sequence[str] | None): Experiments shown; FORCING_REVEAL_ORDER by default.
         diagonal (bool): Draw the 1:1 line.
         title (str | None): Figure title.
 

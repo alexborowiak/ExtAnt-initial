@@ -15,21 +15,23 @@ Clim. Dyn. 57, 2557-2580, doi:10.1007/s00382-021-05821-w.
 
 Sections
 --------
-1.  Preparing ERA5      monthly means to seasonal means, on the model grid
-2.  Aligning            the same years, and one shared missing-data mask
-3.  Treatments          raw values, anomalies, detrended anomalies
-4.  Statistics          the four moments (mean, std, skewness, kurtosis) and other statistics
+1.  Aligning            the same years, and one shared missing-data mask
+2.  Treatments          raw values, anomalies, detrended anomalies
+3.  Statistics          the four moments (mean, std, skewness, kurtosis) and other statistics
                         (trend, width, tails, records, lag-1 autocorrelation, ...)
-5.  Locating ERA5       the percentile and p-value that every test reports
-6.  Moment test         the four moments, ERA5 against every member; the other statistics the
+4.  Locating ERA5       the percentile and p-value that every test reports
+5.  Moment test         the four moments, ERA5 against every member; the other statistics the
                         same way; and the field test: is ERA5 flagged over more of a map than
                         a perfect model would be?
-7.  Rank histograms     the Suarez-Gutierrez et al. (2021) test
-8.  Distributions       kernel density estimates and quantiles
-9.  Plume membership    is ERA5 inside the ensemble range?
-10. Spatial evaluation  Suarez-Gutierrez et al. (2021), section 2.2.2: at every grid point, how
+6.  Rank histograms     the Suarez-Gutierrez et al. (2021) test
+7.  Distributions       kernel density estimates and quantiles
+8.  Plume membership    is ERA5 inside the ensemble range?
+9.  Spatial evaluation  Suarez-Gutierrez et al. (2021), section 2.2.2: at every grid point, how
                         often ERA5 is below, above and in the middle of the ensemble, and why
-11. Synthetic data      toy ensembles with a known answer, to demonstrate the tests
+10. Synthetic data      toy ensembles with a known answer, to demonstrate the tests
+
+Getting ERA5 ready (monthly means to seasonal means, on the model grid) is
+``preprocessing.seasonal_era5``.
 
 Conventions
 -----------
@@ -39,9 +41,9 @@ seasons at once, or a whole map. ``obs`` is ERA5 in practice, but nothing here
 is ERA5-specific. Works on numpy- or dask-backed data; at a single point the
 data are tiny, so ``.load()`` them first.
 
-The two tests (sections 6 and 7) return datasets with the same layout, built
+The two tests (sections 5 and 6) return datasets with the same layout, built
 by ``locate``, so they can be stacked with ``combine_tests`` and drawn by the
-same functions in ``era5_evaluation_plots``.
+same functions in ``plots.era5_evaluation``.
 """
 
 from collections.abc import Callable
@@ -51,10 +53,9 @@ import numpy as np
 import scipy.stats
 import xarray as xr
 
-from quantile_calc import lowess_matrix_xarray, seasonal_mean
-from significance import area_mean, pvalue_two_sided
-from xarray_calc import split_time
-from xarray_stats import nan_quantile
+from .quantiles import lowess_matrix_xarray
+from .significance import area_mean, pvalue_two_sided
+from .stats import nan_quantile
 
 MEMBER_DIM = "member"
 SAMPLE_DIM = "year"
@@ -65,108 +66,7 @@ ALPHA = 0.1
 
 
 # ---------------------------------------------------------------------------
-# 1. Preparing ERA5
-# ---------------------------------------------------------------------------
-
-def seasonal_means(monthly, dim="time", min_months=3):
-    """Monthly means to seasonal (DJF/MAM/JJA/SON) means, on ``year`` and ``season`` dims.
-
-    Follows the LESFMIP pre-processing step for step (``quantile_calc.seasonal_mean``,
-    then ``xarray_calc.split_time``), so DJF is labelled by the year of its
-    December and the result lines up with ``lesfmip_season_tree`` label for
-    label. Incomplete seasons, and years without all four, are dropped, e.g.
-    the January-February stub at the start of ERA5.
-
-    ERA5 can stay on its own (standard) calendar: the seasons are matched by
-    their (year, season) labels, not by date. Converting it to the models'
-    360-day calendar with ``align_on='year'`` moves month-start dates into the
-    previous month, which this refuses.
-
-    Args:
-        monthly (xr.DataArray): Monthly means with a datetime ``dim``.
-        dim (str): Name of the time dimension.
-        min_months (int): Months a season needs in order to be kept.
-
-    Returns:
-        xr.DataArray: Seasonal means with ``year`` and ``season`` in place of ``dim``.
-    """
-    month_index = monthly[dim].dt.year * 12 + monthly[dim].dt.month
-    if np.unique(month_index).size != month_index.size:
-        raise ValueError(
-            "some months appear more than once, so seasons would get the wrong months. "
-            "convert_calendar('360_day', align_on='year') does this to month-start dates (1 March becomes "
-            "29 February); keep ERA5 on its own calendar, or relabel it with monthly_time_axis"
-        )
-    return split_time(seasonal_mean(monthly, min_months=min_months, dim=dim), ("year", "season"), dim)
-
-
-def monthly_time_axis(monthly, dim="time"):
-    """Relabel consecutive monthly means with month-start dates on the standard calendar.
-
-    Repairs a record whose dates were shifted, e.g. by
-    ``convert_calendar('360_day', align_on='year')``, which moves 1 March to
-    29 February and 1 December to 30 November. Assumes one value per month,
-    with no gaps, starting in the month of the first date.
-
-    Args:
-        monthly (xr.DataArray): Monthly means with a datetime ``dim``.
-        dim (str): Name of the time dimension.
-
-    Returns:
-        xr.DataArray: The same values on month-start dates.
-    """
-    start = f"{int(monthly[dim].dt.year[0]):04d}-{int(monthly[dim].dt.month[0]):02d}-01"
-    return monthly.assign_coords({dim: xr.date_range(start, periods=monthly.sizes[dim], freq="MS")})
-
-
-def match_grid(obs, like, tolerance=0.01, lat="lat", lon="lon"):
-    """Put ``obs`` on the latitudes and longitudes of ``like``.
-
-    ERA5's grid need not be the LESFMIP grid: it may use 0-360 longitudes where
-    LESFMIP uses -180-180, run north to south, cover a different area, or sit
-    on different points. So this:
-
-    1. puts ``obs``'s longitudes in ``like``'s convention and sorts both axes;
-    2. if every point of ``like`` has a partner in ``obs`` within ``tolerance``
-       degrees, takes those values unchanged, relabelled with ``like``'s exact
-       coordinates so arithmetic between the two aligns;
-    3. otherwise interpolates bilinearly onto ``like``'s points, wrapping round
-       in longitude. Points outside ``obs``'s coverage are NaN.
-
-    Interpolation suits data at a similar resolution, like the ERA5 store
-    (conservatively regridded to 2.5°). Regrid much finer data conservatively
-    first, as the ERA5 processing section does with xesmf.
-
-    Args:
-        obs (xr.DataArray): Data to put on the grid.
-        like (xr.DataArray): Data on the target grid.
-        tolerance (float): Largest coordinate difference, in degrees, still treated as the same point.
-
-    Returns:
-        xr.DataArray: ``obs`` on ``like``'s ``lat`` and ``lon``.
-    """
-    target = {name: np.asarray(like[name].values, dtype=float) for name in (lat, lon)}
-    #(c): Longitudes into the target's convention: -180-180 if it has any negative longitude, else 0-360.
-    #(c): The range starts `tolerance` early, so -180.000001 stays next to -180 rather than wrapping to +180
-    start = (-180.0 if target[lon].min() < 0 else 0.0) - tolerance
-    wrapped = (obs[lon] - start) % 360 + start
-    obs = obs.assign_coords({lon: wrapped.astype(float), lat: obs[lat].astype(float)}).sortby([lat, lon])
-
-    def gap(name):
-        return np.abs(obs[name].values[:, None] - target[name][None, :]).min(0).max()
-
-    if gap(lat) <= tolerance and gap(lon) <= tolerance:
-        nearest = {name: obs.indexes[name].get_indexer(target[name], method="nearest") for name in (lat, lon)}
-        return obs.isel(nearest).assign_coords(target)
-
-    #(c): One extra column at each end, a full turn away, so interpolation wraps round in longitude
-    padded = xr.concat([obs.isel({lon: [-1]}).assign_coords({lon: obs[lon][-1:] - 360}), obs,
-                        obs.isel({lon: [0]}).assign_coords({lon: obs[lon][:1] + 360})], dim=lon)
-    return padded.interp(target)
-
-
-# ---------------------------------------------------------------------------
-# 2. Aligning
+# 1. Aligning
 # ---------------------------------------------------------------------------
 
 def align(ensemble, obs, years=None, member_dim=MEMBER_DIM, sample_dim=SAMPLE_DIM):
@@ -183,7 +83,7 @@ def align(ensemble, obs, years=None, member_dim=MEMBER_DIM, sample_dim=SAMPLE_DI
        2014, for example, so the 2014 seasons it lacks are masked in ERA5 too.
 
     Every other dimension (season, lat, lon) must already match exactly; see
-    ``match_grid``.
+    ``preprocessing.match_grid``.
 
     Args:
         ensemble (xr.DataArray): Model data with ``member_dim`` and ``sample_dim``.
@@ -219,7 +119,7 @@ def align(ensemble, obs, years=None, member_dim=MEMBER_DIM, sample_dim=SAMPLE_DI
 
 
 # ---------------------------------------------------------------------------
-# 3. Treatments
+# 2. Treatments
 # ---------------------------------------------------------------------------
 
 #(t): The three ways of treating each series before comparing, and what each one tests
@@ -294,7 +194,7 @@ def treat(da, treatment, sample_dim=SAMPLE_DIM, reference=None):
 
 
 # ---------------------------------------------------------------------------
-# 4. Statistics
+# 3. Statistics
 # ---------------------------------------------------------------------------
 # Each takes the samples along ``dim`` and returns one number per series.
 # Skewness and kurtosis use the plain moment estimators. They are biased for
@@ -462,7 +362,7 @@ MOMENTS = {
 
 #(t): Other statistics, tested in exactly the same way but not moments
 #(c): Signal: trend and emergence. Noise: width and the two tails, i.e. the quantities whose forced
-#(c): changes the rest of the notebook analyses. Then record counts and year-to-year memory.
+#(c): changes the forced-response notebooks analyse. Then record counts and year-to-year memory.
 STATISTICS = {
     "trend": Diagnostic("Trend", "°C/decade", "model trend too large", "model trend too small",
                         treatment="raw", func=trend),
@@ -487,7 +387,7 @@ SIGNAL_STATISTICS = ("trend", "emergence")
 NOISE_STATISTICS = ("width", "lower_tail", "upper_tail")
 RECORD_STATISTICS = ("records_high", "records_low")
 
-#(t): Rank-histogram summaries (section 7); the treatment is chosen when the test is run
+#(t): Rank-histogram summaries (section 6); the treatment is chosen when the test is run
 RANKS = {
     "dispersion": Diagnostic("Rank dispersion", "", "spread too large (dome)", "spread too small (U shape)"),
     "outside": Diagnostic("Outside ensemble", "%", "ERA5 too rarely outside", "ERA5 too often outside"),
@@ -501,7 +401,7 @@ DIAGNOSTICS = {**MOMENTS, **STATISTICS, **RANKS}
 
 
 # ---------------------------------------------------------------------------
-# 5. Locating ERA5 among the members
+# 4. Locating ERA5 among the members
 # ---------------------------------------------------------------------------
 
 #(t): The variables every test result carries, so results can be stacked and plotted alike
@@ -598,7 +498,7 @@ def combine_tests(*results):
 
 
 # ---------------------------------------------------------------------------
-# 6. Moment test (and the other statistics, tested the same way)
+# 5. Moment test (and the other statistics, tested the same way)
 # ---------------------------------------------------------------------------
 
 def statistic_test(ensemble, obs, statistics=tuple(STATISTICS), sample_dim=SAMPLE_DIM,
@@ -747,7 +647,7 @@ def field_test(result, dims=("lat", "lon"), member_dim=MEMBER_DIM, alpha=ALPHA):
 
 
 # ---------------------------------------------------------------------------
-# 7. Rank histograms (Suarez-Gutierrez et al., 2021)
+# 6. Rank histograms (Suarez-Gutierrez et al., 2021)
 # ---------------------------------------------------------------------------
 
 def ensemble_rank(ensemble, obs, member_dim=MEMBER_DIM):
@@ -971,7 +871,7 @@ def regroup_ranks(frequency, n_bins=10, rank_dim="rank"):
 
 
 # ---------------------------------------------------------------------------
-# 8. Distributions
+# 7. Distributions
 # ---------------------------------------------------------------------------
 
 #(t): Quantile levels for Q-Q plots; ~35 samples cannot support levels further into the tails
@@ -1055,7 +955,7 @@ def distribution_summary(ensemble, obs, treatments=("raw", "anomaly"), sample_di
 
 
 # ---------------------------------------------------------------------------
-# 9. Plume membership
+# 8. Plume membership
 # ---------------------------------------------------------------------------
 
 #(t): Ensemble quantiles drawn as the plume, widest band first
@@ -1187,7 +1087,7 @@ def summary_table(results, rank_statistics=SUMMARY_RANKS, member_dim=MEMBER_DIM)
 
 
 # ---------------------------------------------------------------------------
-# 10. Spatial evaluation (Suarez-Gutierrez et al., 2021, section 2.2.2)
+# 9. Spatial evaluation (Suarez-Gutierrez et al., 2021, section 2.2.2)
 # ---------------------------------------------------------------------------
 # At a grid point the paper does not test rank histograms against pseudo-
 # observations (that is for the global mean). It reduces the histogram to three
@@ -1456,7 +1356,7 @@ def adequate_count(results, model_dim="model"):
 
 
 # ---------------------------------------------------------------------------
-# 11. Synthetic ensembles with a known answer
+# 10. Synthetic ensembles with a known answer
 # ---------------------------------------------------------------------------
 
 #(t): Toy cases for demonstrating the tests: keyword arguments for simulate_ensemble

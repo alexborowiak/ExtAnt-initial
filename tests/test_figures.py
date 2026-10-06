@@ -10,10 +10,10 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 pytest.importorskip("plotting_modules")
 
-import era5_evaluation as ev  # noqa: E402
-import era5_evaluation_plots as evp  # noqa: E402
-import response_change as rc  # noqa: E402
-import response_change_plots as rcp  # noqa: E402
+from extant import era5_evaluation as ev  # noqa: E402
+from extant.plots import era5_evaluation as evp  # noqa: E402
+from extant import response_change as rc  # noqa: E402
+from extant.plots import response_change as rcp  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -140,3 +140,46 @@ def test_spatial_evaluation_figures(spatial_table):
     evp.diagnosis_maps(spatial_table, variable="period_diagnosis")
     evp.adequate_count_maps(ev.adequate_count(spatial_table))
 
+
+
+def test_method_figures():
+    """The step-by-step schematics and the small figures that follow the data, on synthetic ensembles."""
+    from extant import quantiles as qc
+    from extant import significance as sig
+    from extant.plots import methods
+
+    rng = np.random.default_rng(1)
+    years = np.arange(1850, 2014)
+
+    def members(n, trend=0.0, scale=1.0):
+        values = trend * (years - 1850) / 164 + scale * rng.standard_normal((n, years.size))
+        return xr.DataArray(values, dims=("member", "year"), coords={"year": years})
+
+    hist, nat = members(30, 2.0, 1.2), members(30)
+    methods.bootstrap_schematic(sig.bootstrap_example(hist, nat, n_trials=200), "historical")
+    methods.permutation_schematic(rc.permutation_example(hist, nat, n_permutations=200), "historical")
+    rolling = qc.rolling_percentile_xr(hist, quantiles=[0.05, 0.5, 0.95])
+    methods.rolling_quantile_demo(hist, rolling, 1950, 21)
+    smooth = qc.lowess_matrix_xarray(rolling)
+    methods.smoothing_demo(rolling, smooth)
+    both = xr.concat([smooth, qc.lowess_matrix_xarray(qc.rolling_percentile_xr(nat, quantiles=[0.05, 0.5, 0.95]))],
+                     dim="experiment").assign_coords(experiment=["historical", "hist-nat"])
+    methods.quantile_change_demo(both, nat.quantile([0.05, 0.5, 0.95], dim=["member", "year"]), "historical")
+    methods.forced_response_demo(hist, rc.forced_response(hist))
+    methods.two_sample_demo(hist.isel(year=slice(-21, None)), nat.isel(year=slice(-21, None)), "historical", t=3.0, p=0.01)
+    means = xr.concat([hist.mean("member"), nat.mean("member")], dim="experiment").assign_coords(
+        experiment=["historical", "hist-nat"])
+    noise = xr.full_like(hist.mean("member"), 0.5)
+    methods.signal_to_noise_demo(means, qc.lowess_matrix_xarray(means), noise, (means[0] - means[1]) / noise, "historical")
+
+    seasons = xr.DataArray(rng.standard_normal((years.size, 4)), dims=("year", "season"),
+                           coords={"year": years, "season": ["DJF", "JJA", "MAM", "SON"]})
+    methods.year_season_demo(seasons)
+    import pandas as pd
+    time = pd.date_range("1990-01-01", periods=72, freq="MS")
+    methods.seasonal_mean_demo(xr.DataArray(rng.standard_normal(72), dims="time", coords={"time": time}),
+                               seasons, slice(1990, 1994))
+    methods.member_count_heatmap(pd.DataFrame({"hist-nat": [50, np.nan], "historical": [65, 10]}, index=["A", "B"]))
+    tree = xr.DataTree.from_dict({e: xr.Dataset({"tas": m.expand_dims(season=["DJF"])}) for e, m in
+                                  (("historical", hist), ("hist-nat", nat))})
+    methods.members_by_experiment(tree, ["hist-nat", "historical", "hist-GHG"])

@@ -3,7 +3,7 @@
 All resampling works on whole members, so each member's time series stays intact.
 
 The Q-range test is a bootstrap of hist-nat alone (``qrange_significance``):
-its Q-range kernels run in numba, compiled (like quantile_calc's) parallel
+its Q-range kernels run in numba, compiled (like those in ``quantiles``) parallel
 over grid points for data in memory and serial for dask blocks.
 """
 
@@ -12,9 +12,10 @@ import scipy.special
 import xarray as xr
 from numba import njit, prange
 
-from quantile_calc import WINDOW, numpy_lerp, quantile_range
-from xarray_datatree_utils import skip_empty
-from xarray_stats import nan_quantile
+from .config import WINDOW
+from .quantiles import numpy_lerp, quantile_range
+from .datatree import skip_empty
+from .stats import nan_quantile
 
 
 # ---------------------------------------------------------------------------
@@ -208,32 +209,31 @@ def _per_trial(block, inputs, core_dims, n_trials, **kwargs):
 N_BOOTSTRAP_MEMBERS = 10
 
 
-def sample_hist_nat_qrange_changes(
-    hist_nat_da,
-    hist_nat_reference_qrange_da,
-    n_members_to_sample=N_BOOTSTRAP_MEMBERS,
-    years=WINDOW,
-    quantiles=(0.05, 0.95),
-    n_trials=10_000,
-    seed=0,
-):
-    """The hist-nat bootstrap behind ``qrange_significance``: N different members over a random ``years``-year window.
+def bootstrap_draws(n_hist_nat_members, n_hist_nat_years, n_members=N_BOOTSTRAP_MEMBERS, years=WINDOW,
+                    n_trials=10_000, seed=0):
+    """Which hist-nat members and which window of years each bootstrap trial uses.
 
-    Returns each trial's Q-range minus ``hist_nat_reference_qrange_da``: the
-    changes obtainable from natural variability and sample size alone.
-    Windows come from anywhere in the record, each used about equally often.
+    Each trial takes ``n_members`` different members and one ``years``-long
+    window. Every complete window is used about equally often: the windows
+    are cycled through in a random order, and the remainder drawn at random.
+
+    Args:
+        n_hist_nat_members, n_hist_nat_years (int): Size of the hist-nat ensemble.
+        n_members (int): Members per trial.
+        years (int): Window length (odd).
+        n_trials (int): Trials.
+        seed (int): Random seed.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: ``selected``, (trial, member) True for each
+        trial's members, and ``window_starts``, (trial,) the first year index of each trial's window.
     """
-    rng = np.random.default_rng(seed)
-
-    n_hist_nat_members = hist_nat_da.sizes["member"]
-    n_hist_nat_years = hist_nat_da.sizes["year"]
-
-    if n_members_to_sample > n_hist_nat_members:
-        raise ValueError("n_members_to_sample cannot exceed available hist-nat members.")
-
+    if n_members > n_hist_nat_members:
+        raise ValueError("n_members cannot exceed the hist-nat members available.")
     if years % 2 == 0:
         raise ValueError("years must be odd.")
 
+    rng = np.random.default_rng(seed)
     half_window = years // 2
 
     # All centre years that have a complete window.
@@ -255,13 +255,33 @@ def sample_hist_nat_qrange_changes(
 
     # N distinct members per trial (the N smallest of one uniform draw per member).
     sampled_member_indices = np.argpartition(
-        rng.random((n_trials, n_hist_nat_members)), n_members_to_sample - 1, axis=1,
-    )[:, :n_members_to_sample]
+        rng.random((n_trials, n_hist_nat_members)), n_members - 1, axis=1,
+    )[:, :n_members]
     selected = np.zeros((n_trials, n_hist_nat_members), dtype=np.bool_)
     np.put_along_axis(selected, sampled_member_indices, True, axis=1)
 
+    return selected, sampled_centre_indices - half_window
+
+
+def sample_hist_nat_qrange_changes(
+    hist_nat_da,
+    hist_nat_reference_qrange_da,
+    n_members_to_sample=N_BOOTSTRAP_MEMBERS,
+    years=WINDOW,
+    quantiles=(0.05, 0.95),
+    n_trials=10_000,
+    seed=0,
+):
+    """The hist-nat bootstrap behind ``qrange_significance``: N different members over a random ``years``-year window.
+
+    Returns each trial's Q-range minus ``hist_nat_reference_qrange_da``: the
+    changes obtainable from natural variability and sample size alone. The
+    draws are ``bootstrap_draws(..., seed=seed)``.
+    """
+    selected, window_starts = bootstrap_draws(hist_nat_da.sizes["member"], hist_nat_da.sizes["year"],
+                                              n_members_to_sample, years, n_trials, seed)
+
     # Trials grouped by window, so each window is sorted once.
-    window_starts = sampled_centre_indices - half_window
     trials = np.argsort(window_starts, kind="stable")
     starts, counts = np.unique(window_starts, return_counts=True)
     first = np.concatenate([[0], np.cumsum(counts)])
@@ -271,6 +291,48 @@ def sample_hist_nat_qrange_changes(
         selected=selected, starts=starts, length=years, trials=trials, first=first,
         q_low=quantiles[0], q_high=quantiles[1],
     ).compute()
+
+
+def bootstrap_example(experiment, hist_nat, n_members=N_BOOTSTRAP_MEMBERS, years=WINDOW, quantiles=(0.05, 0.95),
+                      n_trials=10_000, seed=0):
+    """The hist-nat bootstrap at one point, with its draws, for ``plots.methods.bootstrap_schematic``.
+
+    Exactly ``qrange_significance``'s test with the same draws: trial k of
+    ``null`` pools the members ``selected[k]`` over the ``years`` years from
+    ``window_start[k]``.
+
+    Args:
+        experiment, hist_nat (xr.DataArray): One point and season, on (member, year).
+        n_members, years, quantiles, n_trials, seed: As in ``qrange_significance``.
+
+    Returns:
+        xr.Dataset: ``hist_nat`` (member, year) and the experiment's ``final``
+        (exp_member, final_year) values; ``null`` (trial); ``selected`` (trial,
+        member); ``window_start`` (trial, an index along ``year``); and the
+        scalars ``hist_nat_qrange``, ``experiment_qrange``, ``qrange_change`` and ``pvalue``.
+    """
+    hist_nat = hist_nat.dropna("member", how="all").transpose("member", "year")
+    final = experiment.dropna("member", how="all").isel(year=slice(-years, None)).transpose("member", "year")
+    hist_nat_qrange = quantile_range(hist_nat, quantiles)
+    experiment_qrange = quantile_range(final, quantiles)
+    change = experiment_qrange - hist_nat_qrange
+    null = sample_hist_nat_qrange_changes(hist_nat, hist_nat_qrange, n_members, years=years, quantiles=quantiles,
+                                          n_trials=n_trials, seed=seed)
+    selected, window_starts = bootstrap_draws(hist_nat.sizes["member"], hist_nat.sizes["year"], n_members, years,
+                                              n_trials, seed)
+    return xr.Dataset({
+        "hist_nat": (("member", "year"), hist_nat.values),
+        "final": (("exp_member", "final_year"), final.values),
+        "null": ("trial", null.values),
+        "selected": (("trial", "member"), selected),
+        "window_start": ("trial", window_starts),
+        "hist_nat_qrange": float(hist_nat_qrange),
+        "experiment_qrange": float(experiment_qrange),
+        "qrange_change": float(change),
+        "pvalue": float(pvalue_two_sided(null, change)),
+    }, coords={"year": hist_nat["year"].values, "final_year": final["year"].values,
+               "trial": np.arange(1, n_trials + 1)}).assign_attrs(
+        n_members=n_members, years=years, quantiles=list(quantiles))
 
 
 def qrange_significance(

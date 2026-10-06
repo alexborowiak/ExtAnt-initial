@@ -5,7 +5,7 @@ axes you pass in (``@plot("axes")``); the others build a whole figure and
 return ``core.Panels`` (``@plot("figure")``). Nothing here computes a test
 statistic. Every function draws the output of an era5_evaluation function, so
 the numbers on a figure are exactly the numbers the tests used. Needs
-plotting_modules on the path (the notebook adds ../extant-functions); it could
+plotting_modules on the path (the notebooks add ../../extant-functions); it could
 move into plotting_modules with only its imports changed.
 
 Colour means the same thing in every figure:
@@ -38,7 +38,7 @@ from matplotlib.legend_handler import HandlerTuple
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 
-import era5_evaluation as ev
+from .. import era5_evaluation as ev
 from plotting_modules import core
 from plotting_modules.constants import FORCING_COLORS, SEASONS
 from plotting_modules.utils import plot

@@ -237,6 +237,5 @@ def fast_kde_xr(da, x, dim="time", bandwidth="scott"):
     )
 
     result = result.assign_coords(x=x)
-    # result = result.xarray_datatree_utils.to_dataset(name = var_name)
 
     return result

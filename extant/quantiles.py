@@ -1,7 +1,7 @@
-"""Quantile, smoothing and aggregation helpers for seasonal LESFMIP analysis.
+"""Rolling quantiles, smoothing and quantile ranges for seasonal LESFMIP analysis.
 
-Functions here run on dask workers, so upload this module to the cluster
-(``client.upload_file``) after editing it.
+Functions here run on dask workers, so send the package to the cluster
+(``cluster.upload_package(client)``) after editing it.
 
 The numba kernels are compiled twice: parallel over grid points for data in
 memory, and serial for dask blocks. Dask already runs the blocks in parallel,
@@ -14,43 +14,67 @@ import xarray as xr
 from numba import njit, prange
 from scipy import sparse
 
-from xarray_datatree_utils import reduce_to_dataset, skip_empty
-from xarray_stats import nan_quantile
-
-#(t): Length in years of every window: the rolling quantiles and noise, and the final period compared with hist-nat
-WINDOW = 21
+from .config import WINDOW
+from .datatree import reduce_to_dataset, skip_empty
+from .stats import nan_quantile
 
 
-# ---------------------------------------------------------------------------
-# Aggregation
-# ---------------------------------------------------------------------------
+def _centred_sums(x, window):
+    """Sums over centred ``window``-long windows along the last axis, shortened at the ends."""
+    half = window // 2
+    n = x.shape[-1]
+    cumulative = np.concatenate([np.zeros_like(x[..., :1]), np.cumsum(x, axis=-1)], axis=-1)
+    position = np.arange(n)
+    return cumulative[..., np.minimum(position + half + 1, n)] - cumulative[..., np.maximum(position - half, 0)]
+
+
+def _rolling_std_block(x, window):
+    """Standard deviation (ddof=0) of every member's values in each centred window; x is (..., member, year)."""
+    valid = np.isfinite(x)
+    x = np.where(valid, x, 0.0).astype(np.float64)
+    count = _centred_sums(valid.sum(axis=-2).astype(np.float64), window)
+    mean = _centred_sums(x.sum(axis=-2), window)
+    square = _centred_sums((x * x).sum(axis=-2), window)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mean /= count
+        variance = np.maximum(square / count - mean * mean, 0.0)
+    return np.where(count > 0, np.sqrt(variance), np.nan)
+
 
 @skip_empty
-def seasonal_mean(ds, min_months=3, dim='time'):
-    """Seasonal (DJF/MAM/JJA/SON) means of complete seasons, in whole years only.
+def rolling_std(da, window=WINDOW, dim="year", member_dim="member"):
+    """Standard deviation of every member's values in a centred ``window``-year window, for each year.
 
-    ``QS-DEC`` bins, so DJF is labelled by the year of its December and a year
-    runs from March to the next February. Seasons with fewer than
-    ``min_months`` months (the Jan-Feb stub at the start of a record, a season
-    cut short at its end) are dropped rather than averaged, and so is any year
-    left without all four seasons. Every season then covers the same years, so
-    "the final N years" means the same years in each. Which bins to keep is
-    read off the time labels alone, so nothing is computed.
+    The same numbers as ``da.rolling(year=window, center=True).construct('window').std(['window', 'member'])``
+    (ddof=0; NaN skipped; windows shortened at the ends of the record), but
+    from running sums of x and x², so no copy of the data per window: the
+    construct version holds ``window`` copies of the data in memory at once.
+
+    Args:
+        da (xr.DataArray | xr.Dataset): With ``member_dim`` and ``dim``.
+        window (int): Window length in years.
+        dim, member_dim (str): The rolling and the pooled dimension.
+
+    Returns:
+        The same type, without ``member_dim``.
     """
-    n_months = ds[dim].resample({dim: 'QS-DEC'}).count()
-    seasonal = ds.resample({dim: 'QS-DEC'}).mean().where(n_months >= min_months, drop=True)
-    years, n_seasons = np.unique(seasonal[dim].dt.year, return_counts=True)
-    return seasonal.isel({dim: np.isin(seasonal[dim].dt.year, years[n_seasons == 4])})
+    if da.chunks:
+        da = da.chunk({member_dim: -1, dim: -1})
+    out = xr.apply_ufunc(
+        _rolling_std_block, da,
+        input_core_dims=[[member_dim, dim]], output_core_dims=[[dim]],
+        kwargs={"window": window}, dask="parallelized", output_dtypes=[np.float64],
+    )
+    return out.transpose(dim, ...)
 
 
-@skip_empty
-def space_mean(ds):
-    return ds.mean(dim=['lat', 'lon'])
+def pooled_quantiles(ds, quantiles, dims=("member", "year")):
+    """Quantiles of every variable over ``dims`` pooled, with ``stats.nan_quantile``.
 
-
-@skip_empty
-def rolling_std(da, window=WINDOW, dim=['window', 'member']):
-    return da.rolling(year=window, center=True).construct('window').std(dim=dim)
+    The same numbers as ``ds.quantile(quantiles, dim=dims)``, whose NaN-skipping
+    path loops over every series in Python (minutes on a full grid).
+    """
+    return ds.map(nan_quantile, q=quantiles, dim=[d for d in dims if d in ds.dims])
 
 
 @skip_empty
@@ -244,7 +268,7 @@ def quantile_response(tree, quantiles, years=WINDOW, reference="hist-nat", varia
     and ``quantile`` dims.
     """
     def pooled(ds):
-        return ds.chunk({"member": -1, "year": -1}).quantile(quantiles, dim=("member", "year"), skipna=True)
+        return pooled_quantiles(ds[[variable]], quantiles)
 
     exp_q = reduce_to_dataset(tree.isel(year=slice(-years, None)), pooled)
     ref_q = reduce_to_dataset(tree.match(f"*/{reference}"), pooled).sel(experiment=reference, drop=True)

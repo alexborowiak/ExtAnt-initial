@@ -5,8 +5,8 @@ import pytest
 import scipy.stats
 import xarray as xr
 
-import response_change as rc
-import significance as sig
+from extant import response_change as rc
+from extant import significance as sig
 
 RNG = np.random.default_rng(3)
 LAT = np.array([-80.0, -70.0, -50.0])
@@ -168,3 +168,25 @@ def test_quantile_shift_recovers_shift_and_widening(tree):
     assert float(np.abs(result["shift"] - (SHIFT + (WIDEN - 1) * z)).max()) < 0.6
     assert bool(((result["shift_lower"] <= result["shift"]) & (result["shift"] <= result["shift_upper"])).all())
     assert float(result["shift"].sel(quantile=0.95) - result["shift"].sel(quantile=0.05)) > 0.5
+
+
+def test_permutation_example_matches_the_member_block_test(tree):
+    point = dict(season="DJF", lat=-80.0, lon=0.0)
+    experiment, reference = (tree[f"A/{e}"].tas.sel(point) for e in ("historical", "hist-nat"))
+    example = rc.permutation_example(experiment, reference, years=11, n_permutations=500)
+    test = rc.member_block_test(tree, years=11, n_permutations=500).sel(model="A", experiment="historical", **point)
+    np.testing.assert_allclose(float(example["mean_change"]), float(test["mean_change"]))
+    # Each relabelling's difference in means, recomputed from which members it called the experiment
+    pool = np.concatenate([example["experiment"].values, example["reference"].values])
+    labels = example["is_experiment"].sel(trial=7).values
+    expected = pool[labels].mean() - pool[~labels].mean()
+    np.testing.assert_allclose(float(example["permutations"].sel(trial=7)), expected)
+    assert int(labels.sum()) == example.sizes["exp_member"]
+    # A 2-degree shift with 30 members each is far outside every relabelling
+    assert float(example["pvalue"]) == pytest.approx(2 / 501) and float(test["pvalue"]) == pytest.approx(2 / 501)
+
+
+def test_forced_response_is_what_remove_forced_response_removes(tree):
+    removed = rc.remove_forced_response(tree, window=11)["A/historical"].tas
+    members = tree["A/historical"].tas
+    xr.testing.assert_allclose(removed, members - rc.forced_response(members, window=11))

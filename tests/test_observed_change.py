@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-import era5_evaluation as ev
-import observed_change as oc
+from extant import era5_evaluation as ev
+from extant import observed_change as oc
 
 RNG = np.random.default_rng(8)
 YEARS = np.arange(1979, 2015)

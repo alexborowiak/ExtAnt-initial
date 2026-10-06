@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Outputs written when running off JASMIN, and saved figures
+output/
+figures/

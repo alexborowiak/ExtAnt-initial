@@ -10,3 +10,8 @@ sys.path.insert(0, str(REPO.parent / "extant-functions"))
 
 #(c): All-NaN slices and 0/0 at masked samples are expected in these tests
 warnings.filterwarnings("ignore", category=RuntimeWarning)
+
+
+def pytest_configure(config):
+    #(c): Zarr 3 warns that consolidated metadata is not in its spec; xarray writes it anyway, for zarr 2 readers
+    config.addinivalue_line("filterwarnings", "ignore:Consolidated metadata:UserWarning")

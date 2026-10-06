@@ -1,6 +1,6 @@
 """Figures for the observed-change analysis; the calculations are in observed_change.
 
-Same conventions and style as era5_evaluation_plots. Colour follows the
+Same conventions and style as plots.era5_evaluation. Colour follows the
 experiment (FORCING_COLORS) and ERA5 is always black.
 
 Sections
@@ -17,14 +17,14 @@ from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-import era5_evaluation as ev
-import observed_change as oc
-from era5_evaluation_plots import (ERA5_COLOR, EVAL_RC, INK, INK_2, MODEL_MARKERS, MUTED, _legend, _suptitle,
+from .. import era5_evaluation as ev
+from .. import observed_change as oc
+from .era5_evaluation import (ERA5_COLOR, EVAL_RC, INK, INK_2, MODEL_MARKERS, MUTED, _legend, _suptitle,
                                    is_testable, order_seasons, where_era5)
 from plotting_modules import core
 from plotting_modules.constants import FORCING_COLORS, FORCING_REVEAL_ORDER
 from plotting_modules.utils import plot
-from response_change_plots import count_colormap
+from .response_change import count_colormap
 
 #(t): Signal colours follow the experiment that defines them
 SIGNAL_COLORS = {"ANT": FORCING_COLORS["historical"], "NAT": FORCING_COLORS["hist-nat"],

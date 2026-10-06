@@ -20,8 +20,8 @@ Everything reuses era5_evaluation: ``ev.align`` for common samples,
 import numpy as np
 import xarray as xr
 
-import era5_evaluation as ev
-from xarray_datatree_utils import reduce_to_dataset
+from . import era5_evaluation as ev
+from .datatree import reduce_to_dataset
 
 #(t): The observed period that ERA5 and LESFMIP historical share
 YEARS = slice(1979, 2014)
@@ -138,7 +138,7 @@ def detection_class(historical, hist_nat):
 
 
 def detection_maps(tree, obs, statistic="trend", experiment="historical", reference="hist-nat", years=YEARS,
-                   alpha=ev.ALPHA):
+                   alpha=ev.ALPHA, variable="tas"):
     """Detection classes on the whole grid for every model that has both experiments.
 
     Loads one experiment of one model at a time (1979-2014 only).
@@ -148,7 +148,7 @@ def detection_maps(tree, obs, statistic="trend", experiment="historical", refere
         experiment's members, on (model, season, lat, lon).
     """
     def test(ds):
-        ensemble, era5 = ev.align(ds["tas"].sel(year=years).load(), obs, years=years)
+        ensemble, era5 = ev.align(ds[variable].sel(year=years).load(), obs, years=years)
         return ev.statistic_test(ensemble, era5, (statistic,), alpha=alpha).sel(statistic=statistic).drop_dims("member")
 
     pair = tree.filter(lambda node: node.name in (experiment, reference)

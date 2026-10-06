@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-import significance as sig
+from extant import significance as sig
 
 RNG = np.random.default_rng(11)
 
@@ -87,3 +87,20 @@ def test_qrange_significance_shares_one_hist_nat_null():
 def test_hist_nat_bootstrap_needs_enough_members():
     with pytest.raises(ValueError):
         sig.qrange_significance({"a": _ensemble(10, n_years=21)}, _ensemble(8, n_years=40))
+
+
+def test_bootstrap_example_uses_the_tests_own_draws():
+    """Each trial rebuilt from bootstrap_example's draws gives the test's own number, and so does the p-value."""
+    hist_nat = _ensemble(30, n_years=60).isel(season=0, lat=0, lon=0)
+    experiment = _ensemble(20, n_years=40, scale=1.5).isel(season=0, lat=0, lon=0)
+    example = sig.bootstrap_example(experiment, hist_nat, years=21, n_trials=300, seed=4)
+    values = example["hist_nat"].values
+    for trial in (1, 2, 150, 300):
+        start = int(example["window_start"].sel(trial=trial))
+        pooled = values[example["selected"].sel(trial=trial).values, start:start + 21]
+        width = np.diff(np.nanquantile(pooled, [0.05, 0.95]))[0]
+        np.testing.assert_allclose(width - float(example["hist_nat_qrange"]), example["null"].sel(trial=trial), atol=1e-5)
+    assert int(example["selected"].sum("member").min()) == sig.N_BOOTSTRAP_MEMBERS
+    test = sig.qrange_significance({"e": experiment}, hist_nat, years=21, n_trials=300, seed=4)
+    np.testing.assert_allclose(float(example["pvalue"]), float(test["qrange_pvalue"].squeeze()))
+    np.testing.assert_allclose(float(example["qrange_change"]), float(test["qrange_change"].squeeze()), rtol=1e-6)
