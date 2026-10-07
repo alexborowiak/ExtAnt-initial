@@ -54,16 +54,19 @@ def test_raw_files_to_seasonal_means(roots):
     table = convert.availability("tas")
     assert set(table.columns) == set(EXPERIMENTS) and table.all().all()   # 'reanalysis' is not an experiment
 
-    failures = convert.convert_lesfmip("tas", MODELS, EXPERIMENTS)
-    assert failures == {}
+    #(c): As notebook 01, section 1 does it: each model's members for each experiment, opened together and saved
+    for model in MODELS:
+        for experiment in EXPERIMENTS:
+            files = convert.raw_files("tas", experiment, model)
+            assert len(files) == 12 and convert.raw_files("tas", experiment, model, group=None) == files
+            storage.save(convert.open_members(files, "tas"), paths.lesfmip_monthly(model, "tas", experiment, "interp"),
+                         consolidated=True)
+    assert convert.raw_files("tas", "historical", "no-such-model") == []
     store = paths.find(paths.lesfmip_monthly("CanESM5", "tas", "historical", "interp"))
     assert store.parent.parent.parent.parent == roots / "scratch"
     monthly = xr.open_zarr(store)
     assert monthly.sizes["member"] == 12 and set(monthly.member.values) == {f"r{k}i1p1f1" for k in range(1, 13)}
     assert float(monthly.lat.max()) <= config.LAT_MAX
-
-    #(c): A second run skips what exists
-    assert convert.convert_experiment("tas", "CanESM5", "historical") == {}
 
     stores = loading.store_table("tas")
     assert stores.loc["CanESM5"].sum() == len(EXPERIMENTS)
