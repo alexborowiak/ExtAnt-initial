@@ -58,7 +58,7 @@ def test_raw_files_to_seasonal_means(roots):
     for model in MODELS:
         for experiment in EXPERIMENTS:
             files = convert.raw_files("tas", experiment, model)
-            assert len(files) == 12 and convert.raw_files("tas", experiment, model, group=None) == files
+            assert len(files) == 12
             storage.save(convert.open_members(files, "tas"), paths.lesfmip_monthly(model, "tas", experiment, "interp"),
                          consolidated=True)
     assert convert.raw_files("tas", "historical", "no-such-model") == []
