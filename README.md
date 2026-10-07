@@ -64,6 +64,8 @@ results/siconc/full/extent.zarr, climatology.zarr     the sea ice (notebook 01, 
 
 Off JASMIN both are `output/` in this repository.
 
+**Following a notebook.** Names end in their type: `_tree` (DataTree), `_ds` (Dataset), `_da` (DataArray), `_arr` (numpy array), `_df` (DataFrame). Each step prints what it made, and each method figure has a *quick look* before it: the arrays it is given, printed and drawn plainly with xarray's `.plot`, with all the code in the notebook. Every file opened or saved through `extant` is logged with its full path, and a store that cannot be found raises an error naming both places it looked and what each folder holds instead.
+
 **Another variable.** Set `VARIABLE` at the top of each notebook. The variable needs an entry in `config.VARIABLES`, which says how to convert its units; `pr` and `sfcWind` are there but have not been run yet. Two things are not done for them yet. There is no ERA5 recipe: precipitation is a forecast accumulation, and wind speed has to be built from its u and v components. And some figure labels in `extant/plots` still talk about warming and cold or warm tails.
 
 **Sea ice.** The figures in notebook 04, section 9 mark the sea-ice edge, as Bracegirdle et al. (2024, *npj Clim. Atmos. Sci.* 7, 276) do, from the sea-ice concentration `siconc`. Notebook 01, section 5 converts it and saves each member's extent and the final-years mean concentration; run it once. The raw files are looked for in `paths.lesfmip_raw('siconc')`, i.e. under the `SImon` folder next to `Amon`. That folder is a guess: set the right one as the `table` of `siconc` in `config.VARIABLES`. Without the sea ice, everything else runs and the figures leave the edge out.

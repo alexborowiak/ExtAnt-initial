@@ -6,12 +6,15 @@ The stores themselves are written by ``convert`` (monthly) and notebook 01
 (seasonal).
 """
 
+import logging
 from pathlib import Path
 
 import pandas as pd
 import xarray as xr
 
 from . import config, paths, storage
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +29,10 @@ def parse_store(store):
 
 def monthly_stores(variable, models=None, experiments=None, groups=None):
     """Every monthly LESFMIP store of ``variable``, as ``parse_store`` dicts. None means 'all'."""
-    entries = [parse_store(s) for s in paths.find_all(paths.lesfmip_monthly_dir(variable), "*_monthly.zarr")]
+    folder = paths.lesfmip_monthly_dir(variable)
+    entries = [parse_store(s) for s in paths.find_all(folder, "*_monthly.zarr")]
+    roots = dict.fromkeys((paths.DATA_DIR, paths.SCRATCH))
+    logger.info(f"{len(entries)} monthly {variable} stores in {' and '.join(str(root / folder) for root in roots)}")
     return [e for e in entries
             if (models is None or e["model"] in models)
             and (experiments is None or e["experiment"] in experiments)
@@ -69,6 +75,7 @@ def open_lesfmip_monthly(variable, models=None, experiments=None, groups=None, l
         path = "/".join(entry[level] for level in levels)
         if path in nodes:
             raise ValueError(f"two stores for {path!r}; pass groups= to choose one")
+        logger.info(f"opening {entry['path']} as /{path}")
         nodes[path] = xr.open_zarr(entry["path"], consolidated=True)
     return xr.DataTree.from_dict(nodes)
 
@@ -91,11 +98,14 @@ def open_seasonal(variable, models=None, experiments=None):
     tree = storage.open_tree(paths.seasonal("lesfmip", variable))
     if models is None and experiments is None:
         return tree
-    return xr.DataTree.from_dict({
+    kept = {
         node.relative_to(tree): node.to_dataset()
         for node in tree.leaves
         if (models is None or node.parent.name in models) and (experiments is None or node.name in experiments)
-    })
+    }
+    left_out = [node.relative_to(tree) for node in tree.leaves if node.relative_to(tree) not in kept]
+    logger.info(f"kept {len(kept)} of {len(tree.leaves)} nodes; left out: {', '.join(left_out) or 'none'}")
+    return xr.DataTree.from_dict(kept)
 
 
 def open_era5_seasonal(variable):
@@ -123,6 +133,7 @@ def open_lesfmip_sample(path=paths.SAMPLE_DIR, models=None, experiments=None):
             continue
         model, experiment = file.stem.removesuffix("_sample").rsplit("_", 1)
         if (models is None or model in models) and (experiments is None or experiment in experiments):
+            logger.info(f"opening {file} as /{model}/{experiment}")
             nodes[f"{model}/{experiment}"] = xr.open_dataset(file).load()
     if not nodes:
         raise ValueError(f"no sample files matched {models=} {experiments=} in {path}")
@@ -131,7 +142,9 @@ def open_lesfmip_sample(path=paths.SAMPLE_DIR, models=None, experiments=None):
 
 def open_era5_sample(path=paths.SAMPLE_DIR):
     """The sample ERA5 file, like ``open_era5_monthly``: monthly ``tas`` in K from 1979, on (time, lat, lon)."""
-    return xr.open_dataarray(Path(path) / "era5_sample.nc").load()
+    file = Path(path) / "era5_sample.nc"
+    logger.info(f"opening {file}")
+    return xr.open_dataarray(file).load()
 
 
 def write_sample(tree, era5, point=None, path=paths.SAMPLE_DIR):

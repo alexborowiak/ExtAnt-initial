@@ -118,12 +118,26 @@ def output(relative):
     return path
 
 
+def _contents(folder, most=10):
+    """What ``folder`` holds, for error messages: its first ``most`` names, or that it does not exist."""
+    if not folder.is_dir():
+        return "folder does not exist"
+    names = sorted(path.name for path in folder.iterdir())
+    if not names:
+        return "folder is empty"
+    more = f" and {len(names) - most} more" if len(names) > most else ""
+    return "folder holds " + ", ".join(names[:most]) + more
+
+
 def find(relative):
     """Where to read ``relative`` from: DATA_DIR if it has been moved there, otherwise SCRATCH."""
-    for root in (DATA_DIR, SCRATCH):
-        if (root / relative).exists():
-            return root / relative
-    raise FileNotFoundError(f"{relative} is in neither {DATA_DIR} nor {SCRATCH}")
+    candidates = list(dict.fromkeys(root / relative for root in (DATA_DIR, SCRATCH)))
+    for path in candidates:
+        if path.exists():
+            return path
+    #(c): Every full path tried, and what is there instead, so a wrong name or a missing step is plain to see
+    looked = "\n".join(f"  {path}  ({_contents(path.parent)})" for path in candidates)
+    raise FileNotFoundError(f"{relative} is in neither DATA_DIR nor SCRATCH. Looked for:\n{looked}")
 
 
 def find_all(folder, pattern):
