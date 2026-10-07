@@ -1,6 +1,8 @@
 """Raw files to monthly zarr stores: LESFMIP (one netCDF file per member) and ERA5 (hourly files).
 
-Run from notebook 01 on JASMIN, once per variable. Everything is written under
+Run from notebook 01 on JASMIN, once per variable. For ERA5 this only has the
+pieces (the files, a month's mean, joining the years); the loop over the years
+and the regridding are in the notebook. Everything is written under
 ``paths.SCRATCH``; move it to ``paths.DATA_DIR`` afterwards (see ``paths``).
 Runs on the Dask cluster, so send the package to the workers first
 (``jasmin.upload_package(client)``).
@@ -165,7 +167,8 @@ def convert_lesfmip(variable, models, experiments, overwrite=False, open_kwargs=
 ERA5_LAT_MAX = -38.0
 
 
-def _era5_south(ds):
+def era5_south(ds):
+    """ERA5 sorted south to north and cut at ``ERA5_LAT_MAX``."""
     return ds.sortby("latitude").sel(latitude=slice(-90.0, ERA5_LAT_MAX))
 
 
@@ -186,67 +189,11 @@ def era5_month_mean(files, name):
     total, n = None, 0
     for file in files:
         with xr.open_dataset(file) as ds:
-            values = _era5_south(ds)[name].values
+            values = era5_south(ds)[name].values
         subtotal = values.sum(axis=0, dtype="float64")
         total = subtotal if total is None else total + subtotal
         n += values.shape[0]
     return (total / n).astype("float32")
-
-
-def era5_regridder(variable, target, year):
-    """A conservative xesmf regridder from the ERA5 grid to ``target``'s (the LESFMIP 2.5° grid)."""
-    import cf_xarray  # noqa: F401  (adds .cf)
-    import xesmf
-
-    first = _era5_south(xr.open_dataset(era5_files(variable, year)[0]))
-    source = first[["latitude", "longitude"]].rename({"latitude": "lat", "longitude": "lon"}).cf.add_bounds(["lat", "lon"])
-    source["lat_bounds"] = source["lat_bounds"].clip(-90.0, 90.0)
-    destination = target[["lat", "lon"]].cf.add_bounds(["lat", "lon"])
-    return xesmf.Regridder(source, destination, "conservative", periodic=True), first
-
-
-def era5_monthly(variable, target, years, client):
-    """Hourly ERA5 to monthly means on ``target``'s grid, saved as ``paths.era5_monthly(variable)``.
-
-    Each month is averaged on a worker. Each year is saved as soon as it is
-    complete, so an interrupted run picks up where it stopped; years already in
-    the combined store, or saved as a year store, are skipped. Once every year
-    is done, the year stores are combined with any existing combined store,
-    checked, and deleted.
-
-    Args:
-        variable (str): Key of ``config.VARIABLES`` (with an ERA5 recipe).
-        target (xr.Dataset | xr.DataArray): Anything on the LESFMIP grid, e.g. one monthly store.
-        years (Iterable[int]): Years wanted.
-        client (distributed.Client): The cluster.
-
-    Returns:
-        xr.DataArray: The combined monthly means (raw units), loaded.
-    """
-    var = config.VARIABLES[variable]
-    years_dir = paths.era5_years_dir(variable)
-    done = {int(p.name.removesuffix(".zarr")) for p in paths.find_all(years_dir, "*.zarr")}
-    if storage.exists(paths.era5_monthly(variable)):
-        done |= set(storage.open_dataarray(paths.era5_monthly(variable)).time.dt.year.values.tolist())
-    todo = [year for year in years if year not in done]
-    logger.info(f"ERA5 {variable}: {len(todo)} years to do")
-
-    if todo:
-        regridder, first = era5_regridder(variable, target, todo[0])
-        futures = {(year, month): client.submit(era5_month_mean, era5_files(variable, year, month), var.era5_name,
-                                                pure=False)
-                   for year in todo for month in range(1, 13)}
-        for year in todo:
-            arrays = client.gather([futures[(year, month)] for month in range(1, 13)])
-            monthly = xr.DataArray(
-                np.stack(arrays), dims=("time", "lat", "lon"),
-                coords={"time": pd.date_range(f"{year}-01-01", periods=12, freq="MS"),
-                        "lat": first["latitude"].values, "lon": first["longitude"].values},
-            )
-            storage.save(regridder(monthly).astype("float32").rename(variable), years_dir / f"{year}.zarr")
-            logger.info(f"ERA5 {variable}: {year} saved")
-
-    return combine_era5_years(variable)
 
 
 def combine_era5_years(variable):

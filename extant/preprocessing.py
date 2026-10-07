@@ -139,7 +139,7 @@ def match_grid(obs, like, tolerance=0.01, lat="lat", lon="lon"):
        in longitude. Points outside ``obs``'s coverage are NaN.
 
     Interpolation suits data at a similar resolution, like the ERA5 store
-    (conservatively regridded to 2.5° by ``convert.era5_monthly``). Regrid much
+    (conservatively regridded to 2.5° in notebook 01, section 2). Regrid much
     finer data conservatively first.
 
     Args:

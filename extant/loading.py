@@ -86,7 +86,7 @@ def open_lesfmip_monthly(variable, models=None, experiments=None, groups=None, l
 # ---------------------------------------------------------------------------
 
 def open_era5_monthly(variable):
-    """Monthly ERA5 means on the LESFMIP grid, in raw units (as ``convert.era5_monthly`` saved them)."""
+    """Monthly ERA5 means on the LESFMIP grid, in raw units (as notebook 01, section 2 saved them)."""
     return storage.open_dataarray(paths.era5_monthly(variable))
 
 
