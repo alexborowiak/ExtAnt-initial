@@ -135,6 +135,16 @@ def reduce_to_dataset(dt: xr.DataTree, func, dims=("model", "experiment"), **con
     return tree_to_dataset(dt.map_over_datasets(skip_empty(func)), list(dims), **concat_kwargs)
 
 
+def hist_nat_like(tree: xr.DataTree) -> xr.DataTree:
+    """A tree shaped like ``tree`` (/<model>/<experiment>) in which every experiment's node holds its model's hist-nat.
+
+    For mapping a function of an experiment and the hist-nat it is compared
+    with over every experiment: ``xr.map_over_datasets(func, tree, hist_nat_like(tree))``.
+    """
+    return DataTree.from_dict({node.relative_to(tree): node.parent["hist-nat"].to_dataset()
+                               for node in tree.leaves if node.data_vars})
+
+
 def dataset_to_tree(ds: xr.Dataset, like: xr.DataTree, dims=("model", "experiment")) -> xr.DataTree:
     """Split a Dataset back into a tree with the same data nodes as ``like``.
 

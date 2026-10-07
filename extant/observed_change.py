@@ -137,7 +137,7 @@ def detection_class(historical, hist_nat):
     return classes.where(usable)
 
 
-def detection_maps(tree, obs, statistic="trend", experiment="historical", reference="hist-nat", years=YEARS,
+def detection_maps(tree, obs, statistic="trend", experiment="historical", years=YEARS,
                    alpha=ev.ALPHA, variable="tas"):
     """Detection classes on the whole grid for every model that has both experiments.
 
@@ -151,15 +151,15 @@ def detection_maps(tree, obs, statistic="trend", experiment="historical", refere
         ensemble, era5 = ev.align(ds[variable].sel(year=years).load(), obs, years=years)
         return ev.statistic_test(ensemble, era5, (statistic,), alpha=alpha).sel(statistic=statistic).drop_dims("member")
 
-    pair = tree.filter(lambda node: node.name in (experiment, reference)
-                       and {experiment, reference} <= set(node.parent.children))
+    pair = tree.filter(lambda node: node.name in (experiment, "hist-nat")
+                       and {experiment, "hist-nat"} <= set(node.parent.children))
     tests = reduce_to_dataset(pair, test, coords="minimal", compat="override").drop_vars(
         ["statistic", "label", "units", "treatment"], errors="ignore")
-    tested, natural = tests.sel(experiment=experiment, drop=True), tests.sel(experiment=reference, drop=True)
+    tested, natural = tests.sel(experiment=experiment, drop=True), tests.sel(experiment="hist-nat", drop=True)
     return xr.Dataset({
         "detection_class": detection_class(tested, natural),
         f"{experiment}_percentile": tested["percentile"],
-        f"{reference}_percentile": natural["percentile"],
+        "hist-nat_percentile": natural["percentile"],
     })
 
 

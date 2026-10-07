@@ -4,9 +4,9 @@ Two kinds:
 
 - schematics of the significance tests, step by step: ``bootstrap_schematic``
   (the hist-nat bootstrap of the change in width) and ``permutation_schematic``
-  (the member-block permutation test of the mean change). Both draw the output
-  of an ``*_example`` function that runs the real test at one point, so every
-  number on them is the test's own;
+  (the member-block permutation test of the mean change). Both are given the
+  test's own pieces at one point, as notebook 03 makes them, and rebuild their
+  example trials from its draws, so every number on them is the test's own;
 - quick looks that follow the data through the notebooks: monthly to seasonal
   means, the year x season split, a rolling quantile, the smoothing, the
   change against hist-nat, the forced response, and signal and noise.
@@ -76,8 +76,8 @@ def _flow(ax, text):
 
 
 def _example_trials(n_trials):
-    """The trials shown in panel b: the first six and the last three."""
-    return [1, 2, 3, 4, 5, 6, n_trials - 2, n_trials - 1, n_trials]
+    """Positions of the trials shown in panel b: the first six and the last three."""
+    return [0, 1, 2, 3, 4, 5, n_trials - 3, n_trials - 2, n_trials - 1]
 
 
 def _range_bar(ax, low, high, height, color, lw=3):
@@ -85,7 +85,8 @@ def _range_bar(ax, low, high, height, color, lw=3):
 
 
 @plot("figure")
-def bootstrap_schematic(example, experiment, units="°C", bins=40, figsize=(11, 15)):
+def bootstrap_schematic(hist_nat, final, null, selected, window_starts, qrange_change, pvalue, experiment,
+                        quantiles=(0.05, 0.95), units="°C", bins=40, figsize=(11, 15)):
     """The hist-nat bootstrap of the change in width (Q95 - Q05), step by step.
 
     a) the change being tested: the experiment's final years against hist-nat's
@@ -95,9 +96,19 @@ def bootstrap_schematic(example, experiment, units="°C", bins=40, figsize=(11, 
        members alone can give;
     c) every trial's change, against which the observed change is judged.
 
+    Each trial in b is rebuilt from ``selected`` and ``window_starts`` and
+    checked against ``null``, so the draws must be the ones behind ``null``.
+
     Args:
-        example (xr.Dataset): ``significance.bootstrap_example`` output.
+        hist_nat (xr.DataArray): hist-nat's whole record at one point, on (member, year).
+        final (xr.DataArray): The experiment's final years at the same point, on (member, year).
+        null (xr.DataArray): Each trial's change in width, on (trial,).
+        selected (np.ndarray): (trial, member) True for each trial's hist-nat members.
+        window_starts (np.ndarray): (trial,) the index along ``year`` where each trial's window starts.
+        qrange_change (float): The observed change in width.
+        pvalue (float): Its p-value.
         experiment (str): Name of the experiment tested.
+        quantiles (tuple[float, float]): The width's lower and upper quantile.
         units (str): Units of the variable.
         bins (int): Bins of the panel c histogram.
         figsize (tuple): Figure size in inches.
@@ -106,23 +117,23 @@ def bootstrap_schematic(example, experiment, units="°C", bins=40, figsize=(11, 
         core.Panels: ``axes`` holds a, the nine trial panels, then c.
     """
     exp_color, nat_color = _color(experiment), _color("hist-nat")
-    quantiles = example.attrs["quantiles"]
-    n_members, years = example.attrs["n_members"], example.attrs["years"]
-    hist_nat = example["hist_nat"].values
-    full = _clean(hist_nat)
-    final = _clean(example["final"])
-    n_trials = example.sizes["trial"]
-    change, pvalue = float(example["qrange_change"]), float(example["pvalue"])
+    hist_nat_values = hist_nat.transpose("member", "year").values
+    year_values = hist_nat["year"].values
+    full = _clean(hist_nat_values)
+    final_values = _clean(final)
+    null_values = np.asarray(null, dtype=float)
+    n_members, years, n_trials = int(selected[0].sum()), final.sizes["year"], null_values.size
+    change, pvalue = float(qrange_change), float(pvalue)
 
     fig, ax_a, ax_flow1, mini, ax_flow2, ax_c = _schematic_axes(figsize)
 
     #(t): a) the experiment's final years against the whole hist-nat record, both centred on 0 to compare widths
-    full_c, final_c = full - full.mean(), final - final.mean()
+    full_c, final_c = full - full.mean(), final_values - final_values.mean()
     edges = np.histogram_bin_edges(np.concatenate([full_c, final_c]), bins=30)
     ax_a.hist(full_c, bins=edges, density=True, color=nat_color, edgecolor=nat_color, alpha=0.28, lw=1.4,
-              label=f"hist-nat, whole record ({hist_nat.shape[0]} members × {hist_nat.shape[1]} years)")
+              label=f"hist-nat, whole record ({hist_nat_values.shape[0]} members × {hist_nat_values.shape[1]} years)")
     ax_a.hist(final_c, bins=edges, density=True, color=exp_color, edgecolor=exp_color, alpha=0.28, lw=1.4,
-              label=f"{experiment}, final {years} years ({example.sizes['exp_member']} members)")
+              label=f"{experiment}, final {years} years ({final.sizes['member']} members)")
     top = ax_a.get_ylim()[1]
     _range_bar(ax_a, *_qrange(full_c, quantiles)[1:], 0.07 * top, nat_color)
     _range_bar(ax_a, *_qrange(final_c, quantiles)[1:], 0.13 * top, exp_color)
@@ -137,19 +148,16 @@ def bootstrap_schematic(example, experiment, units="°C", bins=40, figsize=(11, 
                     f"pool their {n_members * years} values (green) and compare their width with the whole record's (grey)")
 
     #(t): b) example trials, with exactly the draws behind panel c
-    trials = _example_trials(n_trials)
     samples = []
-    for trial in trials:
-        selected = example["selected"].sel(trial=trial).values
-        start = int(example["window_start"].sel(trial=trial))
-        pooled = _clean(hist_nat[selected, start:start + years])
-        samples.append((trial, start, pooled - pooled.mean()))
+    for position in _example_trials(n_trials):
+        start = int(window_starts[position])
+        pooled = _clean(hist_nat_values[selected[position], start:start + years])
+        samples.append((position, start, pooled - pooled.mean()))
     edges = np.histogram_bin_edges(np.concatenate([full_c, *[s for *_, s in samples]]), bins=16)
     top = max(np.histogram(s, edges, density=True)[0].max() for *_, s in samples)
     full_range = _qrange(full_c, quantiles)
 
-    year_values = example["year"].values
-    for ax, (trial, start, values) in zip(mini, samples):
+    for ax, (position, start, values) in zip(mini, samples):
         ax.hist(full_c, bins=edges, density=True, histtype="step", color=REFERENCE_GREY, lw=1.0)
         ax.hist(values, bins=edges, density=True, color=nat_color, edgecolor=nat_color, alpha=0.28, lw=0.8)
         width, low, high = _qrange(values, quantiles)
@@ -157,8 +165,8 @@ def bootstrap_schematic(example, experiment, units="°C", bins=40, figsize=(11, 
         _range_bar(ax, low, high, 0.15 * top, nat_color, lw=2)
         delta = width - full_range[0]
         #(c): The same number as the test's own trial (float32 there)
-        assert np.isclose(delta, float(example["null"].sel(trial=trial)), atol=1e-3), "trial does not match the test"
-        ax.text(0.04, 0.94, f"{trial:,}", transform=ax.transAxes, va="top", fontsize=8)
+        assert np.isclose(delta, null_values[position], atol=1e-3), "trial does not match the test"
+        ax.text(0.04, 0.94, f"{position + 1:,}", transform=ax.transAxes, va="top", fontsize=8)
         ax.text(0.04, 0.80, f"{year_values[start]}–{year_values[start + years - 1]}", transform=ax.transAxes,
                 va="top", fontsize=7, color="0.35")
         ax.text(0.96, 0.94, rf"$\Delta$={delta:+.2f}", transform=ax.transAxes, ha="right", va="top", fontsize=8)
@@ -172,10 +180,10 @@ def bootstrap_schematic(example, experiment, units="°C", bins=40, figsize=(11, 
                     r"and sampling alone produce. Then where does the observed $\Delta$ fall among them?")
 
     #(t): c) every trial's change, and the observed one
-    null = _clean(example["null"])
-    low, high = np.quantile(null, [0.025, 0.975])
+    null_values = _clean(null_values)
+    low, high = np.quantile(null_values, [0.025, 0.975])
     ax_c.axvspan(low, high, color="0.9", zorder=0, label="central 95% of trials")
-    ax_c.hist(null, bins=bins, density=True, color=nat_color, edgecolor=nat_color, alpha=0.65, lw=0.8,
+    ax_c.hist(null_values, bins=bins, density=True, color=nat_color, edgecolor=nat_color, alpha=0.65, lw=0.8,
               label="hist-nat trials")
     ax_c.axvline(change, color=exp_color, lw=2.5, ls="--", label=f"{experiment} (observed)")
     ax_c.set_title(f"c  Bootstrap distribution\n$p$ = {pvalue:.3f}", fontsize=15, pad=8)
@@ -189,7 +197,8 @@ def bootstrap_schematic(example, experiment, units="°C", bins=40, figsize=(11, 
 
 
 @plot("figure")
-def permutation_schematic(example, experiment, reference="hist-nat", units="°C", bins=40, figsize=(11, 15)):
+def permutation_schematic(experiment_final, hist_nat_final, permutations, is_experiment, mean_change, pvalue,
+                          experiment, units="°C", bins=40, figsize=(11, 15)):
     """The member-block permutation test of the mean change, step by step.
 
     a) the two ensembles' final years and the difference in their means;
@@ -198,9 +207,17 @@ def permutation_schematic(example, experiment, reference="hist-nat", units="°C"
     c) every relabelling's difference in means, against which the observed
        difference is judged.
 
+    Each relabelling in b is rebuilt from ``is_experiment`` and checked against
+    ``permutations``, so the two must come from the same draws.
+
     Args:
-        example (xr.Dataset): ``response_change.permutation_example`` output.
-        experiment, reference (str): Names of the two experiments.
+        experiment_final, hist_nat_final (xr.DataArray): The final years of each at one point, on (member, year).
+        permutations (xr.DataArray): Each relabelling's difference in means, on (trial,).
+        is_experiment (np.ndarray): (trial, pooled member) True for the members each relabelling calls
+            the experiment; the experiment's own members come first in the pool.
+        mean_change (float): The observed difference in means.
+        pvalue (float): Its p-value.
+        experiment (str): Name of the experiment.
         units (str): Units of the variable.
         bins (int): Bins of the panel c histogram.
         figsize (tuple): Figure size in inches.
@@ -208,23 +225,25 @@ def permutation_schematic(example, experiment, reference="hist-nat", units="°C"
     Returns:
         core.Panels: ``axes`` holds a, the nine relabelling panels, then c.
     """
-    exp_color, ref_color = _color(experiment), _color(reference)
-    exp_values, ref_values = example["experiment"].values, example["reference"].values
-    n_exp, n_ref = exp_values.shape[0], ref_values.shape[0]
-    years = example.sizes["final_year"]
-    n_trials = example.sizes["trial"]
-    change, pvalue = float(example["mean_change"]), float(example["pvalue"])
+    exp_color, nat_color = _color(experiment), _color("hist-nat")
+    exp_values = experiment_final.transpose("member", "year").values
+    nat_values = hist_nat_final.transpose("member", "year").values
+    n_exp, n_nat = exp_values.shape[0], nat_values.shape[0]
+    years = exp_values.shape[1]
+    permutation_values = np.asarray(permutations, dtype=float)
+    n_trials = permutation_values.size
+    change, pvalue = float(mean_change), float(pvalue)
 
     fig, ax_a, ax_flow1, mini, ax_flow2, ax_c = _schematic_axes(figsize)
 
     #(t): a) the two ensembles' final years
-    exp_all, ref_all = _clean(exp_values), _clean(ref_values)
-    edges = np.histogram_bin_edges(np.concatenate([exp_all, ref_all]), bins=30)
-    ax_a.hist(ref_all, bins=edges, density=True, color=ref_color, edgecolor=ref_color, alpha=0.28, lw=1.4,
-              label=f"{_label(reference)}, {n_ref} members")
+    exp_all, nat_all = _clean(exp_values), _clean(nat_values)
+    edges = np.histogram_bin_edges(np.concatenate([exp_all, nat_all]), bins=30)
+    ax_a.hist(nat_all, bins=edges, density=True, color=nat_color, edgecolor=nat_color, alpha=0.28, lw=1.4,
+              label=f"{_label('hist-nat')}, {n_nat} members")
     ax_a.hist(exp_all, bins=edges, density=True, color=exp_color, edgecolor=exp_color, alpha=0.28, lw=1.4,
               label=f"{_label(experiment)}, {n_exp} members")
-    ax_a.axvline(ref_all.mean(), color=ref_color, lw=2)
+    ax_a.axvline(nat_all.mean(), color=nat_color, lw=2)
     ax_a.axvline(exp_all.mean(), color=exp_color, lw=2)
     ax_a.set_title(f"a  The final {years} years of each ensemble", fontsize=15, pad=10)
     ax_a.set_xlabel(units, fontsize=12)
@@ -233,25 +252,24 @@ def permutation_schematic(example, experiment, reference="hist-nat", units="°C"
     ax_a.text(0.02, 0.95, rf"$\Delta_{{obs}}$ = {change:+.2f} {units}" "\n" "(lines: the means)",
               transform=ax_a.transAxes, va="top", fontsize=11)
 
-    _flow(ax_flow1, f"Pool all {n_exp + n_ref} members, each keeping its {years} years together,\n"
-                    f"then randomly relabel {n_exp} of them {experiment} and {n_ref} {reference}")
+    _flow(ax_flow1, f"Pool all {n_exp + n_nat} members, each keeping its {years} years together,\n"
+                    f"then randomly relabel {n_exp} of them {experiment} and {n_nat} hist-nat")
 
     #(t): b) example relabellings, the experiment's own members first in the pool
-    pool = np.concatenate([exp_values, ref_values]).astype(float)
-    trials = _example_trials(n_trials)
-    samples = [(trial, pool[example["is_experiment"].sel(trial=trial).values],
-                pool[~example["is_experiment"].sel(trial=trial).values]) for trial in trials]
+    pool = np.concatenate([exp_values, nat_values]).astype(float)
+    samples = [(position, pool[is_experiment[position]], pool[~is_experiment[position]])
+               for position in _example_trials(n_trials)]
     edges = np.histogram_bin_edges(pool[np.isfinite(pool)], bins=16)
     top = max(max(np.histogram(_clean(e), edges, density=True)[0].max(),
                   np.histogram(_clean(r), edges, density=True)[0].max()) for _, e, r in samples)
-    for ax, (trial, exp_i, ref_i) in zip(mini, samples):
-        ax.hist(_clean(ref_i), bins=edges, density=True, color=ref_color, edgecolor=ref_color, alpha=0.28, lw=0.8)
+    for ax, (position, exp_i, nat_i) in zip(mini, samples):
+        ax.hist(_clean(nat_i), bins=edges, density=True, color=nat_color, edgecolor=nat_color, alpha=0.28, lw=0.8)
         ax.hist(_clean(exp_i), bins=edges, density=True, color=exp_color, edgecolor=exp_color, alpha=0.28, lw=0.8)
-        ax.axvline(np.nanmean(ref_i), color=ref_color, lw=1.5)
+        ax.axvline(np.nanmean(nat_i), color=nat_color, lw=1.5)
         ax.axvline(np.nanmean(exp_i), color=exp_color, lw=1.5)
-        delta = np.nanmean(exp_i.mean(1)) - np.nanmean(ref_i.mean(1))
-        assert np.isclose(delta, float(example["permutations"].sel(trial=trial)), atol=1e-4), "relabelling does not match the test"
-        ax.text(0.04, 0.94, f"{trial:,}", transform=ax.transAxes, va="top", fontsize=8)
+        delta = np.nanmean(exp_i.mean(1)) - np.nanmean(nat_i.mean(1))
+        assert np.isclose(delta, permutation_values[position], atol=1e-4), "relabelling does not match the test"
+        ax.text(0.04, 0.94, f"{position + 1:,}", transform=ax.transAxes, va="top", fontsize=8)
         ax.text(0.96, 0.94, rf"$\Delta$={delta:+.2f}", transform=ax.transAxes, ha="right", va="top", fontsize=8)
         ax.set_xlim(edges[0], edges[-1])
         ax.set_ylim(0, top * 1.12)
@@ -263,8 +281,8 @@ def permutation_schematic(example, experiment, reference="hist-nat", units="°C"
                     r"then compare the observed $\Delta$ with the permutation distribution")
 
     #(t): c) every relabelling's difference, and the observed one
-    permutations = _clean(example["permutations"])
-    ax_c.hist(permutations, bins=bins, density=True, color=ref_color, edgecolor=ref_color, alpha=0.65, lw=0.8,
+    permutation_values = _clean(permutation_values)
+    ax_c.hist(permutation_values, bins=bins, density=True, color=nat_color, edgecolor=nat_color, alpha=0.65, lw=0.8,
               label="Relabellings")
     ax_c.axvline(change, color=exp_color, lw=2.5, ls="--", label="Observed")
     ax_c.set_title(f"c  Permutation distribution\n$p$ = {pvalue:.3f}", fontsize=15, pad=8)
@@ -363,7 +381,7 @@ def rolling_quantile_demo(members, rolling, year, window, quantiles=(0.05, 0.5, 
 
     Args:
         members (xr.DataArray): One point and season on (member, year).
-        rolling (xr.DataArray): ``quantiles.rolling_percentile_xr`` of ``members``, on (quantile, year).
+        rolling (xr.DataArray): ``quantiles.centred_rolling_quantiles`` of ``members``, on (quantile, year).
         year (int): Window centre shown.
         window (int): Window length in years.
         quantiles (Sequence[float]): Quantiles shown (must be in ``rolling``).
@@ -433,7 +451,7 @@ def smoothing_demo(rolling, smooth, units="°C"):
 
 
 @plot("figure")
-def quantile_change_demo(smooth, base, experiment, reference="hist-nat", quantiles=(0.05, 0.95), units="°C"):
+def quantile_change_demo(smooth, base, experiment, quantiles=(0.05, 0.95), units="°C"):
     """The change in each quantile: an experiment's smoothed quantiles minus hist-nat's whole-record ones.
 
     a) the smoothed quantiles of the experiment and of hist-nat, with hist-nat's
@@ -443,7 +461,7 @@ def quantile_change_demo(smooth, base, experiment, reference="hist-nat", quantil
     Args:
         smooth (xr.DataArray): Smoothed rolling quantiles on (experiment, quantile, year), at one point.
         base (xr.DataArray): hist-nat's whole-record quantiles on (quantile,), at the same point.
-        experiment, reference (str): The experiment and the counterfactual.
+        experiment (str): The experiment.
         quantiles (tuple[float, float]): The pair whose width is shown.
         units (str): Units of the variable.
 
@@ -452,16 +470,16 @@ def quantile_change_demo(smooth, base, experiment, reference="hist-nat", quantil
     """
     panels = core.panel_grid(1, 2, panel_w=5.0, panel_h=3.0, wspace=0.75, left=0.8, bottom=0.65, top=0.45)
     ax_q, ax_change = panels.axes[0]
-    exp_color, ref_color = _color(experiment), _color(reference)
+    exp_color, ref_color = _color(experiment), _color("hist-nat")
     styles = dict(zip(quantiles, ("-", "--")))
     for q in quantiles:
-        for name, color in ((reference, ref_color), (experiment, exp_color)):
+        for name, color in (("hist-nat", ref_color), (experiment, exp_color)):
             series = smooth.sel(experiment=name).sel(quantile=q, method="nearest")
             ax_q.plot(series["year"], series, color=color, lw=1.8, ls=styles[q])
         ax_q.axhline(float(base.sel(quantile=q, method="nearest")), color="0.4", lw=1, ls=":")
     ax_q.legend(handles=[Line2D([], [], color=exp_color, lw=2, label=experiment),
-                         Line2D([], [], color=ref_color, lw=2, label=reference),
-                         Line2D([], [], color="0.4", lw=1, ls=":", label=f"{reference}, whole record"),
+                         Line2D([], [], color=ref_color, lw=2, label="hist-nat"),
+                         Line2D([], [], color="0.4", lw=1, ls=":", label="hist-nat, whole record"),
                          *[Line2D([], [], color="0.2", ls=styles[q], label=f"Q{q * 100:02.0f}") for q in quantiles]],
                 frameon=False, fontsize=8, ncols=2)
     ax_q.set_title("a) Smoothed quantiles", loc="left")
@@ -476,7 +494,7 @@ def quantile_change_demo(smooth, base, experiment, reference="hist-nat", quantil
     ax_change.fill_between(high["year"], low, high, color=exp_color, alpha=0.12, lw=0,
                            label="Δ(width) = gap between the lines")
     ax_change.axhline(0, color="0.5", lw=0.8)
-    ax_change.set_title(f"b) {experiment} minus {reference}'s whole record", loc="left")
+    ax_change.set_title(f"b) {experiment} minus hist-nat's whole record", loc="left")
     ax_change.legend(frameon=False, fontsize=8)
     for ax in (ax_q, ax_change):
         ax.set_xlabel("Year (window centre)")
@@ -521,13 +539,13 @@ def forced_response_demo(members, forced, quantiles=(0.05, 0.95), color="C0", un
 
 
 @plot("figure")
-def two_sample_demo(experiment_values, reference_values, experiment, reference="hist-nat", t=None, p=None,
+def two_sample_demo(experiment_values, hist_nat_values, experiment, t=None, p=None,
                     units="°C", title=None):
     """The two samples a test compares (e.g. the final years of each ensemble, members and years pooled).
 
     Args:
-        experiment_values, reference_values (xr.DataArray): The two samples, any shape.
-        experiment, reference (str): Their names.
+        experiment_values, hist_nat_values (xr.DataArray): The two samples, any shape.
+        experiment (str): The experiment's name.
         t, p (float | None): Test statistic and p-value to print.
         units (str): Units of the variable.
         title (str | None): Panel title.
@@ -537,9 +555,9 @@ def two_sample_demo(experiment_values, reference_values, experiment, reference="
     """
     panels = core.panel_grid(1, 1, panel_w=6.0, panel_h=2.8, left=0.8, bottom=0.65, top=0.45)
     ax = panels.axes[0, 0]
-    exp, ref = _clean(experiment_values), _clean(reference_values)
+    exp, ref = _clean(experiment_values), _clean(hist_nat_values)
     edges = np.histogram_bin_edges(np.concatenate([exp, ref]), bins=30)
-    for values, name in ((ref, reference), (exp, experiment)):
+    for values, name in ((ref, "hist-nat"), (exp, experiment)):
         ax.hist(values, bins=edges, density=True, color=_color(name), alpha=0.3, label=f"{name} (n = {values.size})")
         ax.axvline(values.mean(), color=_color(name), lw=2)
     if t is not None:
@@ -554,7 +572,7 @@ def two_sample_demo(experiment_values, reference_values, experiment, reference="
 
 
 @plot("figure")
-def signal_to_noise_demo(ensemble_mean, forced, noise, sn, experiment, reference="hist-nat", threshold=2,
+def signal_to_noise_demo(ensemble_mean, forced, noise, sn, experiment, threshold=2,
                          units="°C"):
     """Signal, noise and their ratio at one point.
 
@@ -568,7 +586,7 @@ def signal_to_noise_demo(ensemble_mean, forced, noise, sn, experiment, reference
         forced (xr.DataArray): Their smoothed forced response, the same layout.
         noise (xr.DataArray): Pooled noise on (year,).
         sn (xr.DataArray): S/N on (year,).
-        experiment, reference (str): The experiment and the counterfactual.
+        experiment (str): The experiment.
         threshold (float): |S/N| counted as emerged.
         units (str): Units of the variable.
 
@@ -577,7 +595,7 @@ def signal_to_noise_demo(ensemble_mean, forced, noise, sn, experiment, reference
     """
     panels = core.panel_grid(1, 3, panel_w=4.3, panel_h=2.8, wspace=0.75, left=0.8, bottom=0.65, top=0.45, sharex=True)
     ax_signal, ax_noise, ax_ratio = axes = panels.axes[0]
-    for name in (reference, experiment):
+    for name in ("hist-nat", experiment):
         ax_signal.plot(ensemble_mean["year"], ensemble_mean.sel(experiment=name), color=_color(name), lw=0.6,
                        alpha=0.5)
         ax_signal.plot(forced["year"], forced.sel(experiment=name), color=_color(name), lw=2.2, label=name)
@@ -592,7 +610,7 @@ def signal_to_noise_demo(ensemble_mean, forced, noise, sn, experiment, reference
     ax_ratio.axhspan(-threshold, threshold, color="0.92", zorder=0, label=f"|S/N| < {threshold}")
     ax_ratio.plot(sn["year"], sn, color=_color(experiment), lw=1.8)
     ax_ratio.axhline(0, color="0.5", lw=0.8)
-    ax_ratio.set_title(f"c) S/N: ({experiment} − {reference}) / noise", loc="left")
+    ax_ratio.set_title(f"c) S/N: ({experiment} − hist-nat) / noise", loc="left")
     ax_ratio.legend(frameon=False, fontsize=8)
     for ax in axes:
         ax.set_xlabel("Year")

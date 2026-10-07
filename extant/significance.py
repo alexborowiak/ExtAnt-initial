@@ -1,8 +1,8 @@
-"""Resampling and t-test significance for experiment vs reference ensembles.
+"""Resampling and t-test significance for experiment vs hist-nat ensembles.
 
 All resampling works on whole members, so each member's time series stays intact.
 
-The Q-range test is a bootstrap of hist-nat alone (``qrange_significance``):
+The width test's null is a bootstrap of hist-nat alone (``bootstrap_qrange``):
 its Q-range kernels run in numba, compiled (like those in ``quantiles``) parallel
 over grid points for data in memory and serial for dask blocks.
 """
@@ -13,7 +13,7 @@ import xarray as xr
 from numba import njit, prange
 
 from .config import WINDOW
-from .quantiles import numpy_lerp, quantile_range
+from .quantiles import numpy_lerp
 from .datatree import skip_empty
 from .stats import nan_quantile
 
@@ -23,7 +23,7 @@ from .stats import nan_quantile
 # ---------------------------------------------------------------------------
 
 def pvalue_two_sided(samples, observed, dim="trial", method="tails"):
-    """Two-sided resampling p-value, with the +1 correction.
+    """Two-sided resampling p-value, with the +1 correction; NaN where ``observed`` is NaN.
 
     Args:
         samples (xr.DataArray): Null distribution along ``dim``.
@@ -38,11 +38,13 @@ def pvalue_two_sided(samples, observed, dim="trial", method="tails"):
     n = samples.sizes[dim]
 
     if method == "abs":
-        return ((np.abs(samples) >= np.abs(observed)).sum(dim) + 1) / (n + 1)
-
-    upper = ((samples >= observed).sum(dim) + 1) / (n + 1)
-    lower = ((samples <= observed).sum(dim) + 1) / (n + 1)
-    return (2 * np.minimum(upper, lower)).clip(max=1)
+        pvalue = ((np.abs(samples) >= np.abs(observed)).sum(dim) + 1) / (n + 1)
+    else:
+        upper = ((samples >= observed).sum(dim) + 1) / (n + 1)
+        lower = ((samples <= observed).sum(dim) + 1) / (n + 1)
+        pvalue = (2 * np.minimum(upper, lower)).clip(max=1)
+    #(c): NaN compares False with everything, which would otherwise give the smallest p-value there is
+    return pvalue.where(observed.notnull())
 
 
 def outside_bounds(samples, observed, alpha=0.05, dim="trial"):
@@ -149,8 +151,8 @@ def _group_qrange(values, members, n_valid, in_group, n_group, q_low, q_high):
             - _group_quantile(values, members, n_valid, in_group, n_group, q_low, False))
 
 
-def _window_qrange(data, reference, selected, starts, length, trials, first, q_low, q_high, out):
-    """``out[s, t]``: the Q-range of trial t's selected members over its window of years, minus ``reference[s]``.
+def _window_qrange(data, selected, starts, length, trials, first, q_low, q_high, out):
+    """``out[s, t]``: the Q-range of trial t's selected members over its window of years.
 
     Trials are grouped by window, so each point's window is sorted once for all
     the trials that use it: trials ``trials[first[w]:first[w + 1]]`` use the
@@ -158,7 +160,6 @@ def _window_qrange(data, reference, selected, starts, length, trials, first, q_l
 
     Args:
         data (np.ndarray): (point, member, year).
-        reference (np.ndarray): (point,).
         selected (np.ndarray): (trial, member) True for the members each trial samples.
     """
     n_points, n_members, _ = data.shape
@@ -174,35 +175,19 @@ def _window_qrange(data, reference, selected, starts, length, trials, first, q_l
                 for m in range(n_members):
                     if selected[t, m]:
                         n_group += counts[m]
-                out[s, t] = _group_qrange(values, members, n_valid, selected[t], n_group, q_low, q_high) - reference[s]
+                out[s, t] = _group_qrange(values, members, n_valid, selected[t], n_group, q_low, q_high)
 
 
 _window_qrange_serial = njit(nogil=True)(_window_qrange)
 _window_qrange_parallel = njit(parallel=True)(_window_qrange)
 
 
-def _window_block(data, reference, selected, starts, length, trials, first, q_low, q_high, parallel):
+def _window_block(data, selected, starts, length, trials, first, q_low, q_high, parallel):
     points = np.ascontiguousarray(data.reshape(-1, *data.shape[-2:]))
     out = np.empty((points.shape[0], selected.shape[0]), dtype=np.float32)
     kernel = _window_qrange_parallel if parallel else _window_qrange_serial
-    reference = np.ascontiguousarray(np.broadcast_to(reference, data.shape[:-2]), dtype=float).reshape(-1)
-    kernel(points, reference, selected, starts, length, trials, first, q_low, q_high, out)
+    kernel(points, selected, starts, length, trials, first, q_low, q_high, out)
     return out.reshape(*data.shape[:-2], selected.shape[0])
-
-
-def _per_trial(block, inputs, core_dims, n_trials, **kwargs):
-    """Run a kernel block function over every point of ``inputs``, adding a ``trial`` dim (first)."""
-    first = inputs[0]
-    if first.chunks is not None:
-        inputs = [inputs[0].chunk({d: -1 for d in core_dims[0]}), *inputs[1:]]
-    out = xr.apply_ufunc(
-        block, *inputs,
-        input_core_dims=core_dims, output_core_dims=[["trial"]],
-        kwargs={**kwargs, "parallel": first.chunks is None},
-        dask="parallelized", output_dtypes=[np.float32],
-        dask_gufunc_kwargs={"output_sizes": {"trial": n_trials}},
-    )
-    return out.transpose("trial", ...).assign_coords(trial=np.arange(n_trials))
 
 
 #(t): Members in every hist-nat bootstrap draw: the smallest LESFMIP ensemble, so one null serves every experiment
@@ -263,149 +248,46 @@ def bootstrap_draws(n_hist_nat_members, n_hist_nat_years, n_members=N_BOOTSTRAP_
     return selected, sampled_centre_indices - half_window
 
 
-def sample_hist_nat_qrange_changes(
-    hist_nat_da,
-    hist_nat_reference_qrange_da,
-    n_members_to_sample=N_BOOTSTRAP_MEMBERS,
-    years=WINDOW,
-    quantiles=(0.05, 0.95),
-    n_trials=10_000,
-    seed=0,
-):
-    """The hist-nat bootstrap behind ``qrange_significance``: N different members over a random ``years``-year window.
+@skip_empty
+def bootstrap_qrange(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, years=WINDOW, quantiles=(0.05, 0.95), n_trials=1000,
+                     seed=0):
+    """The Q-range (e.g. Q95 - Q05) of each hist-nat bootstrap trial.
 
-    Returns each trial's Q-range minus ``hist_nat_reference_qrange_da``: the
-    changes obtainable from natural variability and sample size alone. The
-    draws are ``bootstrap_draws(..., seed=seed)``.
+    Trial k pools the values of ``n_members`` different hist-nat members over
+    one ``years``-year window, the draws of ``bootstrap_draws(..., seed=seed)``:
+    the members ``selected[k]`` and the years from ``window_starts[k]``. NaN
+    are skipped. Every grid point uses the same draws.
+
+    Args:
+        hist_nat (xr.DataArray | xr.Dataset): hist-nat's whole record, on (member, year, ...).
+        n_members (int): Members per trial.
+        years (int): Window length (odd).
+        quantiles (tuple[float, float]): The lower and upper quantile.
+        n_trials (int): Trials.
+        seed (int): Random seed.
+
+    Returns:
+        The same type, with ``member`` and ``year`` replaced by ``trial`` (first, numbered from 0).
     """
-    selected, window_starts = bootstrap_draws(hist_nat_da.sizes["member"], hist_nat_da.sizes["year"],
-                                              n_members_to_sample, years, n_trials, seed)
+    selected, window_starts = bootstrap_draws(hist_nat.sizes["member"], hist_nat.sizes["year"], n_members, years,
+                                              n_trials, seed)
 
-    # Trials grouped by window, so each window is sorted once.
+    #(c): Trials grouped by window, so each window is sorted once
     trials = np.argsort(window_starts, kind="stable")
     starts, counts = np.unique(window_starts, return_counts=True)
     first = np.concatenate([[0], np.cumsum(counts)])
 
-    return _per_trial(
-        _window_block, [hist_nat_da, hist_nat_reference_qrange_da], [["member", "year"], []], n_trials,
-        selected=selected, starts=starts, length=years, trials=trials, first=first,
-        q_low=quantiles[0], q_high=quantiles[1],
-    ).compute()
-
-
-def bootstrap_example(experiment, hist_nat, n_members=N_BOOTSTRAP_MEMBERS, years=WINDOW, quantiles=(0.05, 0.95),
-                      n_trials=10_000, seed=0):
-    """The hist-nat bootstrap at one point, with its draws, for ``plots.methods.bootstrap_schematic``.
-
-    Exactly ``qrange_significance``'s test with the same draws: trial k of
-    ``null`` pools the members ``selected[k]`` over the ``years`` years from
-    ``window_start[k]``.
-
-    Args:
-        experiment, hist_nat (xr.DataArray): One point and season, on (member, year).
-        n_members, years, quantiles, n_trials, seed: As in ``qrange_significance``.
-
-    Returns:
-        xr.Dataset: ``hist_nat`` (member, year) and the experiment's ``final``
-        (exp_member, final_year) values; ``null`` (trial); ``selected`` (trial,
-        member); ``window_start`` (trial, an index along ``year``); and the
-        scalars ``hist_nat_qrange``, ``experiment_qrange``, ``qrange_change`` and ``pvalue``.
-    """
-    hist_nat = hist_nat.dropna("member", how="all").transpose("member", "year")
-    final = experiment.dropna("member", how="all").isel(year=slice(-years, None)).transpose("member", "year")
-    hist_nat_qrange = quantile_range(hist_nat, quantiles)
-    experiment_qrange = quantile_range(final, quantiles)
-    change = experiment_qrange - hist_nat_qrange
-    null = sample_hist_nat_qrange_changes(hist_nat, hist_nat_qrange, n_members, years=years, quantiles=quantiles,
-                                          n_trials=n_trials, seed=seed)
-    selected, window_starts = bootstrap_draws(hist_nat.sizes["member"], hist_nat.sizes["year"], n_members, years,
-                                              n_trials, seed)
-    return xr.Dataset({
-        "hist_nat": (("member", "year"), hist_nat.values),
-        "final": (("exp_member", "final_year"), final.values),
-        "null": ("trial", null.values),
-        "selected": (("trial", "member"), selected),
-        "window_start": ("trial", window_starts),
-        "hist_nat_qrange": float(hist_nat_qrange),
-        "experiment_qrange": float(experiment_qrange),
-        "qrange_change": float(change),
-        "pvalue": float(pvalue_two_sided(null, change)),
-    }, coords={"year": hist_nat["year"].values, "final_year": final["year"].values,
-               "trial": np.arange(1, n_trials + 1)}).assign_attrs(
-        n_members=n_members, years=years, quantiles=list(quantiles))
-
-
-def qrange_significance(
-    experiments,
-    hist_nat,
-    n_members=N_BOOTSTRAP_MEMBERS,
-    years=WINDOW,
-    quantiles=(0.05, 0.95),
-    n_trials=1000,
-    alpha=0.05,
-    seed=0,
-):
-    """Is each experiment's change in Q-range more than hist-nat's natural variability can produce?
-
-    The change is the experiment's Q-range over its final ``years`` (members
-    and years pooled) minus hist-nat's over its full record. Its null is a
-    bootstrap of hist-nat alone: each trial pools ``n_members`` different
-    hist-nat members over a random ``years``-year window, and subtracts the
-    same full-record Q-range. So the trials are the changes that natural
-    variability and sampling produce on their own.
-
-    The null depends only on hist-nat, so it is drawn once per model and
-    shared by every experiment. With a fixed number of members (the smallest
-    LESFMIP ensemble), it is the same test for every experiment, whatever its
-    ensemble size. A larger ensemble pins its Q-range down more precisely than
-    10 members can, so for it the test is conservative.
-
-    Args:
-        experiments (dict[str, xr.DataArray]): Experiment name -> data with
-            ``member`` and ``year`` dims.
-        hist_nat (xr.DataArray): The model's hist-nat, full record.
-        n_members (int): hist-nat members pooled in each trial.
-        years (int): Length of the final period and of each trial's window (odd).
-        quantiles (tuple[float, float]): The Q-range's lower and upper quantiles.
-        n_trials (int): Bootstrap trials.
-        alpha (float): Two-sided significance level.
-        seed (int): Random seed.
-
-    Returns:
-        xr.Dataset, with an ``experiment`` dim:
-            hist_nat_qrange      hist-nat's Q-range over its full record
-            experiment_qrange    the experiment's over its final ``years``
-            qrange_change        experiment_qrange - hist_nat_qrange
-            null_lower           the bootstrap changes' alpha/2 quantile
-            null_upper           and their 1 - alpha/2 quantile
-            qrange_pvalue        two-sided bootstrap p-value of qrange_change
-            qrange_significant   qrange_pvalue < alpha
-    """
-    hist_nat_qrange = quantile_range(hist_nat, quantiles).compute()
-    null = sample_hist_nat_qrange_changes(
-        hist_nat, hist_nat_qrange, n_members,
-        years=years, quantiles=quantiles, n_trials=n_trials, seed=seed,
+    if hist_nat.chunks:
+        hist_nat = hist_nat.chunk({"member": -1, "year": -1})
+    out = xr.apply_ufunc(
+        _window_block, hist_nat,
+        input_core_dims=[["member", "year"]], output_core_dims=[["trial"]],
+        kwargs=dict(selected=selected, starts=starts, length=years, trials=trials, first=first,
+                    q_low=quantiles[0], q_high=quantiles[1], parallel=not hist_nat.chunks),
+        dask="parallelized", output_dtypes=[np.float32],
+        dask_gufunc_kwargs={"output_sizes": {"trial": n_trials}},
     )
-    null_range = nan_quantile(null, [alpha / 2, 1 - alpha / 2], "trial")
-
-    results = []
-    for exp_da in experiments.values():
-        experiment_qrange = quantile_range(exp_da.isel(year=slice(-years, None)), quantiles).compute()
-        change = experiment_qrange - hist_nat_qrange
-        pvalue = pvalue_two_sided(null, change, method="tails").where(change.notnull())
-        results.append(xr.Dataset({
-            "hist_nat_qrange": hist_nat_qrange,
-            "experiment_qrange": experiment_qrange,
-            "qrange_change": change,
-            "null_lower": null_range.isel(quantile=0, drop=True),
-            "null_upper": null_range.isel(quantile=1, drop=True),
-            "qrange_pvalue": pvalue,
-            "qrange_significant": pvalue < alpha,
-        }))
-
-    out = xr.concat(results, dim="experiment").assign_coords(experiment=list(experiments))
-    return out.assign_attrs(n_members=n_members, years=years, n_trials=n_trials, alpha=alpha,
-                            quantiles=list(quantiles))
+    return out.transpose("trial", ...).assign_coords(trial=np.arange(n_trials))
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +343,13 @@ def area_mean(da, lat="lat", lon="lon"):
 
 @skip_empty
 def ttest_welch(da1, da2, dims=("year", "member"), variable="tas"):
-    """Welch's t-test across ``dims``, returning ``t`` and the two-sided ``p``."""
+    """Welch's t-test across ``dims``, returning ``t`` and the two-sided ``p``.
+
+    Takes two DataArrays, or two Datasets (as ``xr.map_over_datasets`` gives them) whose ``variable`` is tested.
+    """
+    if isinstance(da1, xr.Dataset):
+        da1, da2 = da1[variable], da2[variable]
+
     n1 = np.prod([da1.sizes[d] for d in dims])
     n2 = np.prod([da2.sizes[d] for d in dims])
 
@@ -478,7 +366,4 @@ def ttest_welch(da1, da2, dims=("year", "member"), variable="tas"):
 
     p = 2 * scipy.special.stdtr(df, -np.abs(t))
 
-    return xr.Dataset({
-        "t": t[variable],
-        "p": p[variable],
-    })
+    return xr.Dataset({"t": t, "p": p})

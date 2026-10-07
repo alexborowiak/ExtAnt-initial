@@ -17,14 +17,13 @@ from matplotlib.colors import ListedColormap
 from matplotlib.lines import Line2D
 
 from .. import sea_ice
-from ..config import REFERENCE
 from .era5_evaluation import EVAL_RC, INK, INK_2, MUTED, OUTSIDE_COLOR
 from plotting_modules import core
 from plotting_modules.constants import FORCING_COLORS, FORCING_REVEAL_ORDER
 from plotting_modules.utils import plot
 
 #(t): Line styles of the ice edge on maps: the experiment's and hist-nat's
-EDGE_STYLES = {"experiment": "solid", "reference": "dashed"}
+EDGE_STYLES = {"experiment": "solid", "hist-nat": "dashed"}
 
 #(t): Colours of the cells in the method figure: open water, ice, the continent
 CELL_COLORS = ("white", "#9ec5f4", "#c9c8c3")
@@ -50,7 +49,7 @@ def draw_ice_edge(ax, siconc, level=sea_ice.THRESHOLD, color=INK, linewidth=1.3,
                       linestyles=linestyle, transform=ccrs.PlateCarree())
 
 
-def draw_ice_edges(ax, ice, experiment, season, reference=REFERENCE):
+def draw_ice_edges(ax, ice, experiment, season):
     """hist-nat's edge (dashed) and ``experiment``'s (solid) on one map; nothing if ``ice`` lacks either.
 
     Args:
@@ -58,18 +57,18 @@ def draw_ice_edges(ax, ice, experiment, season, reference=REFERENCE):
     """
     if ice is None:
         return
-    for name, style in ((reference, EDGE_STYLES["reference"]), (experiment, EDGE_STYLES["experiment"])):
+    for name, style in (("hist-nat", EDGE_STYLES["hist-nat"]), (experiment, EDGE_STYLES["experiment"])):
         if name in ice["experiment"].values and season in ice["season"].values:
             draw_ice_edge(ax, ice.sel(experiment=name, season=season), linestyle=style,
-                          linewidth=1.1 if name == reference else 1.4)
-        if name == experiment == reference:
+                          linewidth=1.1 if name == "hist-nat" else 1.4)
+        if name == experiment == "hist-nat":
             break
 
 
-def ice_edge_handles(reference=REFERENCE):
+def ice_edge_handles():
     """Legend entries for ``draw_ice_edges``."""
     return [Line2D([], [], color=INK, lw=1.4, ls=EDGE_STYLES["experiment"], label="Sea-ice edge (15%), the experiment"),
-            Line2D([], [], color=INK, lw=1.1, ls=EDGE_STYLES["reference"], label=f"Sea-ice edge, {reference}")]
+            Line2D([], [], color=INK, lw=1.1, ls=EDGE_STYLES["hist-nat"], label="Sea-ice edge, hist-nat")]
 
 
 # ---------------------------------------------------------------------------

@@ -14,8 +14,7 @@ import numpy as np
 
 #(t): The experiments analysed. hist-nat is the counterfactual every other experiment is compared with
 MAIN_EXPERIMENTS = ["hist-nat", "hist-aer", "hist-totalO3", "hist-GHG", "historical"]
-REFERENCE = "hist-nat"
-FORCED_EXPERIMENTS = [e for e in MAIN_EXPERIMENTS if e != REFERENCE]
+FORCED_EXPERIMENTS = ["hist-aer", "hist-totalO3", "hist-GHG", "historical"]
 
 #(t): Which version of the raw files to convert: 'interp' is every model on the common 2.5° grid
 GROUP = "interp"

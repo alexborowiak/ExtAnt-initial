@@ -1,10 +1,14 @@
 """Checks of response_change on small synthetic trees with a known mean shift and widening."""
 
+from functools import partial
+
 import numpy as np
 import pytest
 import scipy.stats
 import xarray as xr
 
+from extant import datatree
+from extant import quantiles as qc
 from extant import response_change as rc
 from extant import significance as sig
 
@@ -31,49 +35,40 @@ def tree():
     return xr.DataTree.from_dict(nodes)
 
 
+def _mean_response(tree, years=11):
+    """Notebook 03's mean response: final-years ensemble means, each minus hist-nat's."""
+    final = datatree.reduce_to_dataset(tree.isel(year=slice(-years, None)), lambda ds: ds.mean(["year", "member"]))
+    return (final - final.sel(experiment="hist-nat")).drop_sel(experiment="hist-nat").tas
+
+
+def _tails(tree, years=11):
+    """Notebook 03's tails: the change in Q05, Q50 and Q95, final years against hist-nat's whole record."""
+    quantiles = partial(qc.pooled_quantiles, quantiles=[0.05, 0.5, 0.95])
+    final = datatree.reduce_to_dataset(tree.isel(year=slice(-years, None)), quantiles).tas.drop_sel(experiment="hist-nat")
+    hist_nat = datatree.reduce_to_dataset(tree.match("*/hist-nat"), quantiles).tas.sel(experiment="hist-nat", drop=True)
+    q05, q50, q95 = ((final - hist_nat).sel(quantile=q, drop=True) for q in (0.05, 0.5, 0.95))
+    upper, lower = q95 - q50, q50 - q05
+    return xr.Dataset({"upper_tail_change": upper, "lower_tail_change": lower, "width_change": upper + lower,
+                       "tail_asymmetry": upper - lower, "q05_change": q05, "q50_change": q50, "q95_change": q95})
+
+
 @pytest.fixture(scope="module")
 def summary(tree):
     """change_summary with p-values and S/N built so the expected classes are known.
 
     Mean: significant everywhere, emerged only at lat -80. Width: significant only at lon 0.
     """
-    mean = rc.mean_response(tree, years=11)
+    mean = _mean_response(tree)
     pvalue = xr.full_like(mean, 0.001)
     sn = xr.where(mean.lat == -80.0, 3.0, 1.0) + 0 * mean
     width_p = xr.where(mean.lon == 0.0, 0.01, 0.5) + 0 * mean
     qrange = xr.Dataset({"qrange_change": xr.full_like(mean, 1.0), "qrange_pvalue": width_p})
-    return rc.change_summary(mean, pvalue, sn.assign_coords(year=2009), qrange, rc.tail_changes(tree, years=11))
+    return rc.change_summary(mean, pvalue, sn.assign_coords(year=2009), qrange, _tails(tree))
 
 
 # ---------------------------------------------------------------------------
 # The mean, the tails and the summary
 # ---------------------------------------------------------------------------
-
-def test_mean_response_equals_direct_calculation(tree):
-    mean = rc.mean_response(tree, years=11)
-    direct = (tree["A/historical"].tas.isel(year=slice(-11, None)).mean(("year", "member"))
-              - tree["A/hist-nat"].tas.isel(year=slice(-11, None)).mean(("year", "member")))
-    np.testing.assert_allclose(mean.sel(model="A", experiment="historical").transpose(*direct.dims), direct)
-    assert list(mean.experiment.values) == ["historical"] and "height" not in mean.coords
-    np.testing.assert_allclose(float(mean.mean()), SHIFT, atol=0.1)
-
-
-def test_tail_changes_decompose_the_width(tree):
-    tails = rc.tail_changes(tree, years=11)
-    np.testing.assert_allclose(tails.width_change, tails.upper_tail_change + tails.lower_tail_change)
-    np.testing.assert_allclose(tails.tail_asymmetry, tails.upper_tail_change - tails.lower_tail_change)
-    # A symmetric 1.5x widening of N(0, 1): each tail stretches by 0.5 x 1.645.
-    np.testing.assert_allclose(float(tails.upper_tail_change.mean()), 0.5 * 1.645, atol=0.1)
-    np.testing.assert_allclose(float(tails.lower_tail_change.mean()), 0.5 * 1.645, atol=0.1)
-
-
-def test_tail_width_change_is_the_bootstrap_tests_change(tree):
-    """Both measure from hist-nat's full record, so the tails add up to the width change the bootstrap tests."""
-    tails = rc.tail_changes(tree, years=11)
-    width = sig.qrange_significance({"historical": tree["A/historical"].tas}, tree["A/hist-nat"].tas,
-                                    years=11, n_trials=20).qrange_change.sel(experiment="historical")
-    np.testing.assert_allclose(tails.width_change.sel(model="A", experiment="historical").transpose(*width.dims), width)
-
 
 def test_change_summary_flags(summary):
     assert set(summary.dims) == {"model", "experiment", "season", "lat", "lon"}
@@ -107,23 +102,22 @@ def test_strongest_joint_change_and_regional_fractions(summary):
 # The member-block test and internal variability
 # ---------------------------------------------------------------------------
 
-def test_member_block_test_matches_scipy_and_detects_the_shift(tree):
-    result = rc.member_block_test(tree, n_permutations=2000, seed=1)
-    np.testing.assert_allclose(result.mean_change.transpose(*rc.mean_response(tree).dims), rc.mean_response(tree))
-    assert float(result.pvalue.max()) < 0.01  # a 2-degree shift is unmistakable
+def test_member_block_pvalue_matches_scipy_and_detects_the_shift(tree):
+    member_means = tree.isel(year=slice(-11, None)).mean("year")
+    pvalue = xr.map_over_datasets(partial(rc.member_block_pvalue, n_permutations=2000, seed=1),
+                                  member_means, datatree.hist_nat_like(member_means))
+    assert float(pvalue["A/historical"].tas.max()) < 0.01  # a 2-degree shift is unmistakable
 
-    small = xr.DataTree.from_dict({"A/hist-nat": xr.Dataset({"tas": _member_data(8)}),
-                                   "A/hist-GHG": xr.Dataset({"tas": _member_data(8, 0.4)})})
     point = dict(season="DJF", lat=-80.0, lon=0.0)
-    ours = float(rc.member_block_test(small, years=11, n_permutations=20000, seed=2).pvalue.sel(point).squeeze())
-    x, y = (small[f"A/{e}"].tas.isel(year=slice(-11, None)).mean("year").sel(point).values for e in ("hist-GHG", "hist-nat"))
-    reference = scipy.stats.permutation_test((x, y), lambda a, b: a.mean() - b.mean(), n_resamples=20000,
-                                             random_state=3).pvalue
+    x, y = (_member_data(8, shift).isel(year=slice(-11, None)).mean("year").sel(point) for shift in (0.4, 0.0))
+    ours = float(rc.member_block_pvalue(x, y, n_permutations=20000, seed=2))
+    reference = scipy.stats.permutation_test((x.values, y.values), lambda a, b: a.mean() - b.mean(),
+                                             n_resamples=20000, random_state=3).pvalue
     assert abs(ours - reference) < 0.02
 
 
-def test_remove_forced_response_leaves_internal_variability(tree):
-    internal = rc.remove_forced_response(tree, window=21)
+def test_members_minus_the_forced_response_leave_internal_variability(tree):
+    internal = tree - tree.map_over_datasets(partial(rc.forced_response, window=21))
     anomalies = internal["A/historical"].tas
     # The forced shift is gone and the spread is the historical noise (1.5), not shrunk by removing it.
     np.testing.assert_allclose(float(anomalies.mean()), 0, atol=0.05)
@@ -143,7 +137,10 @@ def test_additivity_recovers_the_residual():
     for experiment, response in {**responses, "historical": sum(responses.values()) + 0.3}.items():
         nodes[f"A/{experiment}"] = xr.Dataset({"tas": (_member_data(20, years=years) * 0.1 + response * step)
                                                .transpose("member", "year", ...)})
-    changes = rc.own_baseline_change(xr.DataTree.from_dict(nodes), years=11, baseline=slice(1850, 1900))
+    tree = xr.DataTree.from_dict(nodes)
+    final = datatree.reduce_to_dataset(tree.isel(year=slice(-11, None)), lambda ds: ds.mean(["year", "member"]))
+    baseline = datatree.reduce_to_dataset(tree.sel(year=slice(1850, 1900)), lambda ds: ds.mean(["year", "member"]))
+    changes = (final - baseline).tas
     result = rc.additivity(changes)
     assert list(result.term.values) == [*rc.ADDITIVE_PARTS, "sum of parts", "historical", "residual"]
     np.testing.assert_allclose(result.response.sel(term="residual").mean(), 0.3, atol=0.02)
@@ -170,23 +167,22 @@ def test_quantile_shift_recovers_shift_and_widening(tree):
     assert float(result["shift"].sel(quantile=0.95) - result["shift"].sel(quantile=0.05)) > 0.5
 
 
-def test_permutation_example_matches_the_member_block_test(tree):
+def test_the_step_by_step_permutations_are_the_member_block_tests(tree):
+    """Notebook 03's demonstration (weights from default_rng(0), times the member means) is member_block_pvalue's test."""
     point = dict(season="DJF", lat=-80.0, lon=0.0)
-    experiment, reference = (tree[f"A/{e}"].tas.sel(point) for e in ("historical", "hist-nat"))
-    example = rc.permutation_example(experiment, reference, years=11, n_permutations=500)
-    test = rc.member_block_test(tree, years=11, n_permutations=500).sel(model="A", experiment="historical", **point)
-    np.testing.assert_allclose(float(example["mean_change"]), float(test["mean_change"]))
-    # Each relabelling's difference in means, recomputed from which members it called the experiment
-    pool = np.concatenate([example["experiment"].values, example["reference"].values])
-    labels = example["is_experiment"].sel(trial=7).values
-    expected = pool[labels].mean() - pool[~labels].mean()
-    np.testing.assert_allclose(float(example["permutations"].sel(trial=7)), expected)
-    assert int(labels.sum()) == example.sizes["exp_member"]
+    experiment, hist_nat = (tree[f"A/{e}"].tas.sel(point).isel(year=slice(-11, None)).mean("year")
+                            for e in ("historical", "hist-nat"))
+    weights = rc.permutation_weights(500, experiment.sizes["member"], hist_nat.sizes["member"], np.random.default_rng(0))
+    permutations = xr.DataArray(weights @ np.concatenate([experiment.values, hist_nat.values]), dims="trial")
+    change = experiment.mean("member") - hist_nat.mean("member")
+    by_hand = float(sig.pvalue_two_sided(permutations, change))
+    assert by_hand == pytest.approx(float(rc.member_block_pvalue(experiment, hist_nat, n_permutations=500)))
     # A 2-degree shift with 30 members each is far outside every relabelling
-    assert float(example["pvalue"]) == pytest.approx(2 / 501) and float(test["pvalue"]) == pytest.approx(2 / 501)
+    assert by_hand == pytest.approx(2 / 501)
 
-
-def test_forced_response_is_what_remove_forced_response_removes(tree):
-    removed = rc.remove_forced_response(tree, window=11)["A/historical"].tas
-    members = tree["A/historical"].tas
-    xr.testing.assert_allclose(removed, members - rc.forced_response(members, window=11))
+    # With a smaller shift the p-value is not at its floor, and still the same
+    shifted = experiment - 1.9
+    permutations = xr.DataArray(weights @ np.concatenate([shifted.values, hist_nat.values]), dims="trial")
+    by_hand = float(sig.pvalue_two_sided(permutations, shifted.mean("member") - hist_nat.mean("member")))
+    assert by_hand > 2 / 501
+    assert by_hand == pytest.approx(float(rc.member_block_pvalue(shifted, hist_nat, n_permutations=500)))

@@ -28,7 +28,6 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 from .. import response_change as rc
-from ..config import REFERENCE
 from .era5_evaluation import EVAL_RC, INK, MUTED
 from .response_change import _experiments
 from plotting_modules import core
@@ -146,7 +145,7 @@ def zonal_change_grid(zonal, season, rows="model", lines="experiment", row_value
                                 color=colors[line], mec="white", mew=0.6, zorder=4)
 
                 #(t): The ice edge in each experiment's final years, hist-nat's included
-                edge_lines = [*line_values, REFERENCE] if lines == "experiment" else line_values
+                edge_lines = [*line_values, "hist-nat"] if lines == "experiment" else line_values
                 for line in edge_lines:
                     edge = _edge(edges, {rows: row, lines: line, "season": season})
                     if edge is not None:
@@ -180,11 +179,11 @@ def zonal_change_grid(zonal, season, rows="model", lines="experiment", row_value
             handles.append(Line2D([], [], ls="none", marker="o", ms=5, color=INK, mec="white",
                                   label=f"Significant (p < {alpha:g})"))
         if with_band and "width_change" in columns:
-            handles.append(Patch(color=NULL_COLOR, label=f"{REFERENCE} variability alone (95%)"))
+            handles.append(Patch(color=NULL_COLOR, label="hist-nat variability alone (95%)"))
         if edges is not None:
             handles.append(Line2D([], [], color=INK, lw=1.0, ls=EDGE_LINESTYLE, label="Sea-ice edge (equivalent latitude)"))
         fig.legend(handles=handles, loc="outside lower center", ncols=min(len(handles), 5), frameon=False)
-        fig.suptitle(title or f"Zonal-mean change, {season}: final years against {REFERENCE}", fontsize=11,
+        fig.suptitle(title or f"Zonal-mean change, {season}: final years against hist-nat", fontsize=11,
                      fontweight="bold", x=0.01, ha="left")
     return core.Panels(fig=fig, axes=axes)
 
@@ -222,7 +221,7 @@ def zonal_reference_width(zonal, seasons=("DJF", "JJA"), edges=None, units="°C"
         for ax, season in zip(axes[0], seasons):
             for model in models:
                 ax.plot(lat, width.sel(model=model, season=season), color=colors[model], lw=1.6)
-                edge = _edge(edges, {"model": model, "experiment": REFERENCE, "season": season})
+                edge = _edge(edges, {"model": model, "experiment": "hist-nat", "season": season})
                 if edge is not None:
                     ax.axvline(edge, color=colors[model], lw=1.0, ls=EDGE_LINESTYLE)
             ax.set_title(season, loc="left")
@@ -231,11 +230,11 @@ def zonal_reference_width(zonal, seasons=("DJF", "JJA"), edges=None, units="°C"
             ax.set_ylim(0, top)
             _latitude_axis(ax)
             core.style_ax(ax)
-        axes[0, 0].set_ylabel(f"{REFERENCE} Q95 − Q05 ({units})")
+        axes[0, 0].set_ylabel(f"hist-nat Q95 − Q05 ({units})")
         handles = [Line2D([], [], color=colors[m], lw=2, label=m) for m in models]
         if edges is not None:
             handles.append(Line2D([], [], color=INK, lw=1.0, ls=EDGE_LINESTYLE, label="Sea-ice edge"))
         fig.legend(handles=handles, loc="outside right center", frameon=False)
-        fig.suptitle(title or f"Year-to-year variability in {REFERENCE}: zonal-mean width of each season",
+        fig.suptitle(title or "Year-to-year variability in hist-nat: zonal-mean width of each season",
                      fontsize=11, fontweight="bold", x=0.01, ha="left")
     return core.Panels(fig=fig, axes=axes)

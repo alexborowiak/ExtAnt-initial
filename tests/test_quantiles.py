@@ -53,17 +53,20 @@ def _rolling_reference(da, window, quantiles):
 def test_rolling_percentiles_equal_np_quantile(dask):
     da = _field()
     quantiles = [0.05, 0.5, 0.95]
-    result = qc.rolling_percentile_xr(da.chunk({"lat": 1}) if dask else da, window=11, quantiles=quantiles)
+    result = qc.centred_rolling_quantiles(da.chunk({"lat": 1}) if dask else da, window=11, quantiles=quantiles)
     expected = _rolling_reference(da, 11, quantiles)
     np.testing.assert_array_equal(result.transpose("season", "lat", "quantile", "year").values, expected)
 
 
-def test_rolling_percentiles_pool_several_dims():
-    da = _field().rename(season="pool")
-    result = qc.rolling_percentile_xr(da, window=5, quantiles=[0.5], extra_dims=("member", "pool"))
-    t, lat = 10, 1
-    window = da.isel(year=slice(t - 2, t + 3), lat=lat).values
-    np.testing.assert_allclose(result.isel(year=t, lat=lat, quantile=0), np.nanquantile(window, 0.5))
+def test_rolling_quantiles_are_centred():
+    """Year t pools years t - 2 to t + 2 for a 5-year window; the first and last two years have no full window."""
+    da = _field()
+    result = qc.centred_rolling_quantiles(da, window=5, quantiles=[0.5])
+    t = 10
+    window = da.isel(year=slice(t - 2, t + 3), season=1, lat=1).values
+    np.testing.assert_allclose(result.isel(year=t, season=1, lat=1, quantile=0), np.nanquantile(window, 0.5))
+    valid = result.isel(season=1, lat=1, quantile=0).notnull().values
+    assert not valid[:2].any() and not valid[-2:].any() and valid[2:-2].all()
 
 
 def _statsmodels_rows(rows, window, it):
@@ -104,15 +107,10 @@ def test_rolling_std_matches_the_construct_version(dask):
     np.testing.assert_allclose(ds_result.tas.values, expected.values, rtol=1e-9, atol=1e-9)
 
 
-def test_pooled_quantiles_and_quantile_response_are_xarray_quantile_exactly():
+def test_pooled_quantiles_are_xarray_quantile_exactly():
     da = _field()
     ds = da.to_dataset(name="tas")
     expected = ds.quantile([0.05, 0.5, 0.95], dim=("member", "year"), skipna=True)
     result = qc.pooled_quantiles(ds, [0.05, 0.5, 0.95])
     np.testing.assert_array_equal(result.tas.transpose(*expected.tas.dims).values, expected.tas.values)
 
-    tree = xr.DataTree.from_dict({"A/hist-nat": ds, "A/historical": ds + 1.0})
-    response = qc.quantile_response(tree, [0.05, 0.95], years=11)
-    final = (ds + 1.0).isel(year=slice(-11, None)).quantile([0.05, 0.95], dim=("member", "year"))
-    slow = (final - ds.quantile([0.05, 0.95], dim=("member", "year"))).tas
-    np.testing.assert_allclose(response.sel(model="A", experiment="historical").transpose(*slow.dims), slow)

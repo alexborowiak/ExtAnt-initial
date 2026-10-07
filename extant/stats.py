@@ -39,7 +39,7 @@ def nan_quantile(da, q, dim):
     """
     levels = np.atleast_1d(np.asarray(q, dtype=float))
     dims = [dim] if isinstance(dim, str) else list(dim)
-    if da.chunks is not None:
+    if da.chunks:
         da = da.chunk({d: -1 for d in dims})
     result = xr.apply_ufunc(
         _sorted_quantiles, da,

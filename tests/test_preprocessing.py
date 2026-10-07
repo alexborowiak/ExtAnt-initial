@@ -1,14 +1,18 @@
 """The pre-processing (monthly to seasonal means, ERA5 onto the model grid), on synthetic data and on the sample."""
 
+from functools import partial
+
 import cftime
 import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
 
+from extant import datatree
 from extant import era5_evaluation as ev
 from extant import loading
 from extant import preprocessing as pp
+from extant import quantiles as qc
 from extant import significance as sig
 from extant.config import WINDOW
 
@@ -142,9 +146,11 @@ def test_era5_sample_lines_up_with_the_models(season_tree, era5_seasonal):
 
 
 def test_hist_nat_bootstrap_on_the_sample(season_tree):
-    branch = season_tree["HadGEM3-GC31-LL"]
-    result = sig.qrange_significance({"historical": branch["historical"].tas, "hist-GHG": branch["hist-GHG"].tas},
-                                     branch["hist-nat"].tas, n_trials=200)
-    assert set(result.dims) == {"experiment", "season", "lat", "lon"}
-    assert result.qrange_pvalue.notnull().all()
-    assert (result.null_lower < result.null_upper).all()
+    """The bootstrap mapped over every model's hist-nat, as notebook 03 runs it."""
+    trials = datatree.reduce_to_dataset(season_tree.match("*/hist-nat"), partial(sig.bootstrap_qrange, n_trials=200))
+    assert set(trials.dims) == {"model", "experiment", "trial", "season", "lat", "lon"}
+    assert trials.tas.notnull().all()
+    hist_nat = season_tree["HadGEM3-GC31-LL/hist-nat"].tas
+    null = trials.tas.sel(model="HadGEM3-GC31-LL", experiment="hist-nat") - qc.quantile_range(hist_nat)
+    change = qc.quantile_range(season_tree["HadGEM3-GC31-LL/historical"].tas.isel(year=slice(-21, None))) - qc.quantile_range(hist_nat)
+    assert sig.pvalue_two_sided(null, change).notnull().all()

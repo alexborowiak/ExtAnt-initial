@@ -206,7 +206,7 @@ def extreme_change_maps(summary, model, experiment, seasons=("DJF", "JJA"), mean
         core.add_colorbar(panels.fig, panels.artists[0, 1], panels.colorbar_ax(1, len(columns) - 1),
                           levels=shared, label=f"Extremes and width ({units})")
         core.add_suptitle(panels.fig, panels.layout,
-                          title or f"{model}, {experiment}: final years against {rc.REFERENCE}", fontsize=11)
+                          title or f"{model}, {experiment}: final years against hist-nat", fontsize=11)
         panels.fig.legend(
             handles=[Patch(facecolor="white", edgecolor="0.25", hatch=NOT_SIGNIFICANT_HATCH,
                            label="Not significant (mean, width)"),
@@ -249,22 +249,21 @@ def joint_change_count_maps(counts, season, n_models, experiments=None, title=No
 # ---------------------------------------------------------------------------
 
 @plot("figure")
-def shift_and_widen(samples, shifts, experiment, reference=rc.REFERENCE, test=None, units="°C", title=None):
+def shift_and_widen(samples, shifts, experiment, test=None, units="°C", title=None):
     """How the distribution changes at one grid point: shift of the middle, change of the width and tails.
 
-    a) The distribution of the final years in ``reference`` and in
+    a) The distribution of the final years in hist-nat and in
        ``experiment`` (pooled members and years), with arrows from each
-       reference quantile (Q05, Q50, Q95) to the experiment's.
+       hist-nat quantile (Q05, Q50, Q95) to the experiment's.
     b) The change in every quantile, for every experiment in ``shifts``, with
        its bootstrap 5-95% range. A flat curve is a pure shift. A rising curve
        means the warm tail warms faster than the cold tail (the distribution
        widens upwards); a falling curve, the cold tail warms faster.
 
     Args:
-        samples (dict[str, xr.DataArray]): ``rc.final_years`` output, including ``reference``.
-        shifts (dict[str, xr.Dataset]): Experiment -> ``rc.quantile_shift`` against ``reference``.
+        samples (dict[str, xr.DataArray]): ``rc.final_years`` output, including hist-nat.
+        shifts (dict[str, xr.Dataset]): Experiment -> ``rc.quantile_shift`` against hist-nat.
         experiment (str): The experiment shown in panel a.
-        reference (str): The baseline experiment.
         test (xr.Dataset | None): ``rc.change_summary`` at this model, experiment, season and
             point; adds the test results to panel a.
         units (str): Units of the variable.
@@ -278,7 +277,7 @@ def shift_and_widen(samples, shifts, experiment, reference=rc.REFERENCE, test=No
                                                 gridspec_kw={"width_ratios": (1.35, 1)})
 
         #(t): a) the two distributions, sharing one kernel bandwidth
-        pooled = {name: samples[name].stack(sample=("member", "year")).dropna("sample") for name in (reference, experiment)}
+        pooled = {name: samples[name].stack(sample=("member", "year")).dropna("sample") for name in ("hist-nat", experiment)}
         values = np.concatenate([p.values for p in pooled.values()])
         bandwidth = min(float(p.std()) * p.size ** (-1 / 5) for p in pooled.values())
         x = np.linspace(values.min() - 4 * bandwidth, values.max() + 4 * bandwidth, 600)
@@ -307,11 +306,11 @@ def shift_and_widen(samples, shifts, experiment, reference=rc.REFERENCE, test=No
         ax_dist.set_ylim(0, peak * 1.9)
         ax_dist.set_xlabel(f"Seasonal-mean tas ({units})\n ")
         ax_dist.set_ylabel("Density")
-        ax_dist.set_title(f"a) {reference} vs {experiment}: final years, members pooled", loc="left")
+        ax_dist.set_title(f"a) hist-nat vs {experiment}: final years, members pooled", loc="left")
         ax_dist.legend(loc="upper left", frameon=False)
 
         width = {name: float(p.quantile(0.95) - p.quantile(0.05)) for name, p in pooled.items()}
-        lines = [f"Width Q95 − Q05: {width[reference]:.2f} → {width[experiment]:.2f} {units}"]
+        lines = [f"Width Q95 − Q05: {width["hist-nat"]:.2f} → {width[experiment]:.2f} {units}"]
         if test is not None:
             lines += [
                 f"Mean: {float(test['mean_change']):+.2f} {units}, mean test p = {float(test['mean_pvalue']):.2g}, "
@@ -332,7 +331,7 @@ def shift_and_widen(samples, shifts, experiment, reference=rc.REFERENCE, test=No
         ax_shift.set_xlim(0, 100)
         ax_shift.set_xlabel("Quantile (%)\nflat: a pure shift  ·  rising: warm tail warms faster  ·  "
                             "falling: cold tail warms faster")
-        ax_shift.set_ylabel(f"Change vs {reference} ({units})")
+        ax_shift.set_ylabel(f"Change vs hist-nat ({units})")
         ax_shift.set_title("b) Change in every quantile (bootstrap 5–95%)", loc="left")
         ax_shift.legend(loc="upper left", frameon=False, fontsize=8)
 

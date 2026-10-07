@@ -156,13 +156,21 @@ def test_method_figures():
         return xr.DataArray(values, dims=("member", "year"), coords={"year": years})
 
     hist, nat = members(30, 2.0, 1.2), members(30)
-    methods.bootstrap_schematic(sig.bootstrap_example(hist, nat, n_trials=200), "historical")
-    methods.permutation_schematic(rc.permutation_example(hist, nat, n_permutations=200), "historical")
-    rolling = qc.rolling_percentile_xr(hist, quantiles=[0.05, 0.5, 0.95])
+    final, nat_final = hist.isel(year=slice(-21, None)), nat.isel(year=slice(-21, None))
+    selected, window_starts = sig.bootstrap_draws(30, years.size, n_trials=200)
+    null = sig.bootstrap_qrange(nat, n_trials=200) - qc.quantile_range(nat)
+    change = qc.quantile_range(final) - qc.quantile_range(nat)
+    methods.bootstrap_schematic(nat, final, null, selected, window_starts, change, sig.pvalue_two_sided(null, change),
+                                "historical")
+    weights = rc.permutation_weights(200, 30, 30, np.random.default_rng(0))
+    permutations = weights @ np.concatenate([final.mean("year").values, nat_final.mean("year").values])
+    methods.permutation_schematic(final, nat_final, permutations, weights > 0, float(final.mean() - nat_final.mean()),
+                                  0.01, "historical")
+    rolling = qc.centred_rolling_quantiles(hist, quantiles=[0.05, 0.5, 0.95])
     methods.rolling_quantile_demo(hist, rolling, 1950, 21)
     smooth = qc.lowess_matrix_xarray(rolling)
     methods.smoothing_demo(rolling, smooth)
-    both = xr.concat([smooth, qc.lowess_matrix_xarray(qc.rolling_percentile_xr(nat, quantiles=[0.05, 0.5, 0.95]))],
+    both = xr.concat([smooth, qc.lowess_matrix_xarray(qc.centred_rolling_quantiles(nat, quantiles=[0.05, 0.5, 0.95]))],
                      dim="experiment").assign_coords(experiment=["historical", "hist-nat"])
     methods.quantile_change_demo(both, nat.quantile([0.05, 0.5, 0.95], dim=["member", "year"]), "historical")
     methods.forced_response_demo(hist, rc.forced_response(hist))

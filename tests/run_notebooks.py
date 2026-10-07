@@ -41,7 +41,8 @@ NOTEBOOKS = REPO / "notebooks"
 JASMIN = "(JASMIN)"
 
 #(t): Resampling settings in the notebooks, and what they become here
-TRIAL_CAPS = {"n_trials=10_000": "n_trials={}", "N_TRIALS = 1000": "N_TRIALS = {}", "n_permutations=5000": "n_permutations={}"}
+TRIAL_CAPS = {"n_trials=10_000": "n_trials={}", "N_TRIALS = 1000": "N_TRIALS = {}", "n_permutations=5000": "n_permutations={}",
+              "DEMO_TRIALS = 10_000": "DEMO_TRIALS = {}", "N_PERMUTATIONS = 5000": "N_PERMUTATIONS = {}"}
 
 
 def stand_in_modules():

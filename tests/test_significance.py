@@ -5,6 +5,7 @@ import pytest
 import xarray as xr
 
 from extant import significance as sig
+from extant.quantiles import quantile_range
 
 RNG = np.random.default_rng(11)
 
@@ -24,8 +25,8 @@ def _slow_quantile_range(da, quantiles=(0.05, 0.95), dims=("member", "year")):
     return q.sel(quantile=quantiles[1], drop=True) - q.sel(quantile=quantiles[0], drop=True)
 
 
-def _slow_hist_nat_samples(hist_nat, reference, n_sample, years, quantiles, n_trials, batch_size, seed):
-    """The original sample_hist_nat_qrange_changes: gather each batch of trials and take xarray quantiles."""
+def _slow_hist_nat_samples(hist_nat, n_sample, years, quantiles, n_trials, batch_size, seed):
+    """The original bootstrap: gather each batch of trials and take xarray quantiles."""
     rng = np.random.default_rng(seed)
     n_members, n_years = hist_nat.sizes["member"], hist_nat.sizes["year"]
     half = years // 2
@@ -42,65 +43,62 @@ def _slow_hist_nat_samples(hist_nat, reference, n_sample, years, quantiles, n_tr
         year_index = sampled[start:start + n][:, None] + offsets[None, :]
         pool = hist_nat.isel(member=xr.DataArray(members, dims=("trial", "sample_member")),
                              year=xr.DataArray(year_index, dims=("trial", "sample_year")))
-        qrange = _slow_quantile_range(pool, quantiles, ("sample_member", "sample_year"))
-        batches.append((qrange - reference).astype("float32"))
+        batches.append(_slow_quantile_range(pool, quantiles, ("sample_member", "sample_year")).astype("float32"))
     return xr.concat(batches, dim="trial").assign_coords(trial=np.arange(n_trials))
 
 
 @pytest.mark.parametrize("dask", [False, True])
-def test_hist_nat_sampling_equals_the_per_trial_code(dask):
+def test_bootstrap_qrange_equals_the_per_trial_code(dask):
     hist_nat = _ensemble(14, n_years=40)
-    reference = _slow_quantile_range(hist_nat)
-    slow = _slow_hist_nat_samples(hist_nat, reference, 8, 11, (0.05, 0.95), 170, 50, seed=4)
-    fast = sig.sample_hist_nat_qrange_changes(hist_nat.chunk({"lat": 1}) if dask else hist_nat, reference, 8,
-                                              years=11, n_trials=170, seed=4)
+    slow = _slow_hist_nat_samples(hist_nat, 8, 11, (0.05, 0.95), 170, 50, seed=4)
+    fast = sig.bootstrap_qrange(hist_nat.chunk({"lat": 1}) if dask else hist_nat, 8, years=11, n_trials=170, seed=4)
     np.testing.assert_array_equal(fast.transpose(*slow.dims).values, slow.values)
 
 
-def test_qrange_significance_detects_a_wider_experiment():
-    hist_nat = _ensemble(30, n_years=60)
-    experiments = {"wide": _ensemble(30, n_years=21, scale=2.0), "same": _ensemble(30, n_years=21)}
-    result = sig.qrange_significance(experiments, hist_nat, n_members=10, years=21, n_trials=300, alpha=0.05)
-    assert set(result.experiment.values) == set(experiments)
-    pvalue = result.qrange_pvalue
-    assert float(pvalue.min()) >= 1 / 301 and float(pvalue.max()) <= 1
-    assert float(result.qrange_significant.sel(experiment="wide").mean()) > 0.9
-    assert float(result.qrange_significant.sel(experiment="same").mean()) < 0.3
-    # The all-NaN point has no change and no p-value, and is not significant
-    assert result.qrange_pvalue.isel(season=1, lat=1, lon=2).isnull().all()
-    assert not result.qrange_significant.isel(season=1, lat=1, lon=2).any()
+def test_bootstrap_qrange_on_a_dataset_is_the_same():
+    """Mapped over a DataTree, the function is given Datasets."""
+    hist_nat = _ensemble(14, n_years=40)
+    from_array = sig.bootstrap_qrange(hist_nat, 8, years=11, n_trials=50)
+    from_dataset = sig.bootstrap_qrange(hist_nat.to_dataset(name="tas"), 8, years=11, n_trials=50)
+    np.testing.assert_array_equal(from_dataset.tas.values, from_array.values)
 
 
-def test_qrange_significance_shares_one_hist_nat_null():
-    """The null depends on hist-nat alone: the same for every experiment, whatever its ensemble size."""
+def test_the_bootstrap_test_detects_a_wider_experiment():
+    """The width test as notebook 03 runs it: the change, the null from hist-nat alone, and the p-value."""
     hist_nat = _ensemble(30, n_years=60)
-    result = sig.qrange_significance({"small": _ensemble(10, n_years=21), "big": _ensemble(30, n_years=21)},
-                                     hist_nat, n_trials=200)
-    for name in ("hist_nat_qrange", "null_lower", "null_upper"):
-        np.testing.assert_array_equal(result[name].sel(experiment="small"), result[name].sel(experiment="big"))
-    np.testing.assert_allclose(result.qrange_change, result.experiment_qrange - result.hist_nat_qrange)
-    reference = _slow_quantile_range(hist_nat)
-    null = sig.sample_hist_nat_qrange_changes(hist_nat, reference, 10, years=21, n_trials=200, seed=0)
-    np.testing.assert_allclose(result.null_lower.isel(experiment=0), null.quantile(0.025, "trial", skipna=False).drop_vars("quantile"))
+    hist_nat_qrange = quantile_range(hist_nat)
+    null = sig.bootstrap_qrange(hist_nat, 10, years=21, n_trials=300) - hist_nat_qrange
+    for experiment, expected in ((_ensemble(30, n_years=21, scale=2.0), "wide"), (_ensemble(30, n_years=21), "same")):
+        change = quantile_range(experiment) - hist_nat_qrange
+        pvalue = sig.pvalue_two_sided(null, change)
+        assert float(pvalue.min()) >= 1 / 301 and float(pvalue.max()) <= 1
+        significant = float((pvalue < 0.05).mean())
+        assert significant > 0.9 if expected == "wide" else significant < 0.3
+        # The all-NaN point has no change and no p-value
+        assert pvalue.isel(season=1, lat=1, lon=2).isnull().all()
+
+
+def test_pvalue_is_nan_where_the_observed_value_is():
+    samples = xr.DataArray(RNG.standard_normal((100, 3)), dims=("trial", "point"))
+    observed = xr.DataArray([0.0, np.nan, 5.0], dims="point")
+    pvalue = sig.pvalue_two_sided(samples, observed)
+    assert np.isnan(float(pvalue[1])) and float(pvalue[2]) == pytest.approx(2 / 101)
 
 
 def test_hist_nat_bootstrap_needs_enough_members():
     with pytest.raises(ValueError):
-        sig.qrange_significance({"a": _ensemble(10, n_years=21)}, _ensemble(8, n_years=40))
+        sig.bootstrap_qrange(_ensemble(8, n_years=40), 10, years=21)
 
 
-def test_bootstrap_example_uses_the_tests_own_draws():
-    """Each trial rebuilt from bootstrap_example's draws gives the test's own number, and so does the p-value."""
+def test_bootstrap_draws_are_the_trials_of_bootstrap_qrange():
+    """Each trial rebuilt from bootstrap_draws (same seed) gives bootstrap_qrange's number, as the schematic checks."""
     hist_nat = _ensemble(30, n_years=60).isel(season=0, lat=0, lon=0)
-    experiment = _ensemble(20, n_years=40, scale=1.5).isel(season=0, lat=0, lon=0)
-    example = sig.bootstrap_example(experiment, hist_nat, years=21, n_trials=300, seed=4)
-    values = example["hist_nat"].values
-    for trial in (1, 2, 150, 300):
-        start = int(example["window_start"].sel(trial=trial))
-        pooled = values[example["selected"].sel(trial=trial).values, start:start + 21]
+    selected, window_starts = sig.bootstrap_draws(30, 60, years=21, n_trials=300, seed=4)
+    trials = sig.bootstrap_qrange(hist_nat, years=21, n_trials=300, seed=4)
+    values = hist_nat.values
+    for trial in (0, 1, 150, 299):
+        start = window_starts[trial]
+        pooled = values[selected[trial], start:start + 21]
         width = np.diff(np.nanquantile(pooled, [0.05, 0.95]))[0]
-        np.testing.assert_allclose(width - float(example["hist_nat_qrange"]), example["null"].sel(trial=trial), atol=1e-5)
-    assert int(example["selected"].sum("member").min()) == sig.N_BOOTSTRAP_MEMBERS
-    test = sig.qrange_significance({"e": experiment}, hist_nat, years=21, n_trials=300, seed=4)
-    np.testing.assert_allclose(float(example["pvalue"]), float(test["qrange_pvalue"].squeeze()))
-    np.testing.assert_allclose(float(example["qrange_change"]), float(test["qrange_change"].squeeze()), rtol=1e-6)
+        np.testing.assert_allclose(width, float(trials.sel(trial=trial)), atol=1e-5)
+    assert int(selected.sum(1).min()) == sig.N_BOOTSTRAP_MEMBERS
