@@ -1,24 +1,22 @@
 """Raw files to monthly zarr stores: LESFMIP (one netCDF file per member) and ERA5 (hourly files).
 
-Run from notebook 01 on JASMIN, once per variable. For ERA5 this only has the
-pieces (the files, a month's mean, joining the years); the loop over the years
-and the regridding are in the notebook. Everything is written under
-``paths.SCRATCH``; move it to ``paths.DATA_DIR`` afterwards (see ``paths``).
-Runs on the Dask cluster, so send the package to the workers first
-(``jasmin.upload_package(client)``).
+Used by notebook 01 on JASMIN, once per variable. Only the pieces are here
+(finding the files, opening one model's members together, a month of ERA5,
+joining the ERA5 years); the loops, what is left to do and the checks are in
+the notebook. Everything is written under ``paths.SCRATCH``; move it to
+``paths.DATA_DIR`` afterwards (see ``paths``). Runs on the Dask cluster, so
+send the package to the workers first (``jasmin.upload_package(client)``).
 """
 
 import logging
 import re
 import shutil
 from functools import partial
-from itertools import groupby
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import xarray as xr
-from dask.utils import format_bytes
 
 from . import config, paths, storage
 
@@ -91,72 +89,31 @@ def availability(variable, experiments=None):
     return table.loc[table.sum(axis=1).sort_values(ascending=False, kind="stable").index]
 
 
-def save_members(files, relative, variable, open_kwargs=None):
-    """Open one model's member files for one experiment, stack them along ``member`` and save them.
+def file_group(file):
+    """The group of a raw file: the last part of its name ('interp' for the files on the common grid)."""
+    return Path(file).name.removesuffix(".nc").split("_")[-1]
+
+
+def raw_files(variable, experiment, model, group=config.GROUP):
+    """One model's raw files for one experiment, one per member, sorted: those of ``group``, or all if None."""
+    files = sorted((paths.lesfmip_raw(variable) / experiment / model).rglob("*.nc"))
+    return [file for file in files if group is None or file_group(file) == group]
+
+
+def open_members(files, variable, open_kwargs=None):
+    """Open one model's member files for one experiment, stacked along ``member`` and chunked for saving (lazily).
 
     Args:
         files (Sequence[Path]): One file per member.
-        relative (Path): Where to save, relative to the output roots (``paths.lesfmip_monthly``).
         variable (str): Variable name.
         open_kwargs (dict | None): Passed to ``xr.open_mfdataset``; ``OPEN_KWARGS`` if None.
 
     Returns:
-        Path: The store written.
+        xr.Dataset: ``variable`` on (member, time, lat, lon), south of ``config.LAT_MAX``.
     """
     ds = xr.open_mfdataset(files, preprocess=partial(preprocess_member, variable=variable),
                            **(open_kwargs or OPEN_KWARGS))
-    ds = ds.chunk({"time": -1, "lat": max(ds.sizes["lat"] // 2, 1), "lon": -1, "member": 5})
-    logger.info(f"{relative.name}: {dict(ds.sizes)} {format_bytes(ds.nbytes)}")
-    return storage.save(ds, relative, consolidated=True)
-
-
-def convert_experiment(variable, model, experiment, overwrite=False, open_kwargs=None):
-    """Every group of one model's files for one experiment, to one store per group.
-
-    The group is the last part of each file name ('interp' for the files on
-    the common grid). A group that fails to open is reported, not raised, so
-    one broken model does not stop the rest.
-
-    Returns:
-        dict: group -> {'error', 'files', 'store'} for each group that failed.
-    """
-    files = sorted((paths.lesfmip_raw(variable) / experiment / model).rglob("*.nc"))
-
-    def group_of(file):
-        return file.name.removesuffix(".nc").split("_")[-1]
-
-    groups = {group: list(fs) for group, fs in groupby(sorted(files, key=group_of), key=group_of)}
-    logger.info(f"{experiment}/{model}: {len(files)} files, "
-                + ", ".join(f"{group}={len(fs)}" for group, fs in groups.items()))
-
-    failed = {}
-    for group, group_files in groups.items():
-        store = paths.lesfmip_monthly(model, variable, experiment, group)
-        if not overwrite and storage.exists(store):
-            logger.info(f"{store.name} exists, skipped")
-            continue
-        try:
-            save_members(group_files, store, variable, open_kwargs)
-        except (ValueError, KeyError) as error:
-            failed[group] = {"error": error, "files": group_files, "store": store}
-    return failed
-
-
-def convert_lesfmip(variable, models, experiments, overwrite=False, open_kwargs=None):
-    """``convert_experiment`` for every model and experiment.
-
-    Returns:
-        dict: (experiment, model) -> that call's failures, for those with any.
-    """
-    failures = {}
-    for experiment in experiments:
-        for model in models:
-            if not (paths.lesfmip_raw(variable) / experiment / model).exists():
-                continue
-            failed = convert_experiment(variable, model, experiment, overwrite, open_kwargs)
-            if failed:
-                failures[(experiment, model)] = failed
-    return failures
+    return ds.chunk({"time": -1, "lat": max(ds.sizes["lat"] // 2, 1), "lon": -1, "member": 5})
 
 
 # ---------------------------------------------------------------------------
