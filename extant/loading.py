@@ -30,9 +30,10 @@ def parse_store(store):
 def monthly_stores(variable, models=None, experiments=None, groups=None):
     """Every monthly LESFMIP store of ``variable``, as ``parse_store`` dicts. None means 'all'."""
     folder = paths.lesfmip_monthly_dir(variable)
-    entries = [parse_store(s) for s in paths.find_all(folder, "*_monthly.zarr")]
-    roots = dict.fromkeys((paths.DATA_DIR, paths.SCRATCH))
-    logger.info(f"{len(entries)} monthly {variable} stores in {' and '.join(str(root / folder) for root in roots)}")
+    #(c): The folder can hold every variable's stores, so only this variable's
+    entries = [parse_store(s) for s in paths.find_all(folder, f"*_{variable}_*_monthly.zarr")]
+    folders = dict.fromkeys(str(root / folder) for root in (paths.DATA_DIR, paths.SCRATCH))
+    logger.info(f"{len(entries)} monthly {variable} stores in {' and '.join(folders)}")
     return [e for e in entries
             if (models is None or e["model"] in models)
             and (experiments is None or e["experiment"] in experiments)

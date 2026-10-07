@@ -38,6 +38,7 @@ def jasmin(tmp_path_factory):
 @pytest.fixture
 def roots(jasmin, monkeypatch):
     monkeypatch.setattr(paths, "LESFMIP_RAW", jasmin / "raw")
+    monkeypatch.setattr(paths, "LESFMIP_MONTHLY", None)
     monkeypatch.setattr(paths, "SCRATCH", jasmin / "scratch")
     monkeypatch.setattr(paths, "DATA_DIR", jasmin / "data")
     return jasmin

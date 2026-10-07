@@ -10,9 +10,13 @@ moved by hand to ``DATA_DIR`` afterwards, keeping the same layout::
 ``find`` looks in ``DATA_DIR`` first and then in ``SCRATCH``, so a store can be
 used as soon as it is written and keeps working once it has been moved.
 
-The layout, the same under both roots::
+The monthly LESFMIP stores are the exception: on JASMIN they are all in one
+folder, ``LESFMIP_MONTHLY``::
 
-    monthly/lesfmip/<variable>/<model>_<variable>_<experiment>_<group>_monthly.zarr
+    /work/scratch-pw4/aborow/LESFMIP/monthly_v2/<model>_<variable>_<experiment>_<group>_monthly.zarr
+
+The layout of everything else, the same under both roots::
+
     monthly/era5_<variable>.zarr
     seasonal/lesfmip_<variable>.zarr       a DataTree, /<model>/<experiment>
     seasonal/era5_<variable>.zarr
@@ -54,6 +58,9 @@ SAMPLE_DIR = REPO / "tests" / "data"
 
 ON_JASMIN = LEADER_EPESC.exists()
 
+#(t): The monthly LESFMIP stores of every variable, one per model, experiment and group (None off JASMIN)
+LESFMIP_MONTHLY = Path("/work/scratch-pw4/aborow/LESFMIP/monthly_v2") if ON_JASMIN else None
+
 #(t): Where everything is written (parallel writes are fine on scratch-pw)
 JASMIN_SCRATCH = Path("/work/scratch-pw4/aborow/ExtAnt")
 #(t): Where outputs are moved to by hand, and read from first
@@ -78,7 +85,14 @@ def lesfmip_raw(variable):
 # ---------------------------------------------------------------------------
 
 def lesfmip_monthly_dir(variable):
-    """Folder of the monthly LESFMIP stores, one per model, experiment and group."""
+    """Folder of the monthly LESFMIP stores, one per model, experiment and group.
+
+    On JASMIN, ``LESFMIP_MONTHLY``. It is an absolute path, so joining it to
+    SCRATCH or DATA_DIR gives it back unchanged. Off JASMIN (the tests),
+    monthly/lesfmip/<variable> under the output roots.
+    """
+    if LESFMIP_MONTHLY is not None:
+        return LESFMIP_MONTHLY
     return Path("monthly", "lesfmip", variable)
 
 
