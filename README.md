@@ -26,7 +26,7 @@ What is in `extant/`:
 | `config` | experiments, window length, example point, thresholds, and the variables with their units |
 | `paths` | every input and output location |
 | `storage` | saving to zarr and opening again |
-| `convert` | raw LESFMIP files and hourly ERA5 to monthly zarr stores |
+| `convert` | raw LESFMIP files to monthly zarr stores, and the pieces of the ERA5 step (its loop and regridding are in notebook 01) |
 | `loading` | opening the monthly stores, the seasonal means and the sample |
 | `preprocessing` | monthly to seasonal means, and ERA5 onto the model grid |
 | `quantiles` | rolling quantiles and LOWESS (numba) |

@@ -98,7 +98,7 @@ def test_era5_month_mean_and_combining_years(roots, tmp_path):
     assert mean.dtype == np.float32 and mean.shape == ((lat <= -38).sum(), lon.size)
     np.testing.assert_allclose(mean, 251.0)
 
-    #(c): Two year stores, as era5_monthly leaves them, combined into one checked store
+    #(c): Two year stores, as notebook 01 leaves them, combined into one checked store
     for year in (2001, 2000):
         months = xr.DataArray(np.full((12, 2, 2), float(year)), dims=("time", "lat", "lon"),
                               coords={"time": pd.date_range(f"{year}-01-01", periods=12, freq="MS"),
