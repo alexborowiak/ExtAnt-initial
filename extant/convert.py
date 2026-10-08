@@ -89,15 +89,9 @@ def availability(variable, experiments=None):
     return table.loc[table.sum(axis=1).sort_values(ascending=False, kind="stable").index]
 
 
-def file_group(file):
-    """The group of a raw file: the last part of its name ('interp' for the files on the common grid)."""
-    return Path(file).name.removesuffix(".nc").split("_")[-1]
-
-
-def raw_files(variable, experiment, model, group=config.GROUP):
-    """One model's raw files for one experiment, one per member, sorted: those of ``group``, or all if None."""
-    files = sorted((paths.lesfmip_raw(variable) / experiment / model).rglob("*.nc"))
-    return [file for file in files if group is None or file_group(file) == group]
+def raw_files(variable, experiment, model):
+    """One model's raw files for one experiment (the ``config.GROUP`` ones), one per member, sorted."""
+    return sorted((paths.lesfmip_raw(variable) / experiment / model).rglob(f"*_{config.GROUP}.nc"))
 
 
 def open_members(files, variable, open_kwargs=None):
