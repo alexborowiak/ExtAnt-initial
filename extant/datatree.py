@@ -106,21 +106,52 @@ def to_dataset(branch, concat_dim):
 def tree_to_dataset(dt: xr.DataTree, dims: list[str], **concat_kwargs) -> xr.Dataset:
     """Collapse a DataTree into a Dataset, mapping each path level to a dimension.
 
-    e.g. a tree laid out as /<model>/<experiment> with dims=['model', 'experiment']
+    Each leaf's path below `dt` becomes its coordinate labels: the leaf at
+    /CanESM5/historical gets model='CanESM5', experiment='historical'.
+    `dims` names those levels, top first, and must be a list even for one level.
+
+    Examples
+    --------
+    Whole tree, laid out as /<model>/<experiment>:
+
+    >>> lesfmip_ds = tree_to_dataset(lesfmip_season_tree, dims=['model', 'experiment'])
+    >>> lesfmip_ds.tas.dims
+    ('member', 'year', 'season', 'lat', 'lon', 'model', 'experiment')
+
+    One model's subtree, laid out as /<experiment>, so there's one level:
+
+    >>> canesm_ds = tree_to_dataset(lesfmip_season_tree['CanESM5'].isel(member=0),
+    ...                             dims=['experiment'])          # not dims='experiment'
+    >>> canesm_ds.experiment.values
+    array(['hist-GHG', 'hist-aer', 'historical'], dtype=object)   # sorted by unstack
     """
-    #(c): data_vars, not has_data: has_data is also True for a node that only defines coordinates
+    # Keep only nodes that hold actual variables. Skip has_data: it's also True for
+    # a node that only defines coordinates, and that node would become a spurious entry.
     leaves = [node for node in dt.leaves if node.data_vars]
+
+    # Each leaf's path relative to the root we were given, split into one label per level:
+    # 'CanESM5/historical' -> ('CanESM5', 'historical'); in a one-model subtree 'historical' -> ('historical',)
     keys = [tuple(node.relative_to(dt).split("/")) for node in leaves]
 
+    # Every path must have one label per name in dims. A string passed as dims
+    # fails here, since len('experiment') == 10.
     if any(len(k) != len(dims) for k in keys):
         raise ValueError(f"Not all leaves are at depth {len(dims)}")
 
+    # Stack every leaf along a temporary dimension, one entry per leaf.
+    # join='outer' keeps the union of coordinates, so leaves with different
+    # years or members are padded with NaN rather than raising or being trimmed.
     concat_kwargs.setdefault("join", "outer")
     ds = xr.concat([node.to_dataset() for node in leaves], dim="_stacked",
                    **concat_kwargs)
 
+    # Label each entry of _stacked with its path tuple, as a MultiIndex whose
+    # levels are named by dims: entry i -> (model=..., experiment=...).
     idx = pd.MultiIndex.from_tuples(keys, names=dims)
     ds = ds.assign_coords(xr.Coordinates.from_pandas_multiindex(idx, "_stacked"))
+
+    # Split the MultiIndex into real dimensions (model, experiment). Combinations
+    # the tree doesn't contain (a model missing an experiment) become NaN.
     return ds.unstack("_stacked")
 
 

@@ -280,11 +280,14 @@ def bootstrap_qrange(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, years=WINDOW, quan
     if hist_nat.chunks:
         hist_nat = hist_nat.chunk({"member": -1, "year": -1})
     out = xr.apply_ufunc(
-        _window_block, hist_nat,
-        input_core_dims=[["member", "year"]], output_core_dims=[["trial"]],
+        _window_block,
+        hist_nat,
+        input_core_dims=[["member", "year"]],
+        output_core_dims=[["trial"]],
         kwargs=dict(selected=selected, starts=starts, length=years, trials=trials, first=first,
                     q_low=quantiles[0], q_high=quantiles[1], parallel=not hist_nat.chunks),
-        dask="parallelized", output_dtypes=[np.float32],
+        dask="parallelized",
+        output_dtypes=[np.float32],
         dask_gufunc_kwargs={"output_sizes": {"trial": n_trials}},
     )
     return out.transpose("trial", ...).assign_coords(trial=np.arange(n_trials))
