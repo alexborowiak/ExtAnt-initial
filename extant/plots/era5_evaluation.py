@@ -4,9 +4,9 @@ Follows the plotting_modules conventions: ``draw_*`` functions draw onto an
 axes you pass in (``@plot("axes")``); the others build a whole figure and
 return ``core.Panels`` (``@plot("figure")``). Nothing here computes a test
 statistic. Every function draws the output of an era5_evaluation function, so
-the numbers on a figure are exactly the numbers the tests used. Needs
-plotting_modules on the path (the notebooks add ../../extant-functions); it could
-move into plotting_modules with only its imports changed.
+the numbers on a figure are exactly the numbers the tests used. Uses
+plotting_modules (at the top of this repository); it could move into
+plotting_modules with only its imports changed.
 
 Colour means the same thing in every figure:
     black           ERA5

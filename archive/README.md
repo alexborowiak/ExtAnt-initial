@@ -8,3 +8,5 @@ Earlier drafts, kept for reference. Nothing in `notebooks/` or `extant/` depends
 - `xarray_calc.py`, `draft_current_plotting_functions.py`, `timeseries.py`: code that only these drafts used. `timeseries.py` is an old copy of `plotting_modules/timeseries.py`.
 
 They import modules by their old names, from the repository's old flat layout. To run one, check out commit `7956b46` (the last commit before the reorganisation).
+
+- `forced_response_figures_2026-10-07.ipynb`: notebook 04 as it was until 7 October 2026, before it was redrawn so that every result has the same four figures. It still runs with the current package (it is the only user of `extant.plots.multimodel` and `significance.model_agreement`), from this folder or from `notebooks/`.

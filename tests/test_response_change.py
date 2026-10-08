@@ -186,3 +186,25 @@ def test_the_step_by_step_permutations_are_the_member_block_tests(tree):
     by_hand = float(sig.pvalue_two_sided(permutations, shifted.mean("member") - hist_nat.mean("member")))
     assert by_hand > 2 / 501
     assert by_hand == pytest.approx(float(rc.member_block_pvalue(shifted, hist_nat, n_permutations=500)))
+
+
+def test_width_parts_add_up_to_the_width():
+    quantiles = xr.DataArray([[-3.0, 0.5, 2.0], [-1.0, 0.0, 4.0]], dims=("lat", "quantile"),
+                             coords={"lat": [-80.0, -70.0], "quantile": [0.05, 0.5, 0.95]})
+    parts = rc.width_parts(quantiles)
+    assert list(parts["part"].values) == list(rc.WIDTH_PARTS)
+    np.testing.assert_allclose(parts.sel(part="lower tail"), [3.5, 1.0])
+    np.testing.assert_allclose(parts.sel(part="upper tail"), [1.5, 4.0])
+    xr.testing.assert_allclose(parts.sel(part="lower tail", drop=True) + parts.sel(part="upper tail", drop=True),
+                               parts.sel(part="width", drop=True))
+
+
+def test_joint_class_orders_the_nine_classes_as_the_key():
+    from extant import significance as sig
+
+    change = xr.DataArray([-1.0, 2.0, 3.0, np.nan], dims="lat")
+    significant = xr.DataArray([True, True, False, True], dims="lat")
+    signs = sig.significant_sign(change, significant)
+    np.testing.assert_array_equal(signs, [-1, 1, 0, np.nan])
+    #(c): Lower mean and narrower is 0, no change in either 4, higher and wider 8
+    np.testing.assert_array_equal(rc.joint_class(signs, signs), [0, 8, 4, np.nan])

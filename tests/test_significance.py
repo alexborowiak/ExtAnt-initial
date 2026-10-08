@@ -102,3 +102,30 @@ def test_bootstrap_draws_are_the_trials_of_bootstrap_qrange():
         width = np.diff(np.nanquantile(pooled, [0.05, 0.95]))[0]
         np.testing.assert_allclose(width, float(trials.sel(trial=trial)), atol=1e-5)
     assert int(selected.sum(1).min()) == sig.N_BOOTSTRAP_MEMBERS
+
+
+def test_significant_counts_count_each_sign_and_skip_missing_models():
+    coords = {"model": ["A", "B", "C"], "lat": [-80.0, -70.0]}
+    change = xr.DataArray([[1.0, -2.0], [3.0, np.nan], [-1.0, -0.5]], dims=("model", "lat"), coords=coords)
+    significant = xr.DataArray([[True, True], [True, True], [False, True]], dims=("model", "lat"), coords=coords)
+    counts = sig.significant_counts(change, significant)
+    assert list(counts["direction"].values) == ["increase", "decrease"]
+    #(c): Model C's -1.0 is not significant; model B's NaN counts in neither direction
+    np.testing.assert_array_equal(counts.sel(direction="increase"), [2, 0])
+    np.testing.assert_array_equal(counts.sel(direction="decrease"), [0, 2])
+
+
+def test_area_mean_of_a_dataset_matches_its_dataarrays():
+    da = _ensemble(3).isel(member=0, year=0)
+    ds = xr.Dataset({"a": da, "b": 2 * da})
+    xr.testing.assert_allclose(sig.area_mean(ds)["b"], sig.area_mean(2 * da))
+
+
+def test_robust_sign_needs_the_threshold_of_models_with_data():
+    coords = {"model": ["A", "B", "C"], "lat": [-80.0, -70.0, -60.0]}
+    change = xr.DataArray([[1.0, -1.0, np.nan], [2.0, -2.0, np.nan], [-1.0, 1.0, np.nan]], dims=("model", "lat"),
+                          coords=coords)
+    significant = xr.DataArray([[True, True, False], [True, False, False], [False, True, False]],
+                               dims=("model", "lat"), coords=coords)
+    #(c): Two of three models significantly up passes 0.66; one of three down does not; no data gives NaN
+    np.testing.assert_array_equal(sig.robust_sign(change, significant), [1.0, 0.0, np.nan])

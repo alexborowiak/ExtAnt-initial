@@ -330,9 +330,57 @@ def model_agreement(change, significant=None, dim="model", sign_threshold=0.8, s
     return xr.Dataset(out)
 
 
+def significant_counts(change, significant, dim="model"):
+    """How many models have a significant increase, and how many a significant decrease.
+
+    A model with no data at a point (NaN change) counts in neither.
+
+    Args:
+        change (xr.DataArray): Per-model change, with ``dim``.
+        significant (xr.DataArray): Per-model boolean significance, the same dims.
+        dim (str): The dim counted over.
+
+    Returns:
+        xr.DataArray: Counts with a ``direction`` dim of ["increase", "decrease"], and ``dim`` reduced.
+    """
+    increase = (significant & (change > 0)).sum(dim)
+    decrease = (significant & (change < 0)).sum(dim)
+    return xr.concat([increase, decrease], dim=xr.Variable("direction", ["increase", "decrease"]))
+
+
+def significant_sign(change, significant):
+    """+1 where a change is significant and positive, -1 significant and negative, 0 not significant; NaN without data."""
+    return np.sign(change).where(significant, 0).where(change.notnull())
+
+
+def robust_sign(change, significant, threshold=0.66, dim="model"):
+    """Where the models agree: +1 where at least ``threshold`` of them have a significant increase, -1 a decrease.
+
+    0 elsewhere, and NaN where no model has data. The fraction is of the
+    models with data at each point, so with six models and the default
+    threshold four must agree; with two, both. Both signs cannot pass a
+    threshold above one half.
+
+    Args:
+        change (xr.DataArray): Per-model change, with ``dim``.
+        significant (xr.DataArray): Per-model boolean significance, the same dims.
+        threshold (float): Fraction of the models that must have a significant change of one sign
+            (``config.SIGNIFICANT_THRESHOLD``, after the IPCC AR6 advanced approach).
+        dim (str): The dim counted over.
+
+    Returns:
+        xr.DataArray: -1, 0 or +1 (float, for the NaN), ``dim`` reduced.
+    """
+    counts = significant_counts(change, significant, dim)
+    n_models = change.notnull().sum(dim)
+    increase = counts.sel(direction="increase", drop=True) >= threshold * n_models
+    decrease = counts.sel(direction="decrease", drop=True) >= threshold * n_models
+    return (increase.astype(float) - decrease.astype(float)).where(n_models > 0)
+
+
 def area_mean(da, lat="lat", lon="lon"):
-    """Cos(latitude)-weighted mean over ``lat`` and ``lon``; booleans give the area fraction."""
-    if da.dtype == bool:
+    """Cos(latitude)-weighted mean over ``lat`` and ``lon`` of a DataArray or Dataset; booleans give the area fraction."""
+    if isinstance(da, xr.DataArray) and da.dtype == bool:
         da = da.astype(float)
     return da.weighted(np.cos(np.deg2rad(da[lat]))).mean((lat, lon))
 

@@ -1,4 +1,4 @@
 """Figures. Each module draws the output of the module of the same name in ``extant``.
 
-Needs ``plotting_modules`` (from the extant-functions repository) on the import path.
+Uses ``plotting_modules``, the general plotting package at the top of this repository.
 """

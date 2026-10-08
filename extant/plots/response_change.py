@@ -60,6 +60,30 @@ def symmetric_levels(da, n_steps=12, quantile=0.98):
     return np.arange(-half, half + 1) * step
 
 
+def round_ticks(levels, most):
+    """Every k-th level, at most ``most`` of them, for a colour bar.
+
+    k divides the number of steps, so the end levels are ticked, and on a
+    symmetric scale it divides each half as well, so 0 is ticked too. Of the
+    k that fit, the smallest giving round ticks (every 1, 2, 2.5 or 5 x 10^n)
+    is taken, e.g. 0, 2, 4 rather than 0, 1.5, 3; failing that, the smallest.
+    """
+    levels = np.asarray(levels, dtype=float)
+    n_steps = len(levels) - 1
+    symmetric = n_steps % 2 == 0 and np.isclose(levels[n_steps // 2], 0)
+    fitting = [step for step in range(1, n_steps + 1)
+               if n_steps % step == 0 and (not symmetric or (n_steps // 2) % step == 0) and n_steps // step + 1 <= most]
+    if not fitting:
+        return levels[[0, -1]]
+
+    def round_spacing(step):
+        spacing = abs(levels[step] - levels[0])
+        mantissa = spacing / 10 ** np.floor(np.log10(spacing))
+        return any(np.isclose(mantissa, m) for m in (1, 2, 2.5, 5, 10))
+
+    return levels[::next((step for step in fitting if round_spacing(step)), fitting[0])]
+
+
 def _model_ice(ice, model):
     """One model's concentration climatology, or None if there is none for it."""
     if ice is None or model not in ice["model"].values:
@@ -148,7 +172,7 @@ EXTREME_TITLES = {
 
 @plot("figure")
 def extreme_change_maps(summary, model, experiment, seasons=("DJF", "JJA"), mean_test="robust", ice=None,
-                        units="°C", title=None):
+                        units="°C", title=None, mean_levels=None, extreme_levels=None):
     """The change in the mean, the low and high extremes and the width, mapped: one model and experiment, seasons down.
 
     The maps behind ``plots.zonal.zonal_change_grid``, in the form of
@@ -167,6 +191,8 @@ def extreme_change_maps(summary, model, experiment, seasons=("DJF", "JJA"), mean
         ice (xr.DataArray | None): ``sea_ice.concentration_climatology`` output; adds the ice edges.
         units (str): Units of the variable.
         title (str | None): Figure title.
+        mean_levels, extreme_levels (array-like | None): Colour levels of the mean column and of the
+            other three; symmetric about zero, from the data, by default.
 
     Returns:
         core.Panels
@@ -182,8 +208,8 @@ def extreme_change_maps(summary, model, experiment, seasons=("DJF", "JJA"), mean
         "mean_change": ~cell[f"mean_{mean_test}"] & cell["mean_change"].notnull(),
         "width_change": ~cell["width_significant"] & cell["width_change"].notnull(),
     }
-    levels = {"mean_change": symmetric_levels(fields["mean_change"])}
-    shared = symmetric_levels(fields[columns[1:]].to_dataarray())
+    levels = {"mean_change": symmetric_levels(fields["mean_change"]) if mean_levels is None else mean_levels}
+    shared = symmetric_levels(fields[columns[1:]].to_dataarray()) if extreme_levels is None else extreme_levels
     levels.update({column: shared for column in columns[1:]})
 
     with plt.rc_context(EVAL_RC):
@@ -202,9 +228,9 @@ def extreme_change_maps(summary, model, experiment, seasons=("DJF", "JJA"), mean
         core.label_cols(panels.axes, [f"{EXTREME_TITLES[c]}\n{rc.EXTREMES[c]}" for c in columns], fontsize=9.5)
         core.label_rows(panels.axes, list(seasons))
         core.add_colorbar(panels.fig, panels.artists[0, 0], panels.colorbar_ax(0, 0), levels=levels[columns[0]],
-                          label=f"Mean ({units})")
+                          ticks=round_ticks(levels[columns[0]], 5), label=f"Mean ({units})")
         core.add_colorbar(panels.fig, panels.artists[0, 1], panels.colorbar_ax(1, len(columns) - 1),
-                          levels=shared, label=f"Extremes and width ({units})")
+                          levels=shared, ticks=round_ticks(shared, 13), label=f"Extremes and width ({units})")
         core.add_suptitle(panels.fig, panels.layout,
                           title or f"{model}, {experiment}: final years against hist-nat", fontsize=11)
         panels.fig.legend(

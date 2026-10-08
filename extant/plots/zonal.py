@@ -40,8 +40,8 @@ MODEL_COLORS = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"
 #(t): Column titles, and which test's p-values give each column its dots
 TITLES = {
     "mean_change": "Mean",
-    "low_extreme_change": "Low extremes, from the median",
-    "high_extreme_change": "High extremes, from the median",
+    "low_extreme_change": "Low extremes",
+    "high_extreme_change": "High extremes",
     "width_change": "Width (high − low)",
 }
 PVALUES = {"mean_change": "mean_pvalue", "width_change": "width_pvalue"}
@@ -94,7 +94,8 @@ def _edge(edges, selection):
 
 @plot("figure")
 def zonal_change_grid(zonal, season, rows="model", lines="experiment", row_values=None, line_values=None,
-                      columns=tuple(rc.EXTREMES), edges=None, alpha=0.05, units="°C", title=None):
+                      columns=tuple(rc.EXTREMES), edges=None, alpha=0.05, units="°C", title=None, panel_size=(3.0, 1.95),
+                      rc_params=None, width=None):
     """The zonal-mean change in the mean, the low and high extremes and the width: one row per model.
 
     The form of Bracegirdle et al. (2024) Figs 2, 6 and 8, per model. The
@@ -110,7 +111,10 @@ def zonal_change_grid(zonal, season, rows="model", lines="experiment", row_value
         edges (xr.DataArray | None): ``sea_ice.edge_latitude`` output, on (model, experiment, season).
         alpha (float): Significance level of the dots.
         units (str): Units of the variable.
-        title (str | None): Figure title.
+        title (str | None): Figure title; a default if None, none if "" (for a paper figure).
+        panel_size (tuple[float, float]): Width and height of each panel, in inches.
+        rc_params (dict | None): rcParams to draw with; ``EVAL_RC`` by default (``forced_response.PAPER.rc`` for print).
+        width (float | None): The figure's width in inches, instead of ``panel_size[0]`` (e.g. 7.2 for a printed page).
 
     Returns:
         core.Panels
@@ -122,9 +126,10 @@ def zonal_change_grid(zonal, season, rows="model", lines="experiment", row_value
     lat = data["lat"].values
     with_band = rows == "model" and "null_lower" in data
 
-    with plt.rc_context(EVAL_RC):
+    with plt.rc_context(rc_params or EVAL_RC):
         fig, axes = plt.subplots(len(row_values), len(columns),
-                                 figsize=(3.0 * len(columns) + 1.2, 1.95 * len(row_values) + 1.5),
+                                 figsize=(width or panel_size[0] * len(columns) + 1.2,
+                                          panel_size[1] * len(row_values) + 1.5),
                                  sharex=True, layout="constrained", squeeze=False)
         for i, row in enumerate(row_values):
             for j, column in enumerate(columns):
@@ -183,8 +188,9 @@ def zonal_change_grid(zonal, season, rows="model", lines="experiment", row_value
         if edges is not None:
             handles.append(Line2D([], [], color=INK, lw=1.0, ls=EDGE_LINESTYLE, label="Sea-ice edge (equivalent latitude)"))
         fig.legend(handles=handles, loc="outside lower center", ncols=min(len(handles), 5), frameon=False)
-        fig.suptitle(title or f"Zonal-mean change, {season}: final years against hist-nat", fontsize=11,
-                     fontweight="bold", x=0.01, ha="left")
+        if title != "":
+            fig.suptitle(title or f"Zonal-mean change, {season}: final years against hist-nat", fontsize=11,
+                         fontweight="bold", x=0.01, ha="left")
     return core.Panels(fig=fig, axes=axes)
 
 

@@ -16,7 +16,8 @@ Sections
 1. Internal variability   the forced response, which notebook 03 removes from every member
 2. The mean response      the member-block permutation test of the change in the mean
 3. One summary dataset    every change and test on (model, experiment, season, lat, lon), and its
-                          split into mean, low and high extremes and width (``extreme_changes``)
+                          split into mean, low and high extremes and width (``extreme_changes``);
+                          the width split into its two tails (``width_parts``)
 4. Classifying changes    neither / mean only / width only / both
 5. Additivity             does historical equal the sum of the single forcings?
 6. Local distributions    samples, quantiles and quantile shifts at one grid point
@@ -244,6 +245,29 @@ def extreme_changes(summary):
     })
 
 
+#(t): The three parts of the width, as ``width_parts`` names them, with their formulas
+WIDTH_PARTS = {"lower tail": "Q50 − Q05", "upper tail": "Q95 − Q50", "width": "Q95 − Q05"}
+
+
+def width_parts(quantiles, low=0.05, high=0.95):
+    """Split the width at the median: the lower tail Q50 - Q05, the upper tail Q95 - Q50, and the width Q95 - Q05.
+
+    The two tails add up to the width, so the change in each says which tail
+    did the widening (or narrowing).
+
+    Args:
+        quantiles (xr.DataArray): With a ``quantile`` dim holding ``low``, 0.5 and ``high``.
+        low, high (float): The quantiles at the two ends of the width.
+
+    Returns:
+        xr.DataArray: The three on a new ``part`` dim, named as in ``WIDTH_PARTS``.
+    """
+    q_low = quantiles.sel(quantile=low, drop=True)
+    q_middle = quantiles.sel(quantile=0.5, drop=True)
+    q_high = quantiles.sel(quantile=high, drop=True)
+    return xr.concat([q_middle - q_low, q_high - q_middle, q_high - q_low], dim=xr.Variable("part", list(WIDTH_PARTS)))
+
+
 # ---------------------------------------------------------------------------
 # 4. Classifying changes
 # ---------------------------------------------------------------------------
@@ -257,6 +281,19 @@ MEAN_TESTS = {
     "emerged": "|S/N| ≥ threshold",
     "robust": "mean test p < alpha and |S/N| ≥ threshold",
 }
+
+
+def joint_class(mean_sign, width_sign):
+    """The mean and the width together, as one of nine classes: ``3 * (mean_sign + 1) + (width_sign + 1)``.
+
+    Each sign is -1 (down, or narrower), 0 (no change) or +1 (up, or wider),
+    e.g. from ``significance.significant_sign`` (one model) or
+    ``significance.robust_sign`` (the models together). Class 0 is a lower
+    mean and a narrower distribution, 4 no change in either, 8 a higher mean
+    and a wider distribution: the order of ``plots.forced_response.joint_scale``.
+    NaN where either sign is.
+    """
+    return 3 * (mean_sign + 1) + (width_sign + 1)
 
 
 def change_class(summary, mean_test="robust"):
@@ -287,16 +324,22 @@ def joint_change_counts(summary, mean_test="robust", model_dim="model"):
 REGIONAL_VARIABLES = ("mean_change", "width_change", "upper_tail_change", "lower_tail_change", "tail_asymmetry")
 
 
-def regional_mean(summary, lat_max=-60.0, variables=REGIONAL_VARIABLES):
+def regional_mean(summary, lat_max=-60.0, variables=REGIONAL_VARIABLES, mean_test="robust"):
     """Cos(lat)-weighted means south of ``lat_max``, plus the fraction of that area in each change class.
+
+    Args:
+        summary (xr.Dataset): Output of ``change_summary``.
+        lat_max (float): Northern edge of the region.
+        variables (Sequence[str]): Variables averaged.
+        mean_test (str): Key of ``MEAN_TESTS``: which test decides that the mean changed, for the classes.
 
     Returns:
         xr.Dataset: The regional-mean ``variables`` present in ``summary``, and
-        ``fraction_<class>`` for each of ``CHANGE_CLASSES`` (robust mean test).
+        ``fraction_<class>`` for each of ``CHANGE_CLASSES``.
     """
     region = summary.sel(lat=slice(None, lat_max))
     out = xr.Dataset({name: area_mean(region[name]) for name in variables if name in region})
-    classes = change_class(region)
+    classes = change_class(region, mean_test=mean_test)
     for code, name in CHANGE_CLASSES.items():
         out[f"fraction_{name.replace(' ', '_')}"] = area_mean((classes == code).where(classes.notnull()))
     out.attrs.update(summary.attrs, lat_max=lat_max)

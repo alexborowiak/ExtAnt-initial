@@ -248,3 +248,132 @@ def test_sea_ice_figures(zonal_inputs):
     extents = xr.DataTree.from_dict({f"A/{e}": xr.Dataset({"extent": extent, "continent_area": 13.9e6})
                                      for e in ("hist-nat", "historical")})
     sip.extent_timeseries(sea_ice.extent_summary(extents))
+
+
+def test_forced_response_figures():
+    pytest.importorskip("cartopy")
+    from extant import significance as sig
+    from extant.plots import forced_response as fr
+
+    lat, lon = np.arange(-87.5, -39.9, 10.0), np.arange(-180.0, 180.0, 30.0)
+    rng = np.random.default_rng(2)
+    coords = {"model": ["A", "B", "C"], "experiment": ["hist-GHG", "historical"], "lat": lat, "lon": lon}
+    change = xr.DataArray(rng.standard_normal((3, 2, lat.size, lon.size)), dims=tuple(coords), coords=coords)
+    significant = np.abs(change) > 1
+    change_scale = fr.Scale(np.linspace(-3, 3, 25), "RdBu_r", "Change")
+
+    #(c): Columns that share a Scale share one colour bar: two scales, two bars, plus the dots' legend
+    panels = fr.field_grid(
+        [fr.Column(change.sel(model="A"), change_scale, "Change", not_significant=~significant.sel(model="A")),
+         fr.Column(change.sel(model="B"), change_scale, "Another\nchange"),
+         fr.Column(np.abs(change.sel(model="A")) / 4, fr.pvalue_scale(), "p-value")],
+        title="A title long enough to need wrapping onto a second line in a narrow figure of three columns",
+        row_dim="experiment",
+    )
+    assert panels.axes.shape == (2, 3)
+    assert len(panels.fig.axes) == 6 + 2
+
+    #(c): A model without one experiment leaves its panels empty
+    fr.map_grid(change.where(change["model"] != "C"), fr.threshold_scale(2, 6, "S/N"), title="Every model",
+                not_significant=~significant)
+    counts = sig.significant_counts(change, significant)
+    fr.count_grid(counts, 3, title="How many", label="Models")
+    classes = fr.class_scale(["neither", "mean only", "width only", "both"], ["white", "orange", "violet", "purple"])
+    fr.map_grid(xr.DataArray(rng.integers(0, 4, change.shape), dims=change.dims, coords=change.coords), classes,
+                title="Classes")
+
+    quantiles = np.round(np.arange(0.05, 1.0, 0.05), 2)
+    curves = xr.DataArray(rng.standard_normal((3, 2, quantiles.size)), dims=("model", "experiment", "quantile"),
+                          coords={"model": ["A", "B", "C"], "experiment": ["hist-GHG", "historical"],
+                                  "quantile": quantiles})
+    fr.quantile_curves(curves, title="Every quantile")
+
+
+def test_colour_bar_ticks_include_the_ends_and_zero():
+    from extant.plots import forced_response as fr
+
+    np.testing.assert_allclose(fr._ticks(fr.Scale(np.linspace(-3, 3, 25)), 1), [-3, -1.5, 0, 1.5, 3])
+    np.testing.assert_allclose(fr._ticks(fr.Scale(np.linspace(0, 4, 17)), 1), [0, 1, 2, 3, 4])
+    np.testing.assert_allclose(fr._ticks(fr.Scale([0, 1, 5], ticks=[0, 5]), 1), [0, 5])
+
+
+def test_block_grid_paper_figures_and_the_talk_figures(tmp_path):
+    pytest.importorskip("cartopy")
+    from extant import significance as sig
+    from extant.plots import forced_response as fr, slides
+
+    scales = fr.colour_scales("tas")
+    lat, lon = np.arange(-87.5, -39.9, 10.0), np.arange(-180.0, 180.0, 30.0)
+    rng = np.random.default_rng(3)
+    coords = {"model": ["A", "B", "C"], "experiment": ["hist-GHG", "historical"], "lat": lat, "lon": lon}
+
+    def field(offset=0.0, spread=1.0):
+        return xr.DataArray(offset + spread * rng.standard_normal((3, 2, lat.size, lon.size)), dims=tuple(coords),
+                            coords=coords)
+
+    values = xr.Dataset({"Q05": field(-20, 3), "Mean": field(-15, 3), "Q95": field(-10, 3), "Q95 − Q05": field(6)})
+    change = xr.Dataset({"Q05": field(), "Mean": field(), "Q95": field(), "Q95 − Q05": field(0, 0.5)})
+    not_significant = xr.Dataset({"Mean": field() > 0, "Q95 − Q05": field() > 0})
+
+    #(c): Bracegirdle's layout: two blocks, each with a colour bar for three columns and one for the width
+    panels = fr.block_grid(
+        [fr.Block({"hist-nat": values.isel(model=0, experiment=0), "historical": values.isel(model=0, experiment=1)},
+                  [scales.temperature] * 3 + [scales.spread]),
+         fr.Block({"Change": change.isel(model=0, experiment=1)}, [scales.change] * 3 + [scales.spread_change],
+                  not_significant={"Change": not_significant.isel(model=0, experiment=1)})],
+        style=fr.PAPER, tag=True, panel_size=1.4,
+    )
+    assert panels.axes.shape == (3, 4)
+    assert len(panels.extras["cbars"]) == 4
+    paths = fr.save(panels, tmp_path, "figure")
+    assert all(path.exists() for path in paths)
+
+    #(c): The joint classes on their 3 x 3 key
+    signs = sig.significant_sign(change["Mean"], ~not_significant["Mean"])
+    robust = sig.robust_sign(change["Mean"], ~not_significant["Mean"], threshold=0.66)
+    from extant import response_change as rc
+    fr.map_grid(rc.joint_class(robust, robust), scales.joint, row_dim=None, col_dim="experiment", style=fr.PAPER)
+    fr.map_grid(rc.joint_class(signs, signs), scales.joint)
+
+    regional = xr.Dataset({name: xr.DataArray(rng.standard_normal((3, 2, 2)), dims=("model", "experiment", "season"),
+                                              coords={"model": ["A", "B", "C"], "experiment": ["hist-GHG", "historical"],
+                                                      "season": ["DJF", "JJA"]})
+                           for name in ("mean_change", "width_change")})
+    fr.forcing_dots(regional, {"mean_change": "Mean", "width_change": "Width"}, style=fr.PAPER)
+
+    #(c): The talk figures
+    point = {"lat": -77.5, "lon": 0.0}
+    members = {model: xr.DataArray(rng.standard_normal((5, 21)), dims=("member", "year")) for model in "ABC"}
+    shifted = {model: values + 1 for model, values in members.items()}
+    at_point = change["Mean"].sel(experiment="historical", **point)
+    counts = sig.significant_counts(change["Mean"].sel(experiment="historical"),
+                                    ~not_significant["Mean"].sel(experiment="historical"))
+    slides.count_schematic(members, shifted, at_point, at_point * 0 + 0.01, counts, point, "historical")
+    slides.joint_key_explainer(scales.joint)
+    frames = slides.reveal_frames(change["Mean"].isel(model=0).expand_dims(season=["DJF", "JJA"]), scales.change,
+                                  tmp_path / "frames", col_dim="season")
+    assert [frame.name for frame in frames] == ["01_hist-GHG.png", "02_historical.png"]
+
+
+def test_paper_figures_fill_the_page_width_and_ranges_are_checked(tmp_path):
+    pytest.importorskip("cartopy")
+    from PIL import Image
+
+    from extant.plots import forced_response as fr
+
+    scales = fr.colour_scales("tas")
+    lat, lon = np.arange(-87.5, -39.9, 10.0), np.arange(-180.0, 180.0, 30.0)
+    models = ["CanESM5", "GISS-E2-1-G", "HadGEM3-GC31-LL", "MIROC6", "MPI-ESM1-2-LR", "NorESM2-LM"]
+    field = xr.DataArray(np.random.default_rng(4).normal(0, 2, (6, 4, lat.size, lon.size)),
+                         dims=("model", "experiment", "lat", "lon"),
+                         coords={"model": models, "experiment": ["hist-GHG", "hist-aer", "hist-totalO3", "historical"],
+                                 "lat": lat, "lon": lon})
+    #(c): Long model names and five columns still fit 183 mm, once trimmed of white space as when saved
+    panels = fr.map_grid(field, scales.change, style=fr.PAPER, tag=True, width=fr.PAGE_WIDTH)
+    png, _ = fr.save(panels, tmp_path, "page")[::-1]
+    width_mm = Image.open(png).size[0] / 300 * 25.4
+    assert 170 < width_mm <= 183
+
+    shares = fr.saturation(field, scales.change)
+    assert 0 < shares["above"] < 0.2 and 0 < shares["below"] < 0.2
+    assert fr.saturation(field.clip(-1, 1), scales.change) == {"below": 0.0, "above": 0.0}

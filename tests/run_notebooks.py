@@ -118,11 +118,11 @@ def main():
     output = Path(tempfile.mkdtemp(prefix="extant_notebooks_"))
     for variable in ("EXTANT_SCRATCH", "EXTANT_DATA", "EXTANT_FIGURES"):
         os.environ[variable] = str(output / variable.split("_")[1].lower())
-    sys.path[:0] = [str(REPO), str(REPO.parent / "extant-functions")]
+    sys.path[:0] = [str(REPO)]
     stand_in_modules()
 
     notebooks = [p.resolve() for p in args.notebooks] or sorted(NOTEBOOKS.glob("[0-9]*.ipynb"))
-    #(c): The notebooks put '..' and '../../extant-functions' on the path, relative to the notebooks folder
+    #(c): The notebooks put '..' on the path, relative to the notebooks folder
     os.chdir(NOTEBOOKS)
     failures = []
     for path in notebooks:
