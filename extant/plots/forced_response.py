@@ -777,7 +777,7 @@ def map_grid(da, scale, title=None, row_dim="model", col_dim="experiment", not_s
 
 @plot("figure")
 def count_grid(counts, n_models, title, label, above=(), row_dim="direction", col_dim="experiment", row_labels=None,
-               signed=True, panel_size=2.3, style=NOTEBOOK, tag=False, width=None, height=None):
+               group_dim=None, signed=True, panel_size=2.3, style=NOTEBOOK, tag=False, width=None, height=None):
     """How many models: the response itself first (``above``, e.g. the multi-model median), then a row of counts each.
 
     With ``signed`` (the default) the counts are of a significant increase
@@ -796,6 +796,8 @@ def count_grid(counts, n_models, title, label, above=(), row_dim="direction", co
         label (str): Colour-bar label: what the counts count.
         above (Sequence[Row]): Rows drawn above the counts, each with its own colour bar.
         row_dim, col_dim (str): Dims mapped to the rows of counts and to the columns.
+        group_dim (str | None): Dim the rows of counts are repeated for, e.g. "experiment", each row labelled
+        with its value then its row label; one set of rows if None.
         row_labels (dict | None): Label for each row value, e.g. {"increase": "Significant increase"}.
         signed (bool): Increase and decrease rows on one diverging scale; False for counts with no sign.
         panel_size (float): Width and height of each panel, in inches.
@@ -814,8 +816,14 @@ def count_grid(counts, n_models, title, label, above=(), row_dim="direction", co
     else:
         drawn = counts
         scale = majority_scale(n_models, label)
-    count_rows = [Row(drawn.sel({row_dim: value}), scale, str((row_labels or {}).get(value, value)))
-                  for value in drawn[row_dim].values]
+    groups = [None] if group_dim is None else list(drawn[group_dim].values)
+    count_rows = []
+    for group in groups:
+        selection = {} if group is None else {group_dim: group}
+        for value in drawn[row_dim].values:
+            row_label = str((row_labels or {}).get(value, value))
+            label = row_label if group is None else f"{group}\n{row_label}"
+            count_rows.append(Row(drawn.sel({**selection, row_dim: value}), scale, label))
     return row_grid([*above, *count_rows], title, col_dim=col_dim, panel_size=panel_size, style=style, tag=tag,
                     width=width, height=height)
 
