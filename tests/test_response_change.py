@@ -93,6 +93,11 @@ def test_change_class_and_counts(summary):
 
 def test_strongest_joint_change_and_regional_fractions(summary):
     assert rc.strongest_joint_change(summary, "A", "historical", "DJF") == {"lat": -80.0, "lon": 0.0}
+    #(c): Every season searched: the season comes with the point
+    point = rc.strongest_joint_change(summary, "A", "historical")
+    assert list(point) == ["season", "lat", "lon"]
+    assert rc.strongest_joint_change(summary, "A", "historical", point["season"]) == {"lat": point["lat"],
+                                                                                      "lon": point["lon"]}
     regional = rc.regional_mean(summary, lat_max=-60)
     fractions = sum(regional[f"fraction_{name.replace(' ', '_')}"] for name in rc.CHANGE_CLASSES.values())
     np.testing.assert_allclose(fractions, 1.0)
@@ -156,6 +161,8 @@ def test_additivity_recovers_the_residual():
 
 def test_quantile_shift_recovers_shift_and_widening(tree):
     samples = rc.final_years(tree, "A", ["hist-nat", "historical"], {"lat": -80.0, "lon": 0.0}, "DJF", years=11)
+    with_season = rc.final_years(tree, "A", ["historical"], {"season": "DJF", "lat": -80.0, "lon": 0.0}, years=11)
+    xr.testing.assert_identical(with_season["historical"], samples["historical"])
     assert samples["historical"].dims == ("member", "year") and samples["historical"].sizes["year"] == 11
     result = rc.quantile_shift(samples["historical"], samples["hist-nat"], n_boot=300)
     assert set(result.dims) == {"quantile"}

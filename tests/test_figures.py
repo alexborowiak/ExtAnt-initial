@@ -229,6 +229,8 @@ def test_zonal_figures(zonal_inputs):
     _, zonal_ds, _, edges = zonal_inputs
     zp.zonal_change_grid(zonal_ds, "JJA", edges=edges)
     zp.zonal_change_grid(zonal_ds, "DJF", rows="experiment", lines="model")
+    #(c): One model, the seasons as rows
+    zp.zonal_change_grid(zonal_ds, rows="season", lines="experiment", select={"model": "A"}, edges=edges)
     zp.zonal_reference_width(zonal_ds, edges=edges)
 
 
@@ -274,10 +276,28 @@ def test_forced_response_figures():
     assert len(panels.fig.axes) == 6 + 2
 
     #(c): A model without one experiment leaves its panels empty
-    fr.map_grid(change.where(change["model"] != "C"), fr.threshold_scale(2, 6, "S/N"), title="Every model",
+    fr.map_grid(np.abs(change.where(change["model"] != "C")), fr.separation_scale(), title="Every model",
                 not_significant=~significant)
+
+    #(c): Rows that share a Scale share one colour bar: the two experiments' changes, then a p-value per experiment
+    panels = fr.row_grid(
+        [fr.Row(change, change_scale, "Change", not_significant=~significant),
+         fr.Row(np.abs(change) / 4, fr.pvalue_scale(), "p-value")],
+        title="Rows", row_dim="experiment", col_dim="model",
+    )
+    assert panels.axes.shape == (4, 3)
+    assert len(panels.extras["cbars"]) == 2
+
+    #(c): The counts under the median: three rows, two colour bars
     counts = sig.significant_counts(change, significant)
-    fr.count_grid(counts, 3, title="How many", label="Models")
+    panels = fr.count_grid(counts, 3, title="How many", label="Models",
+                           above=[fr.Row(change.median("model"), change_scale, "Median")])
+    assert panels.axes.shape == (3, 2)
+    assert len(panels.extras["cbars"]) == 2
+    thresholds = xr.DataArray([0.5, 1, 2], dims="threshold", coords={"threshold": [0.5, 1, 2]})
+    panels = fr.count_grid((np.abs(change) > thresholds).sum("model"), 3, title="How many apart", label="Models",
+                           row_dim="threshold", signed=False)
+    assert panels.axes.shape == (3, 2)
     classes = fr.class_scale(["neither", "mean only", "width only", "both"], ["white", "orange", "violet", "purple"])
     fr.map_grid(xr.DataArray(rng.integers(0, 4, change.shape), dims=change.dims, coords=change.coords), classes,
                 title="Classes")
@@ -287,6 +307,7 @@ def test_forced_response_figures():
                           coords={"model": ["A", "B", "C"], "experiment": ["hist-GHG", "historical"],
                                   "quantile": quantiles})
     fr.quantile_curves(curves, title="Every quantile")
+    fr.quantile_curves(curves.expand_dims(season=["DJF", "JJA"]), col_dim="season", row_dim="experiment")
 
 
 def test_colour_bar_ticks_include_the_ends_and_zero():

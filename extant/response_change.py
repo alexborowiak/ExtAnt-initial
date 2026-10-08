@@ -392,35 +392,46 @@ def additivity(changes, parts=ADDITIVE_PARTS, total="historical", min_total=0.25
 # 6. Local distributions at one grid point
 # ---------------------------------------------------------------------------
 
-def strongest_joint_change(summary, model, experiment, season, lat_max=-60.0, mean_test="robust"):
+def strongest_joint_change(summary, model, experiment, season=None, lat_max=-60.0, mean_test="robust"):
     """The grid point where the mean and the width both changed and the width changed most.
 
     Falls back to the largest significant width change, then to the largest
     width change, if no point has both. Restricted to south of ``lat_max``.
+    With ``season`` None every season is searched, and the point says which.
 
     Returns:
-        dict: ``{"lat": ..., "lon": ...}``, ready for ``.sel(**point)``.
+        dict: ``{"lat": ..., "lon": ...}`` (with ``"season"`` first when it was searched), ready for ``.sel(point)``.
     """
-    cell = summary.sel(model=model, experiment=experiment, season=season).sel(lat=slice(None, lat_max))
+    cell = summary.sel(model=model, experiment=experiment)
+    if season is not None:
+        cell = cell.sel(season=season)
+    cell = cell.sel(lat=slice(None, lat_max))
     size = np.abs(cell["width_change"])
+    dims = [dim for dim in ("season", "lat", "lon") if dim in size.dims]
     for candidates in (cell[f"mean_{mean_test}"] & cell["width_significant"], cell["width_significant"], size.notnull()):
-        score = size.where(candidates).stack(point=("lat", "lon"))
+        score = size.where(candidates).stack(point=dims)
         if int(score.notnull().sum()):
-            lat, lon = score["point"].values[int(score.argmax("point", skipna=True))]
-            return {"lat": float(lat), "lon": float(lon)}
-    raise ValueError(f"no data for {model} {experiment} {season}")
+            best = dict(zip(dims, score["point"].values[int(score.argmax("point", skipna=True))]))
+            return {dim: str(value) if dim == "season" else float(value) for dim, value in best.items()}
+    raise ValueError(f"no data for {model} {experiment} {season or 'in any season'}")
 
 
-def final_years(tree, model, experiments, point, season, years=WINDOW, variable="tas"):
+def final_years(tree, model, experiments, point, season=None, years=WINDOW, variable="tas"):
     """Each experiment's members over the final ``years`` at one point and season.
+
+    Args:
+        point (dict): ``lat`` and ``lon``, and ``season`` unless it is given on its own, as
+            ``strongest_joint_change`` returns it.
 
     Returns:
         dict[str, xr.DataArray]: Experiment -> data on (member, year), members
         with no data dropped.
     """
+    season = point["season"] if season is None else season
+    location = {"lat": point["lat"], "lon": point["lon"]}
     samples = {}
     for experiment in experiments:
-        da = tree[model][experiment][variable].sel(point, method="nearest").sel(season=season)
+        da = tree[model][experiment][variable].sel(location, method="nearest").sel(season=season)
         samples[experiment] = da.isel(year=slice(-years, None)).dropna("member", how="all").load()
     return samples
 

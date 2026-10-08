@@ -1,21 +1,24 @@
-"""The figures of notebooks 04 and 06. Every section of 04 draws the same four kinds of figure:
+"""The figures of notebooks 04 and 06. Every section of 04 draws the same four kinds of figure, seasons across:
 
-1. What goes in       ``field_grid``: the quantities a result is made from, then the result,
-                      for one model, experiment and season
-2. One model          ``field_grid``: the parts and the result for every experiment of one model (rows)
-3. Every model        ``map_grid``: the result, models down and experiments across
-4. How many models    ``count_grid``: how many models have a significant increase (red) or decrease (blue)
+1. What goes in       ``row_grid``: the quantities a result is made from, then the result,
+                      for one model and experiment (one row each)
+2. One model          ``row_grid``: the parts and the result for every experiment of one model
+3. Every model        ``map_grid``: the result, models down and seasons across, one figure per experiment
+4. How many models    ``count_grid``: the multi-model median of the result, then how many models
+                      have a significant increase and how many a significant decrease
 
 All four are grids of polar maps drawn by ``block_grid``, as are notebook 06's
 paper figures (``PAPER`` style): blocks of rows, each with its colour bars
-underneath, after Bracegirdle et al. (2024) Fig. 1. Columns that share a
-``Scale`` share one colour bar. Colour and pattern mean the same thing in every
-figure:
+underneath, after Bracegirdle et al. (2024) Fig. 1. Columns (``field_grid``) or
+rows (``row_grid``) that share a ``Scale`` share one colour bar. Colour and
+pattern mean the same thing in every figure:
 
     one quantity      one ``Scale`` (levels, colormap, label), from ``colour_scales``
     red <-> blue      an increase <-> a decrease
     dots              not significant (one model), or not robust (fewer than 2/3 of the models significant)
-    white             |S/N| below the threshold (``threshold_scale``), or no model (``count_scale``)
+    yellow -> red     |S/N|, how far apart two distributions have moved: below 1, 1 to 2, above 2
+    counts            more than half the models changes the hue: reds to browns (increase), blues to
+                      purples (decrease), greys to greens (no sign, ``majority_scale``); white is none
     3 x 3 key         the mean and the width together (``joint_scale``)
 
 Sections
@@ -79,18 +82,25 @@ class Scale:
     extend: str = "both"
 
 
-def threshold_scale(threshold, limit, label, step=1, cmap="RdBu_r"):
-    """A diverging scale that is white between -``threshold`` and ``threshold`` (e.g. S/N, white where |S/N| < 2).
+def _ramp(cmap, start, stop, n):
+    """``n`` colours from a colormap, between ``start`` and ``stop`` (0 to 1, either way round)."""
+    return list(plt.get_cmap(cmap)(np.linspace(start, stop, n)))
 
-    Levels run from -``limit`` to -``threshold`` and from ``threshold`` to
-    ``limit`` every ``step``; the one band between ±``threshold`` is white, and
-    the bands either side darken away from it.
+
+def separation_scale(label="|S/N|", step=0.25):
+    """|S/N| from 0 to 3: yellows below 1, oranges from 1 to 2, reds from 2 (the darkest above 3).
+
+    |S/N| says how far apart two distributions have moved, in units of their
+    year-to-year noise: below 1 they overlap heavily, above 2 they barely do.
+    It is not a test, so there is no threshold, only bands.
     """
-    levels = np.concatenate([np.arange(-limit, -threshold + step / 2, step), np.arange(threshold, limit + step / 2, step)])
-    n_side = (len(levels) - 2) // 2
-    base = plt.get_cmap(cmap)
-    colors = ListedColormap([*base(np.linspace(0, 0.4, n_side)), "white", *base(np.linspace(0.6, 1, n_side))])
-    return Scale(levels, colors, label, norm=BoundaryNorm(levels, colors.N), ticks=levels)
+    levels = _from_zero(3, step)
+    per_band = int(round(1 / step))
+    #(c): One more colour than bands, for the values above 3 (extend="max")
+    colors = ListedColormap([*_ramp("YlOrRd", 0.0, 0.2, per_band), *_ramp("Oranges", 0.4, 0.7, per_band),
+                             *_ramp("Reds", 0.6, 0.95, per_band), plt.get_cmap("Reds")(1.0)])
+    return Scale(levels, colors, label, norm=BoundaryNorm(levels, colors.N, extend="max"), ticks=_from_zero(3, 0.5),
+                 extend="max")
 
 
 def pvalue_scale(alpha=0.05, label=None):
@@ -102,17 +112,33 @@ def pvalue_scale(alpha=0.05, label=None):
 
 
 def count_scale(n_models, label="Number of models with a significant decrease (blue) or increase (red)"):
-    """Discrete and diverging: ``n_models`` with a significant decrease (dark blue), down to none (white), up to an increase.
+    """Discrete and diverging: how many models have a significant decrease (left) or increase (right); white for none.
 
-    ``count_grid`` draws the decreases as negative numbers, so this one colour
-    bar serves both of its rows; the tick labels are the counts themselves.
+    Up to half the models are blues and reds; more than half, purples and
+    browns, so where most models agree stands out. ``count_grid`` draws the
+    decreases as negative numbers, so this one colour bar serves both of its
+    rows; the tick labels are the counts themselves.
     """
-    blues = plt.get_cmap("Blues")(np.linspace(1, 0.35, n_models))
-    reds = plt.get_cmap("Reds")(np.linspace(0.35, 1, n_models))
-    colors = ListedColormap([*blues, "white", *reds])
+    half = n_models // 2
+    #(c): Darkest at the ends: the most models with a decrease on the left, with an increase on the right
+    decreases = [*_ramp("PRGn", 0.0, 0.3, n_models - half), *_ramp("Blues", 0.7, 0.3, half)]
+    increases = [*_ramp("Reds", 0.3, 0.7, half), *_ramp("BrBG", 0.3, 0.0, n_models - half)]
+    colors = ListedColormap([*decreases, "white", *increases])
     levels = np.arange(-n_models - 0.5, n_models + 1)
     return Scale(levels, colors, label, discrete=True,
                  ticklabels=[str(abs(k)) for k in range(-n_models, n_models + 1)])
+
+
+def majority_scale(n_models, label="Number of models"):
+    """Discrete: how many models, for a count with no sign (e.g. |S/N| above a threshold); white for none.
+
+    Up to half the models are greys, more than half greens, like
+    ``count_scale``'s change of hue.
+    """
+    half = n_models // 2
+    colors = ListedColormap(["white", *_ramp("Greys", 0.2, 0.45, half), *_ramp("Greens", 0.55, 0.95, n_models - half)])
+    return Scale(np.arange(-0.5, n_models + 1), colors, label, discrete=True,
+                 ticklabels=[str(k) for k in range(n_models + 1)])
 
 
 def class_scale(classes, colors, label=""):
@@ -193,13 +219,12 @@ def _from_zero(end, step):
     return np.round(np.arange(int(round(end / step)) + 1) * step, 10)
 
 
-def colour_scales(variable, alpha=0.05, sn_threshold=2):
+def colour_scales(variable, alpha=0.05):
     """One colour scale per quantity for ``variable``, shared by every figure that shows that quantity.
 
     Args:
         variable (str): Key of ``config.VARIABLES`` and of ``RANGES``.
         alpha (float): Significance level, for the p-value scale.
-        sn_threshold (float): |S/N| counted as emerged: white below it.
 
     Returns:
         Scales
@@ -211,14 +236,14 @@ def colour_scales(variable, alpha=0.05, sn_threshold=2):
     start, stop, step, tick = ranges["values"]
     units = var.units
     return Scales(
-        temperature=Scale(np.arange(start, stop + step / 2, step), "viridis", var.label,
+        temperature=Scale(np.arange(start, stop + step / 2, step), "RdBu_r", var.label,
                           ticks=np.arange(start, stop + step / 2, tick)),
         change=Scale(_symmetric(*ranges["change"]), "RdBu_r", f"Change ({units})"),
         noise=Scale(_from_zero(*ranges["noise"]), "viridis", f"Standard deviation ({units})", extend="max"),
         spread=Scale(_from_zero(*ranges["spread"]), "viridis", f"Spread ({units})", extend="max"),
         spread_change=Scale(_symmetric(*ranges["spread_change"]), "RdBu_r", f"Change in spread ({units})"),
         tail=Scale(_symmetric(*ranges["spread_change"]), "RdBu_r", f"Upper-tail minus lower-tail change ({units})"),
-        sn=threshold_scale(sn_threshold, 6, "S/N"),
+        sn=separation_scale(),
         pvalue=pvalue_scale(alpha),
         classes=class_scale(["neither", "mean only", "width only", "both"], ["white", "#fdb863", "#b2abd2", "#5e3c99"],
                             "What changed"),
@@ -634,6 +659,87 @@ def field_grid(columns, title=None, row_dim=None, row_labels=None, panel_size=2.
                       width=width, height=height)
 
 
+@dataclass
+class Row:
+    """One row of a ``row_grid``: one quantity, in every column (season).
+
+    Args:
+        data (xr.DataArray): The field on (col_dim, lat, lon), or (row_dim, col_dim, lat, lon) for a
+            row per value of ``row_grid``'s ``row_dim``.
+        scale (Scale): Its colour scale.
+        title (str): Row label ('\\n' for a second line).
+        not_significant (xr.DataArray | None): Boolean, the same dims: dotted where True.
+    """
+
+    data: xr.DataArray
+    scale: Scale
+    title: str
+    not_significant: xr.DataArray = None
+
+
+@plot("figure")
+def row_grid(rows, title=None, row_dim=None, row_labels=None, col_dim="season", col_labels=None, panel_size=2.3,
+             style=NOTEBOOK, tag=False, not_significant_label="Not significant", width=None, height=None):
+    """Polar maps in rows, one column per season; neighbouring rows that share a Scale share a colour bar.
+
+    ``field_grid`` on its side: there each column is a quantity, here each row
+    is, so the seasons (or any ``col_dim``) run across every figure. Rows given
+    the same Scale object one after another are one ``block_grid`` block, with
+    one colour bar under it, as wide as the figure. For example hist-nat's
+    mean, an experiment's mean (one scale, one bar), then the change (another)::
+
+        DJF  MAM  JJA  SON
+        [ ]  [ ]  [ ]  [ ]   hist-nat
+        [ ]  [ ]  [ ]  [ ]   experiment
+        ===== temperature ====
+        [ ]  [ ]  [ ]  [ ]   change
+        ====== change =======
+
+    Args:
+        rows (Sequence[Row]): The rows, top to bottom. With ``row_dim``, each Row is one row per value of
+            that dim, labelled with its title and then the value.
+        title (str | None): Figure title.
+        row_dim (str | None): Dim each Row is split along, e.g. "experiment"; one row per Row if None.
+        row_labels (dict | None): Label for each value of ``row_dim``; the values themselves by default.
+        col_dim (str): Dim mapped to columns, the same values in every Row (the first Row's set them).
+        col_labels (dict | None): Label for each column value; the values by default.
+        panel_size (float): Width and height of each panel, in inches.
+        style (Style): ``NOTEBOOK`` or ``PAPER``.
+        tag (bool): Letter the panels.
+        not_significant_label (str): Legend entry for the dots.
+        width (float | None): The figure's width in inches; the panels fill it.
+        height (float | None): The most the figure can be tall, in inches.
+
+    Returns:
+        core.Panels
+    """
+    columns = list(rows[0].data[col_dim].values)
+    blocks = []
+    for row in rows:
+        values = [None] if row_dim is None else list(row.data[row_dim].values)
+        for value in values:
+            selection = {} if value is None else {row_dim: value}
+            value_label = None if value is None else str((row_labels or {}).get(value, value))
+            label = "\n".join(text for text in (row.title, value_label) if text)
+            fields = [row.data.sel({**selection, col_dim: column}) for column in columns]
+
+            #(c): A new block wherever the scale changes; the same scale as the row above joins its block
+            if not blocks or blocks[-1].scales[0] is not row.scale:
+                blocks.append(Block(rows={}, scales=[row.scale] * len(columns)))
+            block = blocks[-1]
+            if label in block.rows:
+                raise ValueError(f"two rows of one block are labelled {label!r}")
+            block.rows[label] = fields
+            if row.not_significant is not None:
+                block.not_significant = block.not_significant or {}
+                block.not_significant[label] = [row.not_significant.sel({**selection, col_dim: column})
+                                                for column in columns]
+
+    return block_grid(blocks, title=title, column_titles=[str((col_labels or {}).get(c, c)) for c in columns],
+                      panel_size=panel_size, style=style, tag=tag, not_significant_label=not_significant_label,
+                      width=width, height=height)
+
+
 @plot("figure")
 def map_grid(da, scale, title=None, row_dim="model", col_dim="experiment", not_significant=None, row_labels=None,
              col_labels=None, panel_size=2.3, style=NOTEBOOK, tag=False, not_significant_label="Not significant",
@@ -670,21 +776,28 @@ def map_grid(da, scale, title=None, row_dim="model", col_dim="experiment", not_s
 
 
 @plot("figure")
-def count_grid(counts, n_models, title, label, row_dim="direction", col_dim="experiment", row_labels=None,
-               panel_size=2.5, style=NOTEBOOK, tag=False, width=None, height=None):
-    """How many models have a significant increase (top row, reds) and a significant decrease (bottom row, blues).
+def count_grid(counts, n_models, title, label, above=(), row_dim="direction", col_dim="experiment", row_labels=None,
+               signed=True, panel_size=2.3, style=NOTEBOOK, tag=False, width=None, height=None):
+    """How many models: the response itself first (``above``, e.g. the multi-model median), then a row of counts each.
 
-    The decreases are drawn as negative numbers, so that one ``count_scale``
-    serves both rows; the colour bar's labels are the counts themselves.
+    With ``signed`` (the default) the counts are of a significant increase
+    (the first value of ``row_dim``, reds) and a significant decrease (the
+    second, blues), and the decreases are drawn as negative numbers, so that
+    one ``count_scale`` serves both rows. Otherwise each row is a count with
+    no sign (e.g. models with |S/N| above each threshold) on one
+    ``majority_scale``. Either way the colour bar's labels are the counts
+    themselves, and its hue changes where more than half the models agree.
 
     Args:
-        counts (xr.DataArray): Model counts on (row_dim, col_dim, lat, lon), the increase first and the
-            decrease second, e.g. ``significance.significant_counts`` output.
+        counts (xr.DataArray): Model counts on (row_dim, col_dim, lat, lon), e.g.
+            ``significance.significant_counts`` output.
         n_models (int): The most models there can be, the end of the colour bar.
         title (str): Figure title.
-        label (str): Colour-bar label: what blue and red count.
-        row_dim, col_dim (str): Dims mapped to rows and columns.
+        label (str): Colour-bar label: what the counts count.
+        above (Sequence[Row]): Rows drawn above the counts, each with its own colour bar.
+        row_dim, col_dim (str): Dims mapped to the rows of counts and to the columns.
         row_labels (dict | None): Label for each row value, e.g. {"increase": "Significant increase"}.
+        signed (bool): Increase and decrease rows on one diverging scale; False for counts with no sign.
         panel_size (float): Width and height of each panel, in inches.
         style (Style): ``NOTEBOOK`` or ``PAPER``.
         tag (bool): Letter the panels.
@@ -694,10 +807,17 @@ def count_grid(counts, n_models, title, label, row_dim="direction", col_dim="exp
     Returns:
         core.Panels
     """
-    increase, decrease = counts[row_dim].values
-    signed = xr.concat([counts.sel({row_dim: [increase]}), -counts.sel({row_dim: [decrease]})], dim=row_dim)
-    return map_grid(signed, count_scale(n_models, label), title, row_dim=row_dim, col_dim=col_dim,
-                    row_labels=row_labels, panel_size=panel_size, style=style, tag=tag, width=width, height=height)
+    if signed:
+        increase, decrease = counts[row_dim].values
+        drawn = xr.concat([counts.sel({row_dim: [increase]}), -counts.sel({row_dim: [decrease]})], dim=row_dim)
+        scale = count_scale(n_models, label)
+    else:
+        drawn = counts
+        scale = majority_scale(n_models, label)
+    count_rows = [Row(drawn.sel({row_dim: value}), scale, str((row_labels or {}).get(value, value)))
+                  for value in drawn[row_dim].values]
+    return row_grid([*above, *count_rows], title, col_dim=col_dim, panel_size=panel_size, style=style, tag=tag,
+                    width=width, height=height)
 
 
 # ---------------------------------------------------------------------------
@@ -705,19 +825,21 @@ def count_grid(counts, n_models, title, label, row_dim="direction", col_dim="exp
 # ---------------------------------------------------------------------------
 
 @plot("figure")
-def quantile_curves(curves, title=None, units="°C", col_dim="experiment", style=NOTEBOOK, panel_size=(3.3, 3.0),
-                    width=None):
-    """The change at every quantile, one line per model, one panel per experiment.
+def quantile_curves(curves, title=None, units="°C", col_dim="experiment", row_dim=None, style=NOTEBOOK,
+                    panel_size=(3.3, 3.0), width=None):
+    """The change at every quantile, one line per model, one panel per experiment (and season).
 
     A flat line is a pure shift of the distribution; a rising line means the
-    upper quantiles move more than the lower ones.
+    upper quantiles move more than the lower ones. Panels in a row share their
+    y axis.
 
     Args:
-        curves (xr.DataArray): On (model, col_dim, quantile), e.g. notebook 03's ``quantile_curve``
-            (Antarctic means) for one season.
+        curves (xr.DataArray): On (model, col_dim, quantile), or (model, row_dim, col_dim, quantile), e.g.
+            notebook 03's ``quantile_curve`` (Antarctic means).
         title (str | None): Figure title.
         units (str): Units of the change.
-        col_dim (str): Dim mapped to panels.
+        col_dim (str): Dim mapped to columns.
+        row_dim (str | None): Dim mapped to rows; one row if None.
         style (Style): ``NOTEBOOK`` or ``PAPER``.
         panel_size (tuple[float, float]): Width and height of each panel, in inches.
         width (float | None): The figure's width in inches (the legend included), instead of ``panel_size[0]``.
@@ -726,25 +848,34 @@ def quantile_curves(curves, title=None, units="°C", col_dim="experiment", style
         core.Panels
     """
     models = [str(m) for m in curves["model"].values]
-    panels_values = list(curves[col_dim].values)
+    column_values = list(curves[col_dim].values)
+    row_values = [None] if row_dim is None else list(curves[row_dim].values)
     percentile = 100 * curves["quantile"].values
 
     with plt.rc_context(style.rc):
-        fig, axes = plt.subplots(1, len(panels_values), sharey=True, layout="constrained", squeeze=False,
-                                 figsize=(width or panel_size[0] * len(panels_values) + 1.6, panel_size[1] + 0.6))
-        for ax, value in zip(axes[0], panels_values):
-            ax.axhline(0, color="0.6", lw=0.8, zorder=1)
-            for k, model in enumerate(models):
-                ax.plot(percentile, curves.sel(model=model, **{col_dim: value}), color=MODEL_COLORS[k % len(MODEL_COLORS)],
-                        marker=MODEL_MARKERS[k % len(MODEL_MARKERS)], ms=0.4 * style.tick_size,
-                        lw=0.15 * style.tick_size, zorder=3)
-            ax.set_title(str(value), loc="left")
-            ax.set_xlabel("Percentile")
-            ax.set_xlim(0, 100)
-            ax.set_xticks([0, 50, 100])
-            ax.set_xticks([25, 75], minor=True)
-            core.style_ax(ax)
-        axes[0, 0].set_ylabel(f"Change ({units})")
+        fig, axes = plt.subplots(len(row_values), len(column_values), sharex=True, sharey="row", layout="constrained",
+                                 squeeze=False,
+                                 figsize=(width or panel_size[0] * len(column_values) + 1.6,
+                                          panel_size[1] * len(row_values) + 0.6))
+        for i, row in enumerate(row_values):
+            for j, value in enumerate(column_values):
+                ax = axes[i, j]
+                selection = {col_dim: value} if row is None else {col_dim: value, row_dim: row}
+                ax.axhline(0, color="0.6", lw=0.8, zorder=1)
+                for k, model in enumerate(models):
+                    ax.plot(percentile, curves.sel(model=model, **selection), color=MODEL_COLORS[k % len(MODEL_COLORS)],
+                            marker=MODEL_MARKERS[k % len(MODEL_MARKERS)], ms=0.4 * style.tick_size,
+                            lw=0.15 * style.tick_size, zorder=3)
+                if i == 0:
+                    ax.set_title(str(value), loc="left")
+                if i == len(row_values) - 1:
+                    ax.set_xlabel("Percentile")
+                if j == 0:
+                    ax.set_ylabel(f"Change ({units})" if row is None else f"{row}\nChange ({units})")
+                ax.set_xlim(0, 100)
+                ax.set_xticks([0, 50, 100])
+                ax.set_xticks([25, 75], minor=True)
+                core.style_ax(ax)
         fig.legend(handles=[Line2D([], [], color=MODEL_COLORS[k % len(MODEL_COLORS)], lw=1.6,
                                    marker=MODEL_MARKERS[k % len(MODEL_MARKERS)], ms=4, label=model)
                             for k, model in enumerate(models)],

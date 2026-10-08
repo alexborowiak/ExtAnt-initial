@@ -93,10 +93,13 @@ def _edge(edges, selection):
 # ---------------------------------------------------------------------------
 
 @plot("figure")
-def zonal_change_grid(zonal, season, rows="model", lines="experiment", row_values=None, line_values=None,
+def zonal_change_grid(zonal, season=None, rows="model", lines="experiment", row_values=None, line_values=None,
                       columns=tuple(rc.EXTREMES), edges=None, alpha=0.05, units="°C", title=None, panel_size=(3.0, 1.95),
-                      rc_params=None, width=None):
+                      rc_params=None, width=None, select=None):
     """The zonal-mean change in the mean, the low and high extremes and the width: one row per model.
+
+    Or one row per experiment, or per season (``rows="season"``, with one
+    model chosen by ``select``).
 
     The form of Bracegirdle et al. (2024) Figs 2, 6 and 8, per model. The
     mean column has its own scale; the extremes and the width share one, so
@@ -104,8 +107,9 @@ def zonal_change_grid(zonal, season, rows="model", lines="experiment", row_value
 
     Args:
         zonal (xr.Dataset): ``zonal.zonal_summary`` output, on (model, experiment, season, lat).
-        season (str): Season shown.
-        rows, lines (str): "model" and "experiment", either way round.
+        season (str | None): Season shown; None with ``rows="season"``.
+        rows, lines (str): Dims mapped to rows and to lines: "model" and "experiment" either way round, or
+            "season" and either.
         row_values, line_values (Sequence[str] | None): Subsets, in order; all by default.
         columns (Sequence[str]): Variables of ``zonal``, one per column.
         edges (xr.DataArray | None): ``sea_ice.edge_latitude`` output, on (model, experiment, season).
@@ -115,16 +119,19 @@ def zonal_change_grid(zonal, season, rows="model", lines="experiment", row_value
         panel_size (tuple[float, float]): Width and height of each panel, in inches.
         rc_params (dict | None): rcParams to draw with; ``EVAL_RC`` by default (``forced_response.PAPER.rc`` for print).
         width (float | None): The figure's width in inches, instead of ``panel_size[0]`` (e.g. 7.2 for a printed page).
+        select (dict | None): Any other selection, e.g. ``{"model": "CanESM5"}`` with ``rows="season"``.
 
     Returns:
         core.Panels
     """
-    data = zonal.sel(season=season)
+    selection = {**(select or {}), **({} if season is None else {"season": season})}
+    data = zonal.sel(selection)
     row_values = _order(data, rows, row_values)
     line_values = _order(data, lines, line_values)
     colors = _colors(lines, line_values)
     lat = data["lat"].values
-    with_band = rows == "model" and "null_lower" in data
+    #(c): hist-nat's band is one per model and season, so it is drawn when the rows are either
+    with_band = rows in ("model", "season") and "null_lower" in data
 
     with plt.rc_context(rc_params or EVAL_RC):
         fig, axes = plt.subplots(len(row_values), len(columns),
@@ -136,7 +143,7 @@ def zonal_change_grid(zonal, season, rows="model", lines="experiment", row_value
                 ax = axes[i, j]
                 ax.axhline(0, color=MUTED, lw=0.8, zorder=1)
                 if column == "width_change" and with_band:
-                    ax.fill_between(lat, data["null_lower"].sel(model=row), data["null_upper"].sel(model=row),
+                    ax.fill_between(lat, data["null_lower"].sel({rows: row}), data["null_upper"].sel({rows: row}),
                                     color=NULL_COLOR, lw=0, zorder=0)
                 for line in line_values:
                     y = data[column].sel({rows: row, lines: line})
@@ -152,7 +159,7 @@ def zonal_change_grid(zonal, season, rows="model", lines="experiment", row_value
                 #(t): The ice edge in each experiment's final years, hist-nat's included
                 edge_lines = [*line_values, "hist-nat"] if lines == "experiment" else line_values
                 for line in edge_lines:
-                    edge = _edge(edges, {rows: row, lines: line, "season": season})
+                    edge = _edge(edges, {**selection, rows: row, lines: line})
                     if edge is not None:
                         ax.axvline(edge, color=colors.get(line, FORCING_COLORS.get(line, INK)), lw=1.0,
                                    ls=EDGE_LINESTYLE, zorder=2)
@@ -171,7 +178,7 @@ def zonal_change_grid(zonal, season, rows="model", lines="experiment", row_value
                 continue
             arrays = [data[c].sel({rows: row_values, lines: line_values}) for c in group]
             if with_band and "width_change" in group:
-                arrays += [data["null_lower"].sel(model=row_values), data["null_upper"].sel(model=row_values)]
+                arrays += [data["null_lower"].sel({rows: row_values}), data["null_upper"].sel({rows: row_values})]
             limits = _limits(arrays)
             for j, column in enumerate(columns):
                 if column in group:
@@ -189,7 +196,7 @@ def zonal_change_grid(zonal, season, rows="model", lines="experiment", row_value
             handles.append(Line2D([], [], color=INK, lw=1.0, ls=EDGE_LINESTYLE, label="Sea-ice edge (equivalent latitude)"))
         fig.legend(handles=handles, loc="outside lower center", ncols=min(len(handles), 5), frameon=False)
         if title != "":
-            fig.suptitle(title or f"Zonal-mean change, {season}: final years against hist-nat", fontsize=11,
+            fig.suptitle(title or f"Zonal-mean change, {', '.join(map(str, selection.values()))}: final years against hist-nat", fontsize=11,
                          fontweight="bold", x=0.01, ha="left")
     return core.Panels(fig=fig, axes=axes)
 
