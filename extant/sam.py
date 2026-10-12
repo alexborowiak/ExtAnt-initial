@@ -5,7 +5,7 @@ SAM index for every LESFMIP member (``paths.SAM_RAW``, the files
 archive/draft_current_DAILY.ipynb opened): the zonal-mean index of Gong & Wang
 (1999), the difference between standardised zonal means at 40°S and 65°S, one
 file per member with ``SAM`` on (time_mm, level). Notebook 01 (section 6) turns
-it into seasonal means; notebook 03 (section 11) does the rest:
+it into seasonal means; notebook 03 (section 13) does the rest:
 
     the forced change     each experiment's final-years ensemble-mean SAM minus hist-nat's (as for
                           temperature, notebook 03 section 4)

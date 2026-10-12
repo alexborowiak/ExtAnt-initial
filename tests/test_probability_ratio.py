@@ -14,21 +14,21 @@ def _ensemble(rng, n_members=200, n_years=50, mean=0.0, std=1.0):
 
 
 def test_threshold_levels():
-    levels = pr.threshold_levels((20, 10))
-    assert levels.sel(tail="warm", return_period=20) == 0.95
-    assert levels.sel(tail="cold", return_period=20) == 0.05
-    assert levels.sel(tail="warm", return_period=10) == 0.9
-    assert levels.sel(tail="cold", return_period=10) == 0.1
+    levels = pr.threshold_levels((0.05, 0.1))
+    assert levels.sel(tail="warm", chance=0.05) == 0.95
+    assert levels.sel(tail="cold", chance=0.05) == 0.05
+    assert levels.sel(tail="warm", chance=0.1) == 0.9
+    assert levels.sel(tail="cold", chance=0.1) == 0.1
 
 
 def test_thresholds_of_a_normal_ensemble():
     rng = np.random.default_rng(0)
     counterfactual = _ensemble(rng)
-    levels = pr.threshold_levels((20,))
+    levels = pr.threshold_levels((0.05,))
     thresholds = pr.thresholds(counterfactual, levels)
-    assert set(thresholds.dims) == {"tail", "return_period"}
-    np.testing.assert_allclose(float(thresholds.sel(tail="warm", return_period=20)), 1.645, atol=0.06)
-    np.testing.assert_allclose(float(thresholds.sel(tail="cold", return_period=20)), -1.645, atol=0.06)
+    assert set(thresholds.dims) == {"tail", "chance"}
+    np.testing.assert_allclose(float(thresholds.sel(tail="warm", chance=0.05)), 1.645, atol=0.06)
+    np.testing.assert_allclose(float(thresholds.sel(tail="cold", chance=0.05)), -1.645, atol=0.06)
     #(c): A Dataset gives the same numbers
     from_dataset = pr.thresholds(counterfactual.to_dataset(name="tas"), levels)["tas"]
     xr.testing.assert_allclose(from_dataset, thresholds)
@@ -37,8 +37,8 @@ def test_thresholds_of_a_normal_ensemble():
 def test_shift_and_widening():
     rng = np.random.default_rng(1)
     counterfactual = _ensemble(rng)
-    levels = pr.threshold_levels((20,))
-    thresholds = pr.thresholds(counterfactual, levels).squeeze("return_period")
+    levels = pr.threshold_levels((0.05,))
+    thresholds = pr.thresholds(counterfactual, levels).squeeze("chance")
     p_counterfactual = pr.member_exceedance(counterfactual, thresholds).mean("member")
     np.testing.assert_allclose(p_counterfactual.values, 0.05, atol=0.003)
 
@@ -49,11 +49,11 @@ def test_shift_and_widening():
     np.testing.assert_allclose(float(ratio.sel(tail="warm")), expected_warm, rtol=0.1)
     assert float(ratio.sel(tail="cold")) < 0.2
 
-    #(c): Mean only: hist-nat moved by the shift, i.e. against the threshold moved down by it, gives the same
-    mean_only = pr.member_exceedance(counterfactual, thresholds - 1.0).mean("member") / p_counterfactual
-    np.testing.assert_allclose(float(mean_only.sel(tail="warm")), expected_warm, rtol=0.1)
+    #(c): Shift only: hist-nat moved by the shift, i.e. against the threshold moved down by it, gives the same
+    shift_only = pr.member_exceedance(counterfactual, thresholds - 1.0).mean("member") / p_counterfactual
+    np.testing.assert_allclose(float(shift_only.sel(tail="warm")), expected_warm, rtol=0.1)
 
-    #(c): Wider, with the same mean: both tails more likely, which the mean-only ratio (1) misses
+    #(c): Wider, with the same mean: both tails more likely, which the shift-only ratio (1) misses
     wider = _ensemble(rng, std=1.5)
     ratio = pr.member_exceedance(wider, thresholds).mean("member") / p_counterfactual
     assert float(ratio.sel(tail="warm")) > 2 and float(ratio.sel(tail="cold")) > 2

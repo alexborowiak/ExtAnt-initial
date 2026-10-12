@@ -396,23 +396,24 @@ def _log_ratio(values):
 
 @plot("figure")
 def pr_points(ratios, experiments=None, rows=("warm", "cold"), row_dim="tail", columns=None, col_dim="season",
-              mean_only=False, fig=None, style=fr.PAPER, tag_start=None, width=fr.PAGE_WIDTH):
+              shift_only=False, fig=None, style=fr.PAPER, tag_start=None, width=fr.PAGE_WIDTH):
     """C1, C2: probability ratios, forcings along x, every model with its bootstrap range, and their median.
 
     Each model is a marker (its shape) in the forcing's colour with a line
     from its range's lower end to its upper end, spread a little sideways; the
-    black bar is the multi-model median. With ``mean_only``, an open marker
-    beside each gives the ratio the change in the mean alone would give: the
-    gap between the two is what the change in width (and shape) adds. The y
+    black bar is the multi-model median. With ``shift_only``, an open marker
+    beside each gives the shift-only ratio, the ratio the shift of the mean
+    alone would give: the gap between the two is what the change in width
+    (and shape) adds. The y
     axis is logarithmic; a ratio of 0 sits on the bottom edge.
 
     Args:
-        ratios (xr.Dataset): ``pr``, ``pr_lower``, ``pr_upper`` (and ``pr_mean_only`` for ``mean_only``) on
-            (model, experiment, row_dim, col_dim), e.g. one region and return period of notebook 03's
-            ``probability_ratio_regional``.
+        ratios (xr.Dataset): ``pr``, ``pr_lower``, ``pr_upper`` (and ``pr_shift_only`` for ``shift_only``) on
+            (model, experiment, row_dim, col_dim), e.g. one region and chance of notebook 03's
+            ``probability_ratio_regional`` (merged with ``probability_ratio_shift_only_regional``).
         experiments (Sequence[str] | None): Forcings along x.
         rows, columns (Sequence | None): Values of ``row_dim`` and ``col_dim``.
-        mean_only (bool): Also draw the mean-only ratios (C2).
+        shift_only (bool): Also draw the shift-only ratios (C2).
         fig, style, tag_start, width: As for ``map_block``.
 
     Returns:
@@ -437,14 +438,14 @@ def pr_points(ratios, experiments=None, rows=("warm", "cold"), row_dim="tail", c
                         point = cell.sel(model=model)
                         if not np.isfinite(float(point["pr"])):
                             continue
-                        position = x + offsets[k] - (0.06 if mean_only else 0)
+                        position = x + offsets[k] - (0.06 if shift_only else 0)
                         ax.plot([position] * 2, _log_ratio([point["pr_lower"], point["pr_upper"]]), color=color,
                                 lw=0.8, alpha=0.7, zorder=2)
                         ax.plot(position, _log_ratio(point["pr"]), ls="none",
                                 marker=MODEL_MARKERS[k % len(MODEL_MARKERS)], ms=3.2, color=color, mec="white",
                                 mew=0.3, zorder=3)
-                        if mean_only:
-                            ax.plot(position + 0.12, _log_ratio(point["pr_mean_only"]), ls="none",
+                        if shift_only:
+                            ax.plot(position + 0.12, _log_ratio(point["pr_shift_only"]), ls="none",
                                     marker=MODEL_MARKERS[k % len(MODEL_MARKERS)], ms=3.2, mfc="white", mec=color,
                                     mew=0.7, zorder=3)
                     ax.plot([x - 0.36, x + 0.36], [float(np.median(_log_ratio(cell["pr"].dropna("model"))))] * 2,
@@ -462,9 +463,9 @@ def pr_points(ratios, experiments=None, rows=("warm", "cold"), row_dim="tail", c
         handles = [Line2D([], [], ls="none", marker=MODEL_MARKERS[k % len(MODEL_MARKERS)], ms=4, color="0.35",
                           label=model) for k, model in enumerate(models)]
         handles.append(Line2D([], [], color=INK, lw=1.4, label="Multi-model median"))
-        if mean_only:
+        if shift_only:
             handles.append(Line2D([], [], ls="none", marker="o", ms=4, mfc="white", mec="0.35",
-                                  label="Mean change only"))
+                                  label="Shift of the mean only"))
         _legend(fig, handles, style, ncol=min(len(handles), 5))
         next_tag = _tag(axes, tag_start, style)
     return _done(fig, axes, next_tag)
@@ -588,8 +589,8 @@ def ridgelines(densities, means, ridges=None, ridge_dim="experiment", columns=No
     its mean (blue to red through purple; ``limit`` takes the end colours),
     which is also written at its right end. The ridges below overlap the ones
     above, as in the ridgeline ("joy") plots of whole populations. The dotted
-    lines mark levels shared by every ridge, e.g. hist-nat's 1-in-20 warm and
-    cold seasons, so the share of each ridge beyond them is what the
+    lines mark levels shared by every ridge, e.g. hist-nat's 5th and 95th
+    percentiles, so the share of each ridge beyond them is what the
     probability ratios count.
 
     Args:

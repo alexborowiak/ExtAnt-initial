@@ -36,7 +36,7 @@ What is in `extant/`:
 | `quantiles` | rolling quantiles and LOWESS (numba) |
 | `significance` | the hist-nat bootstrap (of the width, and of the mean for the bootstrapped t-test), Welch t-test, multi-model agreement |
 | `response_change` | mean, width and tail changes, the member-block permutation test, additivity |
-| `probability_ratio` | how much more often a warm or a cold 1-in-N season, with the mean alone and with everything, and the bootstrap of members |
+| `probability_ratio` | how much more often a season beyond hist-nat's percentiles (warm or cold), the shift-only ratio, and the bootstrap of members |
 | `sam` | the SAM index files, the regression of temperature on the SAM, the SAM phases, and a synthetic index for the sample |
 | `fingerprinting` | optimal fingerprinting: the vectors, fingerprints, noise covariance (Ledoit-Wolf), OLS and TLS fits, Monte Carlo ranges and the residual test |
 | `zonal` | zonal means of the change (mean, low and high extremes, width) and tests of them |

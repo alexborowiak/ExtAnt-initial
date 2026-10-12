@@ -6,8 +6,10 @@ Two kinds:
   (the hist-nat bootstrap of the change in width), ``bootstrap_t_schematic``
   (the bootstrapped t-test of the mean change, on the same draws) and
   ``permutation_schematic`` (the member-block permutation test of the mean
-  change). Each is given the test's own pieces at one point, as notebook 03
-  makes them, and rebuilds its example trials from the test's draws, so every
+  change), and ``probability_ratio_schematic`` and ``shift_only_schematic``
+  (the probability ratio, and how much of it the shift of the mean gives).
+  Each is given the test's own pieces at one point, as notebook 03 makes
+  them, and rebuilds its example trials from the test's draws, so every
   number on it is the test's own;
 - quick looks that follow the data through the notebooks: monthly to seasonal
   means, the year x season split, a rolling quantile, the smoothing, the
@@ -414,46 +416,68 @@ def permutation_schematic(experiment_final, hist_nat_final, permutations, is_exp
 
 #(t): Colours of the two tails in the probability-ratio figures
 TAIL_COLORS = {"warm": "#c0392b", "cold": "#2166ac"}
+TAIL_SIGNS = {"warm": 1, "cold": -1}
+
+
+def _percentiles(chance):
+    """hist-nat's two percentiles for a chance, as words: e.g. 0.05 -> ("95th", "5th")."""
+    return f"{100 * (1 - chance):g}th", f"{100 * chance:g}th"
+
+
+def _chance(values, level, tail):
+    """The share of ``values`` beyond ``level`` on the ``tail`` side, in %."""
+    return 100 * np.mean(TAIL_SIGNS[tail] * (values - level) > 0)
+
+
+def _ratio_histograms(ax, trials, label, **style):
+    """Each tail's bootstrap ratios as a histogram of log2; a ratio of 0 (or beyond 64) piles up at the end."""
+    log_edges = np.linspace(-6, 6, 97)
+    for tail in ("warm", "cold"):
+        ratios = np.clip(np.asarray(trials.sel(tail=tail), dtype=float), 2.0 ** -6, 2.0 ** 6)
+        ax.hist(_clean(np.log2(ratios)), bins=log_edges, density=True, color=TAIL_COLORS[tail],
+                label=f"{tail}, {label}", **style)
+
+
+def _ratio_axis(ax, title):
+    ax.axvline(0, color="k", lw=1)
+    ticks = np.arange(-6, 7, 2)
+    ax.set_xticks(ticks, [f"1/{2 ** -t}" if t < 0 else f"{2 ** t}" for t in ticks])
+    ax.set_xlabel("Probability ratio (log scale; 0 and beyond 64 at the ends)", fontsize=12)
+    ax.set_ylabel("Density", fontsize=12)
+    ax.set_title(title, fontsize=15, pad=10)
+    ax.legend(frameon=False, fontsize=9, ncols=2)
 
 
 @plot("figure")
-def probability_ratio_schematic(experiment_final, hist_nat_final, thresholds, shift, ratio_trials, experiment,
-                                return_period=20, units="°C", bins=30, figsize=(11, 12)):
-    """The probability ratio of a warm and a cold 1-in-N season, step by step.
+def probability_ratio_schematic(experiment_final, hist_nat_final, thresholds, ratio_trials, experiment, chance=0.05,
+                                units="°C", bins=30, figsize=(11, 8.5)):
+    """The probability ratio of a warm and a cold season, step by step.
 
-    a) the two ensembles' final years, hist-nat's two thresholds, and how
-       often each ensemble goes beyond them;
-    b) hist-nat moved by the change in the mean, against the experiment: what
-       the mean alone gives, and the gap the width (and shape) adds;
-    c) the bootstrap's ratios, both versions, for each tail.
+    a) the two ensembles' final years, hist-nat's two percentiles (the
+       thresholds), and how often each ensemble goes beyond them;
+    b) the bootstrap's ratios, for each tail.
 
     Args:
         experiment_final, hist_nat_final (xr.DataArray): The final years at one point, on (member, year).
-        thresholds (xr.DataArray): hist-nat's levels on (tail,), for this return period.
-        shift (float): The change in the mean, experiment minus hist-nat.
-        ratio_trials (xr.Dataset): ``pr`` and ``pr_mean_only`` on (trial, tail): every bootstrap trial's ratios.
+        thresholds (xr.DataArray): hist-nat's percentiles on (tail,), for this chance.
+        ratio_trials (xr.DataArray): Every bootstrap trial's ratio, on (trial, tail).
         experiment (str): Name of the experiment.
-        return_period (int): N.
+        chance (float): hist-nat's chance of each event, e.g. 0.05 (its 95th and 5th percentiles).
         units (str): Units of the variable.
         bins (int): Histogram bins.
         figsize (tuple): Figure size in inches.
 
     Returns:
-        core.Panels: ``axes`` holds a, b and c.
+        core.Panels: ``axes`` holds a and b.
     """
-    exp_color, nat_color = _color(experiment), _color("hist-nat")
     exp_values, nat_values = _clean(experiment_final), _clean(hist_nat_final)
-    shift = float(shift)
     level = {tail: float(thresholds.sel(tail=tail)) for tail in ("warm", "cold")}
-    signs = {"warm": 1, "cold": -1}
-
-    def chance(values, tail):
-        return 100 * np.mean(signs[tail] * (values - level[tail]) > 0)
+    warm_percentile, cold_percentile = _percentiles(chance)
 
     fig = plt.figure(figsize=figsize)
-    outer = GridSpec(5, 1, figure=fig, height_ratios=[2.3, 0.6, 2.3, 0.6, 2.3], hspace=0.55)
-    ax_a, ax_flow1, ax_b, ax_flow2, ax_c = (fig.add_subplot(outer[i]) for i in range(5))
-    edges = np.histogram_bin_edges(np.concatenate([exp_values, nat_values, nat_values + shift]), bins=bins)
+    outer = GridSpec(3, 1, figure=fig, height_ratios=[2.3, 0.6, 2.3], hspace=0.55)
+    ax_a, ax_flow, ax_b = (fig.add_subplot(outer[i]) for i in range(3))
+    edges = np.histogram_bin_edges(np.concatenate([exp_values, nat_values]), bins=bins)
 
     #(t): a) the two ensembles and the thresholds
     for values, name in ((nat_values, "hist-nat"), (exp_values, experiment)):
@@ -463,55 +487,93 @@ def probability_ratio_schematic(experiment_final, hist_nat_final, thresholds, sh
     lines = []
     for tail, value in level.items():
         ax_a.axvline(value, color=TAIL_COLORS[tail], lw=1.8, ls="--")
-        lines.append(f"{tail}: hist-nat {chance(nat_values, tail):.1f}%, {experiment} {chance(exp_values, tail):.1f}%"
-                     f"  →  PR = {chance(exp_values, tail) / chance(nat_values, tail):.2f}")
-    ax_a.set_title(f"a  Beyond hist-nat's 1-in-{return_period} levels (dashed)", fontsize=15, pad=10)
+        p_nat, p_exp = _chance(nat_values, value, tail), _chance(exp_values, value, tail)
+        lines.append(f"{tail}: hist-nat {p_nat:.1f}%, {experiment} {p_exp:.1f}%  →  PR = {p_exp / p_nat:.2f}")
+    ax_a.set_title(f"a  Beyond hist-nat's {cold_percentile} and {warm_percentile} percentiles (dashed)",
+                   fontsize=15, pad=10)
     ax_a.text(0.02, 0.95, "\n".join(lines), transform=ax_a.transAxes, va="top", fontsize=10)
     ax_a.legend(frameon=False, fontsize=10, loc="upper right")
+    ax_a.set_xlabel(units, fontsize=12)
+    ax_a.set_ylabel("Density", fontsize=12)
 
-    _flow(ax_flow1, f"Move hist-nat by the change in the mean, Δ = {shift:+.2f} {units}:\n"
-                    "the chance the experiment would have if its distribution had only shifted")
+    _flow(ax_flow, f"Resample whole members of each ensemble with replacement, {ratio_trials.sizes['trial']:,} times,\n"
+                   "and recalculate the ratio against the same thresholds")
 
-    #(t): b) mean only against the experiment itself
-    moved = nat_values + shift
-    ax_b.hist(moved, bins=edges, density=True, histtype="step", color=nat_color, lw=2, label="hist-nat + Δ (mean only)")
-    ax_b.hist(exp_values, bins=edges, density=True, color=exp_color, edgecolor=exp_color, alpha=0.28, lw=1.4,
-              label=f"{experiment} (mean and width)")
-    lines = []
-    for tail, value in level.items():
-        ax_b.axvline(value, color=TAIL_COLORS[tail], lw=1.8, ls="--")
-        mean_only, full = chance(moved, tail) / chance(nat_values, tail), chance(exp_values, tail) / chance(nat_values, tail)
-        lines.append(f"{tail}: mean only {mean_only:.2f}, mean and width {full:.2f}")
-    ax_b.set_title("b  The mean alone, and the rest of the change", fontsize=15, pad=10)
-    ax_b.text(0.02, 0.95, "\n".join(lines), transform=ax_b.transAxes, va="top", fontsize=10)
-    ax_b.legend(frameon=False, fontsize=10, loc="upper right")
+    #(t): b) the bootstrap's ratios, on a log scale
+    _ratio_histograms(ax_b, ratio_trials, "probability ratio", alpha=0.45, histtype="stepfilled")
+    _ratio_axis(ax_b, "b  Bootstrap of the ratio")
     for ax in (ax_a, ax_b):
-        ax.set_xlabel(units, fontsize=12)
-        ax.set_ylabel("Density", fontsize=12)
-
-    n_trials = ratio_trials.sizes["trial"]
-    _flow(ax_flow2, f"Resample whole members of each ensemble with replacement, {n_trials:,} times,\n"
-                    "and recalculate both ratios against the same thresholds")
-
-    #(t): c) the bootstrap's ratios, on a log scale; a ratio of 0 (or beyond 64) piles up at the end
-    log_edges = np.linspace(-6, 6, 97)
-    for tail in ("warm", "cold"):
-        for name, style in (("pr", dict(alpha=0.45, histtype="stepfilled")),
-                            ("pr_mean_only", dict(histtype="step", lw=1.6, ls="--"))):
-            ratios = np.clip(np.asarray(ratio_trials[name].sel(tail=tail), dtype=float), 2.0 ** -6, 2.0 ** 6)
-            ax_c.hist(_clean(np.log2(ratios)), bins=log_edges, density=True, color=TAIL_COLORS[tail], **style,
-                      label=f"{tail}, {'mean and width' if name == 'pr' else 'mean only'}")
-    ax_c.axvline(0, color="k", lw=1)
-    ticks = np.arange(-6, 7, 2)
-    ax_c.set_xticks(ticks, [f"1/{2 ** -t}" if t < 0 else f"{2 ** t}" for t in ticks])
-    ax_c.set_xlabel("Probability ratio (log scale; 0 and beyond 64 at the ends)", fontsize=12)
-    ax_c.set_ylabel("Density", fontsize=12)
-    ax_c.set_title("c  Bootstrap of the ratios", fontsize=15, pad=10)
-    ax_c.legend(frameon=False, fontsize=9, ncols=2)
-    for ax in (ax_a, ax_b, ax_c):
         ax.tick_params(labelsize=11)
         core.style_ax(ax)
-    return core.Panels(fig=fig, axes=np.array([ax_a, ax_b, ax_c], dtype=object))
+    return core.Panels(fig=fig, axes=np.array([ax_a, ax_b], dtype=object))
+
+
+@plot("figure")
+def shift_only_schematic(experiment_final, hist_nat_final, thresholds, shift, ratio_trials, shift_only_trials,
+                         experiment, chance=0.05, units="°C", bins=30, figsize=(11, 8.5)):
+    """The shift-only ratio, step by step: how much of the probability ratio the shift of the mean gives.
+
+    a) hist-nat's seasons, every one moved by the change in the mean, against
+       the experiment itself and hist-nat's thresholds: the shift-only ratio
+       next to the probability ratio, whose gap is what the width (and shape) adds;
+    b) the bootstrap's ratios, both, for each tail.
+
+    Args:
+        experiment_final, hist_nat_final (xr.DataArray): The final years at one point, on (member, year).
+        thresholds (xr.DataArray): hist-nat's percentiles on (tail,), for this chance.
+        shift (float): The change in the mean, experiment minus hist-nat.
+        ratio_trials, shift_only_trials (xr.DataArray): Every bootstrap trial's probability ratio and
+            shift-only ratio, on (trial, tail).
+        experiment (str): Name of the experiment.
+        chance (float): hist-nat's chance of each event, e.g. 0.05 (its 95th and 5th percentiles).
+        units (str): Units of the variable.
+        bins (int): Histogram bins.
+        figsize (tuple): Figure size in inches.
+
+    Returns:
+        core.Panels: ``axes`` holds a and b.
+    """
+    exp_color, nat_color = _color(experiment), _color("hist-nat")
+    exp_values, nat_values = _clean(experiment_final), _clean(hist_nat_final)
+    shift = float(shift)
+    moved = nat_values + shift
+    level = {tail: float(thresholds.sel(tail=tail)) for tail in ("warm", "cold")}
+    warm_percentile, cold_percentile = _percentiles(chance)
+
+    fig = plt.figure(figsize=figsize)
+    outer = GridSpec(3, 1, figure=fig, height_ratios=[2.3, 0.6, 2.3], hspace=0.55)
+    ax_a, ax_flow, ax_b = (fig.add_subplot(outer[i]) for i in range(3))
+    edges = np.histogram_bin_edges(np.concatenate([exp_values, moved]), bins=bins)
+
+    #(t): a) hist-nat moved by the change in the mean, against the experiment itself
+    ax_a.hist(moved, bins=edges, density=True, histtype="step", color=nat_color, lw=2,
+              label=f"hist-nat + Δ (Δ = {shift:+.2f} {units}): the shift only")
+    ax_a.hist(exp_values, bins=edges, density=True, color=exp_color, edgecolor=exp_color, alpha=0.28, lw=1.4,
+              label=f"{experiment}: everything that changed")
+    lines = []
+    for tail, value in level.items():
+        ax_a.axvline(value, color=TAIL_COLORS[tail], lw=1.8, ls="--")
+        p_nat = _chance(nat_values, value, tail)
+        lines.append(f"{tail}: shift only {_chance(moved, value, tail) / p_nat:.2f}, "
+                     f"probability ratio {_chance(exp_values, value, tail) / p_nat:.2f}")
+    ax_a.set_title(f"a  The shift of the mean alone, and everything (dashed: hist-nat's {cold_percentile} and "
+                   f"{warm_percentile} percentiles)", fontsize=13, pad=10)
+    ax_a.text(0.02, 0.95, "\n".join(lines), transform=ax_a.transAxes, va="top", fontsize=10)
+    ax_a.legend(frameon=False, fontsize=10, loc="upper right")
+    ax_a.set_xlabel(units, fontsize=12)
+    ax_a.set_ylabel("Density", fontsize=12)
+
+    _flow(ax_flow, f"Resample whole members with replacement, {shift_only_trials.sizes['trial']:,} times\n"
+                   "(hist-nat's own and its moved seasons with the same draws), and recalculate both ratios")
+
+    #(t): b) the bootstrap's ratios, both, on a log scale
+    _ratio_histograms(ax_b, ratio_trials, "probability ratio", alpha=0.45, histtype="stepfilled")
+    _ratio_histograms(ax_b, shift_only_trials, "shift only", histtype="step", lw=1.6, ls="--")
+    _ratio_axis(ax_b, "b  Bootstrap of the two ratios")
+    for ax in (ax_a, ax_b):
+        ax.tick_params(labelsize=11)
+        core.style_ax(ax)
+    return core.Panels(fig=fig, axes=np.array([ax_a, ax_b], dtype=object))
 
 
 # ---------------------------------------------------------------------------

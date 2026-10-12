@@ -1,4 +1,4 @@
-"""The candidate panels (notebook 07), the fingerprinting figures (08) and the probability-ratio schematic (03) draw."""
+"""The candidate panels (notebook 07), the fingerprinting figures (08) and the probability-ratio schematics (03) draw."""
 
 from functools import partial
 
@@ -52,8 +52,8 @@ def test_map_block_and_compose():
     #(c): Blocks put together: the letters run on
     ratios = xr.Dataset({"pr": (("model", "experiment", "tail", "season"), np.exp(rng.normal(size=(3, 2, 2, 2))))},
                         coords=dict(model=MODELS, experiment=EXPERIMENTS, tail=["warm", "cold"], season=SEASONS))
-    ratios = ratios.assign(pr_lower=ratios["pr"] / 2, pr_upper=ratios["pr"] * 2, pr_mean_only=ratios["pr"] * 0.5)
-    layout = pp.compose([[block], [partial(pp.pr_points, ratios, mean_only=True)]], heights=[4, 3])
+    ratios = ratios.assign(pr_lower=ratios["pr"] / 2, pr_upper=ratios["pr"] * 2, pr_shift_only=ratios["pr"] * 0.5)
+    layout = pp.compose([[block], [partial(pp.pr_points, ratios, shift_only=True)]], heights=[4, 3])
     assert [b.extras["next_tag"] for b in layout.extras["blocks"]] == [4, 8]
 
 
@@ -115,11 +115,14 @@ def test_probability_ratio_schematic():
     experiment = xr.DataArray(rng.normal(1, 1, (20, 21)), dims=("member", "year"))
     hist_nat = xr.DataArray(rng.normal(0, 1, (20, 21)), dims=("member", "year"))
     thresholds = xr.DataArray([1.6, -1.6], dims="tail", coords={"tail": ["warm", "cold"]})
-    trials = xr.Dataset({name: (("trial", "tail"), np.exp(rng.normal(size=(100, 2)))) for name in ("pr", "pr_mean_only")},
+    trials = xr.Dataset({name: (("trial", "tail"), np.exp(rng.normal(size=(100, 2)))) for name in ("pr", "pr_shift_only")},
                         coords={"tail": ["warm", "cold"]})
     trials["pr"][0, 1] = 0.0
-    panels = methods.probability_ratio_schematic(experiment, hist_nat, thresholds, 1.0, trials, "historical")
-    assert panels.axes.size == 3
+    panels = methods.probability_ratio_schematic(experiment, hist_nat, thresholds, trials["pr"], "historical")
+    assert panels.axes.size == 2
+    panels = methods.shift_only_schematic(experiment, hist_nat, thresholds, 1.0, trials["pr"], trials["pr_shift_only"],
+                                          "historical")
+    assert panels.axes.size == 2
 
 
 def test_ridgelines():

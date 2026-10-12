@@ -1,27 +1,23 @@
 """Probability ratios: how much more (or less) often each forcing gives an extreme warm or cold season.
 
-A season is extreme when it is beyond hist-nat's 1-in-N level over the same
-final years: warmer than hist-nat's 1 - 1/N quantile (a warm season) or colder
-than its 1/N quantile (a cold one), hist-nat's members and years pooled. The
-probability ratio is
+A season is extreme when it is beyond one of hist-nat's percentiles over the
+same final years: warmer than its 95th percentile (a warm season) or colder
+than its 5th (a cold one), hist-nat's members and years pooled. hist-nat has a
+5% chance of either; ``CHANCES`` sets that chance. The probability ratio is
 
-    PR = P_exp(beyond the level) / P_nat(beyond the level),
+    PR = P_exp(beyond the percentile) / P_nat(beyond the percentile),
 
 1 when the forcing changes nothing, 2 when it doubles the chance, 1/2 when it
 halves it. Each probability is the share of an ensemble's member-years beyond
-the level, averaged member by member (``member_exceedance``).
+the percentile, averaged member by member (``member_exceedance``).
 
-Two versions of the experiment's chance separate the shift of the mean from
-the rest of the change:
-
-    mean only        hist-nat's own values moved by the change in the mean (experiment minus
-                     hist-nat): the chance the experiment would have if its distribution had only
-                     shifted. Moving the values up by the change is the same as moving the
-                     threshold down by it, which is how the notebook does it.
-    mean and width   the experiment's own values: everything that changed.
-
-The gap between the two is what the change in width (and shape) adds; it
-matters most for the cold tail, which a narrowing distribution pulls in.
+The shift-only ratio (notebook 03, section 11) asks how much of the ratio the
+shift of the mean alone gives: hist-nat's own seasons, every one moved by the
+experiment's change in the mean, against the same percentiles. Moving the
+seasons up by the change is the same as moving the percentile down by it,
+which is how the notebook does it. The gap between the shift-only ratio and
+the ratio is what the change in width (and shape) adds; it matters most for
+the cold tail, which a narrowing distribution pulls in.
 
 Uncertainty comes from a bootstrap of whole members, with replacement, within
 each ensemble (``bootstrap_member_mean``). The thresholds stay fixed: each
@@ -48,24 +44,24 @@ from .stats import nan_quantile
 #(t): Which side of its threshold a season has to fall: above it for a warm season (+1), below it for a cold one (-1)
 TAIL_SIGNS = xr.DataArray([1, -1], dims="tail", coords={"tail": ["warm", "cold"]})
 
-#(t): Return periods in years: 1-in-20 seasons for the paper, 1-in-10 to check the sensitivity. Rarer levels are
-#(c): avoided on purpose: with hist-nat's chance that small, the ratio blows up on a handful of seasons
-RETURN_PERIODS = (20, 10)
+#(t): hist-nat's chance of each event: 5% (warmer than its 95th percentile, colder than its 5th) for the paper, 10%
+#(t): (its 90th and 10th) to check the sensitivity
+#(c): Rarer events are avoided on purpose: with hist-nat's chance that small, the ratio blows up on a handful of seasons
+CHANCES = (0.05, 0.10)
 
 
-def threshold_levels(return_periods=RETURN_PERIODS):
-    """The quantile each threshold sits at: 1 - 1/N for a warm season, 1/N for a cold one.
+def threshold_levels(chances=CHANCES):
+    """The quantile each threshold sits at: 1 - chance for a warm season, the chance for a cold one.
 
     Args:
-        return_periods (Sequence[int]): N, in years.
+        chances (Sequence[float]): hist-nat's chance of each event, e.g. 0.05.
 
     Returns:
-        xr.DataArray: Quantile levels on (tail, return_period), e.g. 0.95 (warm) and 0.05 (cold) for N = 20.
+        xr.DataArray: Quantile levels on (tail, chance), e.g. 0.95 (warm) and 0.05 (cold) for a chance of 0.05.
     """
-    periods = xr.DataArray(list(return_periods), dims="return_period",
-                           coords={"return_period": list(return_periods)})
-    #(c): The warm sign (+1) gives 0.5 + (0.5 - 1/N) = 1 - 1/N, the cold sign (-1) gives 1/N
-    levels = 0.5 + TAIL_SIGNS * (0.5 - 1 / periods)
+    chances = xr.DataArray(list(chances), dims="chance", coords={"chance": list(chances)})
+    #(c): The warm sign (+1) gives 0.5 + (0.5 - chance) = 1 - chance, the cold sign (-1) gives the chance
+    levels = 0.5 + TAIL_SIGNS * (0.5 - chances)
     return np.round(levels, 10).rename("level")
 
 
@@ -75,11 +71,11 @@ def thresholds(counterfactual, levels, dims=("member", "year")):
 
     Args:
         counterfactual (xr.Dataset | xr.DataArray): hist-nat over the years compared, on (member, year, ...).
-        levels (xr.DataArray): ``threshold_levels`` output, on (tail, return_period).
+        levels (xr.DataArray): ``threshold_levels`` output, on (tail, chance).
         dims (Sequence[str]): The dims pooled (those present).
 
     Returns:
-        The same type, on (tail, return_period, ...).
+        The same type, on (tail, chance, ...).
     """
     pooled = [dim for dim in dims if dim in counterfactual.dims]
     unique_levels = list(np.unique(levels.values))
@@ -87,7 +83,7 @@ def thresholds(counterfactual, levels, dims=("member", "year")):
         quantiles = counterfactual.map(nan_quantile, q=unique_levels, dim=pooled)
     else:
         quantiles = nan_quantile(counterfactual, unique_levels, pooled)
-    #(c): Picking the levels out with a DataArray swaps the quantile dim for (tail, return_period)
+    #(c): Picking the levels out with a DataArray swaps the quantile dim for (tail, chance)
     return quantiles.sel(quantile=levels).drop_vars("quantile")
 
 
@@ -101,11 +97,11 @@ def member_exceedance(values, threshold, dim="year"):
 
     Args:
         values (xr.Dataset | xr.DataArray): Seasonal means on (member, year, ...).
-        threshold (the same type): On (tail, return_period, ...), from ``thresholds`` (or moved by a change).
+        threshold (the same type): On (tail, chance, ...), from ``thresholds`` (or moved by a change).
         dim (str): The years.
 
     Returns:
-        The same type, on (member, tail, return_period, ...): 0 to 1, NaN where a member or the threshold
+        The same type, on (member, tail, chance, ...): 0 to 1, NaN where a member or the threshold
         has no data.
     """
     beyond = (TAIL_SIGNS * (values - threshold)) > 0
@@ -140,8 +136,8 @@ def bootstrap_member_mean(members, n_trials=1000, seed=0):
     Each trial draws as many members as there are, with replacement, and
     averages them (``resample_weights``). Calls with the same seed and the same
     number of members draw the same members, so two things made from one
-    ensemble (hist-nat's own chance and its chance moved by the change in the
-    mean) are resampled together, and their ratio keeps its pairing.
+    ensemble (hist-nat's own chance and its shift-only chance, against the
+    moved thresholds) are resampled together, and their ratio keeps its pairing.
 
     Args:
         members (xr.Dataset | xr.DataArray): On (member, ...), e.g. ``member_exceedance`` output.
