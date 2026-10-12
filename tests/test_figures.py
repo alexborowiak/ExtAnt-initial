@@ -162,7 +162,13 @@ def test_method_figures():
     change = qc.quantile_range(final) - qc.quantile_range(nat)
     methods.bootstrap_schematic(nat, final, null, selected, window_starts, change, sig.pvalue_two_sided(null, change),
                                 "historical")
-    weights = rc.permutation_weights(200, 30, 30, np.random.default_rng(0))
+    nat_stats = (nat.mean(), nat.var(ddof=1), nat.count())
+    null_t = sig.welch_t(sig.bootstrap_mean(nat, n_trials=200), sig.bootstrap_variance(nat, n_trials=200), 210,
+                         *nat_stats)
+    t = sig.welch_t(final.mean(), final.var(ddof=1), 210, *nat_stats)
+    methods.bootstrap_t_schematic(nat, final, null_t, selected, window_starts, t, sig.pvalue_two_sided(null_t, t),
+                                  "historical")
+    weights =rc.permutation_weights(200, 30, 30, np.random.default_rng(0))
     permutations = weights @ np.concatenate([final.mean("year").values, nat_final.mean("year").values])
     methods.permutation_schematic(final, nat_final, permutations, weights > 0, float(final.mean() - nat_final.mean()),
                                   0.01, "historical")

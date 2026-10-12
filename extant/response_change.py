@@ -158,8 +158,10 @@ def change_summary(mean_change, mean_pvalue, signal_to_noise, qrange_change, tai
     """Every change and its test in one Dataset, on the grid points and experiments all inputs share.
 
     Args:
-        mean_change (xr.DataArray): The mean response, notebook 03's ``mean_response_da``.
-        mean_pvalue (xr.DataArray): p-values for the mean change: the member-block test's
+        mean_change (xr.DataArray): The change in the mean that ``mean_pvalue`` tests: the bootstrapped
+            t-test's ``mean_bootstrap_ds["mean_change"]`` (against hist-nat's whole record, as the figures
+            use), or the mean response ``mean_block_ds["mean_change"]`` (against hist-nat's final years).
+        mean_pvalue (xr.DataArray): Its p-values: ``mean_bootstrap_ds["pvalue"]``, the member-block test's
             ``mean_block_ds["pvalue"]``, or the pooled Welch t-test's ``ttest_ds["p"]``.
         signal_to_noise (xr.DataArray): S/N against hist-nat at the year of interest (``sn_final``).
         qrange_change (xr.Dataset): ``qrange_change_ds``, with ``qrange_change`` and ``qrange_pvalue``

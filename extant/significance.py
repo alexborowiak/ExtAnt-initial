@@ -4,7 +4,9 @@ All resampling works on whole members, so each member's time series stays intact
 
 The width test's null is a bootstrap of hist-nat alone (``bootstrap_qrange``):
 its Q-range kernels run in numba, compiled (like those in ``quantiles``) parallel
-over grid points for data in memory and serial for dask blocks.
+over grid points for data in memory and serial for dask blocks. The bootstrapped
+t-test of the mean uses the same trials (``bootstrap_mean``, ``bootstrap_variance``
+and ``welch_t``).
 """
 
 import numpy as np
@@ -294,6 +296,108 @@ def bootstrap_qrange(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, years=WINDOW, quan
 
 
 # ---------------------------------------------------------------------------
+# The bootstrapped t-test: each trial's mean and variance
+# ---------------------------------------------------------------------------
+# The trials of ``bootstrap_qrange`` (the same ``bootstrap_draws``), so the mean
+# and the width are tested against the same draws. A trial's mean and variance
+# need only the sum of its values, the sum of their squares and their count, so
+# each member's sum over every window comes from one cumulative sum along the
+# years, and a trial adds up its members' sums over its window.
+
+def _trial_sums(data, members, window_starts, years):
+    """(..., member, year) -> (..., trial): the sum of each trial's members' values over its window.
+
+    Args:
+        data (np.ndarray): The values to add up, with no NaN (replaced by 0 beforehand).
+        members (np.ndarray): (trial, n_members) the members of each trial.
+        window_starts (np.ndarray): (trial,) the first year index of each trial's window.
+        years (int): Window length.
+    """
+    #(c): cumulative[..., i] is the sum of the first i years, so the window starting at s sums to
+    #(c): cumulative[..., s + years] - cumulative[..., s]
+    cumulative = np.cumsum(data, axis=-1, dtype=np.float64)
+    cumulative = np.concatenate([np.zeros(cumulative.shape[:-1] + (1,)), cumulative], axis=-1)
+    window_sums = cumulative[..., years:] - cumulative[..., :-years]
+    #(c): One member of every trial at a time: gathering them all at once would hold n_members copies of the result
+    total = np.zeros(data.shape[:-2] + (len(window_starts),))
+    for trial_members in members.T:
+        total += window_sums[..., trial_members, window_starts]
+    return total
+
+
+def _bootstrap_sum(values, n_members, years, n_trials, seed):
+    """Each trial's sum of ``values``: the members and windows of ``bootstrap_draws(..., seed=seed)``."""
+    selected, window_starts = bootstrap_draws(values.sizes["member"], values.sizes["year"], n_members, years,
+                                              n_trials, seed)
+    #(c): Each trial's members as indices: every row of selected has n_members True
+    members = np.nonzero(selected)[1].reshape(n_trials, n_members)
+
+    if values.chunks:
+        values = values.chunk({"member": -1, "year": -1})
+    out = xr.apply_ufunc(
+        _trial_sums,
+        values,
+        input_core_dims=[["member", "year"]],
+        output_core_dims=[["trial"]],
+        kwargs=dict(members=members, window_starts=window_starts, years=years),
+        dask="parallelized",
+        output_dtypes=[np.float64],
+        dask_gufunc_kwargs={"output_sizes": {"trial": n_trials}},
+    )
+    return out.transpose("trial", ...).assign_coords(trial=np.arange(n_trials))
+
+
+@skip_empty
+def bootstrap_mean(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, years=WINDOW, n_trials=1000, seed=0):
+    """The mean of each hist-nat bootstrap trial's values, pooled; NaN are skipped.
+
+    The trials of ``bootstrap_qrange`` with the same arguments: trial k pools
+    ``n_members`` different hist-nat members over one ``years``-year window,
+    the draws of ``bootstrap_draws(..., seed=seed)``. Every grid point uses the same draws.
+
+    Args:
+        hist_nat (xr.DataArray | xr.Dataset): hist-nat's whole record, on (member, year, ...).
+        n_members (int): Members per trial.
+        years (int): Window length (odd).
+        n_trials (int): Trials.
+        seed (int): Random seed.
+
+    Returns:
+        The same type, with ``member`` and ``year`` replaced by ``trial`` (first, numbered from 0).
+    """
+    draws = dict(n_members=n_members, years=years, n_trials=n_trials, seed=seed)
+    total = _bootstrap_sum(hist_nat.fillna(0), **draws)
+    count = _bootstrap_sum(hist_nat.notnull(), **draws)
+    return total / count
+
+
+@skip_empty
+def bootstrap_variance(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, years=WINDOW, n_trials=1000, seed=0):
+    """The variance (ddof=1) of each hist-nat bootstrap trial's values, pooled; NaN are skipped.
+
+    The trials of ``bootstrap_mean`` with the same arguments. From each
+    trial's sum, sum of squares and count n: (sum of squares - sum² / n) / (n - 1).
+
+    Args:
+        hist_nat (xr.DataArray | xr.Dataset): hist-nat's whole record, on (member, year, ...).
+        n_members (int): Members per trial.
+        years (int): Window length (odd).
+        n_trials (int): Trials.
+        seed (int): Random seed.
+
+    Returns:
+        The same type, with ``member`` and ``year`` replaced by ``trial`` (first, numbered from 0).
+    """
+    draws = dict(n_members=n_members, years=years, n_trials=n_trials, seed=seed)
+    #(c): Centred first: the variance is the same, and the sums of squares stay small, so the subtraction loses nothing
+    centred = hist_nat.astype("float64") - hist_nat.mean(["member", "year"])
+    total = _bootstrap_sum(centred.fillna(0), **draws)
+    total_squares = _bootstrap_sum((centred ** 2).fillna(0), **draws)
+    count = _bootstrap_sum(centred.notnull(), **draws)
+    return (total_squares - total ** 2 / count) / (count - 1)
+
+
+# ---------------------------------------------------------------------------
 # Multi-model aggregation
 # ---------------------------------------------------------------------------
 
@@ -391,6 +495,18 @@ def area_mean(da, lat="lat", lon="lon"):
 # ---------------------------------------------------------------------------
 # Parametric
 # ---------------------------------------------------------------------------
+
+def welch_t(mean1, variance1, n1, mean2, variance2, n2):
+    """Welch's t from two samples' means, variances and sizes: (mean1 - mean2) / sqrt(variance1 / n1 + variance2 / n2).
+
+    The bootstrapped t-test (notebook 03, section 4) gives the experiment ``n1``
+    = the size of a bootstrap trial, not its own size. The part of hist-nat's
+    variability that every member shares (natural forcing, drift) does not
+    average out over members, so in a t taken at the experiment's own size it
+    would count more than in a trial's, and too much would be significant.
+    """
+    return (mean1 - mean2) / np.sqrt(variance1 / n1 + variance2 / n2)
+
 
 @skip_empty
 def ttest_welch(da1, da2, dims=("year", "member"), variable="tas"):

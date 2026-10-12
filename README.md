@@ -34,7 +34,7 @@ What is in `extant/`:
 | `loading` | opening the monthly stores, the seasonal means and the sample |
 | `preprocessing` | monthly to seasonal means, and ERA5 onto the model grid |
 | `quantiles` | rolling quantiles and LOWESS (numba) |
-| `significance` | the hist-nat bootstrap, Welch t-test, multi-model agreement |
+| `significance` | the hist-nat bootstrap (of the width, and of the mean for the bootstrapped t-test), Welch t-test, multi-model agreement |
 | `response_change` | mean, width and tail changes, the member-block permutation test, additivity |
 | `probability_ratio` | how much more often a warm or a cold 1-in-N season, with the mean alone and with everything, and the bootstrap of members |
 | `sam` | the SAM index files, the regression of temperature on the SAM, the SAM phases, and a synthetic index for the sample |

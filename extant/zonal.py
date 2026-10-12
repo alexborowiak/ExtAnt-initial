@@ -17,10 +17,11 @@ anomalies at different longitudes would cancel.
 
 The tests
 ---------
-mean    the member-block permutation test (``rc.member_block_pvalue``) of the
-        zonal means of the member means. A mean is linear, so the change in the
-        zonal mean is the zonal mean of the change: the test is of exactly the
-        plotted line.
+mean    the bootstrapped t-test (``sig.bootstrap_mean``, ``sig.bootstrap_variance``,
+        ``sig.welch_t``) of each member's zonal-mean series: its final years
+        against hist-nat's whole record, against the zonal means of the width
+        test's trials. A mean is linear, so the change in the zonal mean is the
+        zonal mean of the change: the test is of exactly the plotted line.
 width   the zonal mean of the hist-nat bootstrap trials (``sig.bootstrap_qrange``).
         Each trial draws the same members and years at every grid point, so the
         trial's changes averaged over longitude are one draw of the zonal-mean

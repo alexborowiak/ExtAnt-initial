@@ -104,6 +104,56 @@ def test_bootstrap_draws_are_the_trials_of_bootstrap_qrange():
     assert int(selected.sum(1).min()) == sig.N_BOOTSTRAP_MEMBERS
 
 
+@pytest.mark.parametrize("dask", [False, True])
+def test_bootstrap_mean_and_variance_are_those_of_each_trial(dask):
+    """Each trial rebuilt from bootstrap_draws (same seed) gives the same mean and variance, NaN skipped."""
+    hist_nat = _ensemble(30, n_years=60, shift=250.0)
+    selected, window_starts = sig.bootstrap_draws(30, 60, years=21, n_trials=200, seed=4)
+    data = hist_nat.chunk({"lat": 1}) if dask else hist_nat
+    means = sig.bootstrap_mean(data, years=21, n_trials=200, seed=4)
+    variances = sig.bootstrap_variance(data, years=21, n_trials=200, seed=4)
+    values = hist_nat.transpose("member", "year", ...).values
+    for trial in (0, 1, 100, 199):
+        start = window_starts[trial]
+        pooled = values[selected[trial], start:start + 21].reshape(-1, *values.shape[2:])
+        np.testing.assert_allclose(means.sel(trial=trial).transpose("season", "lat", "lon"),
+                                   np.nanmean(pooled, axis=0), rtol=1e-12)
+        np.testing.assert_allclose(variances.sel(trial=trial).transpose("season", "lat", "lon"),
+                                   np.nanvar(pooled, axis=0, ddof=1), rtol=1e-9)
+
+
+def test_bootstrap_mean_on_a_dataset_is_the_same():
+    hist_nat = _ensemble(14, n_years=40)
+    from_array = sig.bootstrap_variance(hist_nat, 8, years=11, n_trials=50)
+    from_dataset = sig.bootstrap_variance(hist_nat.to_dataset(name="tas"), 8, years=11, n_trials=50)
+    np.testing.assert_array_equal(from_dataset.tas.values, from_array.values)
+
+
+def test_welch_t_is_scipys():
+    from scipy.stats import ttest_ind
+    a, b = RNG.standard_normal(40) + 0.5, 2 * RNG.standard_normal(70)
+    t = sig.welch_t(a.mean(), a.var(ddof=1), a.size, b.mean(), b.var(ddof=1), b.size)
+    assert t == pytest.approx(ttest_ind(a, b, equal_var=False).statistic)
+
+
+def test_the_bootstrapped_t_test_finds_a_shift_and_not_a_bigger_ensemble():
+    """The mean test as notebook 03 runs it: t at the size of a trial, against the trials' t."""
+    hist_nat = _ensemble(30, n_years=60)
+    hist_nat_mean = hist_nat.mean(["member", "year"])
+    hist_nat_variance = hist_nat.var(["member", "year"], ddof=1)
+    hist_nat_count = hist_nat.count(["member", "year"])
+    trial_size = 10 * 21
+    null = sig.welch_t(sig.bootstrap_mean(hist_nat, 10, years=21, n_trials=300),
+                       sig.bootstrap_variance(hist_nat, 10, years=21, n_trials=300), trial_size,
+                       hist_nat_mean, hist_nat_variance, hist_nat_count)
+    #(c): 50 members, five times a trial's: at its own size its t would be about sqrt(5) times too big
+    for experiment, expected in ((_ensemble(50, n_years=21, shift=0.5), "shifted"), (_ensemble(50, n_years=21), "same")):
+        t = sig.welch_t(experiment.mean(["member", "year"]), experiment.var(["member", "year"], ddof=1), trial_size,
+                        hist_nat_mean, hist_nat_variance, hist_nat_count)
+        significant = float((sig.pvalue_two_sided(null, t) < 0.05).mean())
+        assert significant > 0.9 if expected == "shifted" else significant < 0.1
+
+
 def test_significant_counts_count_each_sign_and_skip_missing_models():
     coords = {"model": ["A", "B", "C"], "lat": [-80.0, -70.0]}
     change = xr.DataArray([[1.0, -2.0], [3.0, np.nan], [-1.0, -0.5]], dims=("model", "lat"), coords=coords)
