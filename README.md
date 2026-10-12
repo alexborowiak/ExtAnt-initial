@@ -8,12 +8,14 @@ The data are on JASMIN. A small sample (a 3×3 block of grid cells from two mode
 
 ```
 notebooks/
-    01_process_data.ipynb              raw files -> monthly stores -> seasonal means (once per variable); sea ice (once)
-    02_era5_evaluation.ipynb           are the models consistent with ERA5? is the observed change detectable?
-    03_forced_response.ipynb           the calculations, each method explained; saves every result
+    01_process_data.ipynb              raw files -> monthly stores -> seasonal means (once per variable); sea ice and the SAM index (once)
+    02_era5_evaluation.ipynb           are the models consistent with ERA5? is the observed change detectable? (and the regional evaluation the paper uses)
+    03_forced_response.ipynb           the calculations, each method explained; saves every result (probability ratios, SAM, additivity of the variance)
     04_forced_response_figures.ipynb   figures, from the saved results: four for every result, from what goes in to how many models agree
     05_slide_figures.ipynb             figures for talks, including how the forced-response figures are made
     06_paper_figures.ipynb             the paper's main and supplementary figures, in print style (PDF and PNG)
+    07_figure_candidates.ipynb         every candidate figure of the planning notes (A-F), the verification against ERA5, and the layouts L1-L5
+    08_optimal_fingerprinting.ipynb    are the observed regional seasonal trends explained by the forcings, and is each forcing's size right?
 extant/                                the code the notebooks use
 plotting_modules/                      the general plotting package: panel grids, polar maps, colour bars
 tests/                                 pytest suite, the sample data, and a script that runs every notebook
@@ -34,13 +36,16 @@ What is in `extant/`:
 | `quantiles` | rolling quantiles and LOWESS (numba) |
 | `significance` | the hist-nat bootstrap, Welch t-test, multi-model agreement |
 | `response_change` | mean, width and tail changes, the member-block permutation test, additivity |
+| `probability_ratio` | how much more often a warm or a cold 1-in-N season, with the mean alone and with everything, and the bootstrap of members |
+| `sam` | the SAM index files, the regression of temperature on the SAM, the SAM phases, and a synthetic index for the sample |
+| `fingerprinting` | optimal fingerprinting: the vectors, fingerprints, noise covariance (Ledoit-Wolf), OLS and TLS fits, Monte Carlo ranges and the residual test |
 | `zonal` | zonal means of the change (mean, low and high extremes, width) and tests of them |
 | `sea_ice` | sea-ice extent and the equivalent latitude of the ice edge |
 | `era5_evaluation` | the ERA5 tests (Suarez-Gutierrez et al., 2021) |
 | `observed_change` | detection, consistency, records and scaling factors |
 | `datatree`, `stats` | DataTree helpers, fast quantiles and KDEs |
 | `jasmin` | starting the Dask cluster and sending this package to its workers |
-| `plots/` | the figures, one module per analysis module, plus `forced_response` (the map grids of notebook 04), `methods` (the step-by-step method figures) and `multimodel` (used only by the archived notebook 04) |
+| `plots/` | the figures, one module per analysis module, plus `forced_response` (the map grids of notebook 04), `methods` (the step-by-step method figures), `paper_panels` (notebook 07's panels, each drawn into a figure or part of one so they can be put together), `fingerprinting` (notebook 08) and `multimodel` (used only by the archived notebook 04) |
 
 ## Running it
 
@@ -53,6 +58,7 @@ monthly/lesfmip/<variable>/<model>_<variable>_<experiment>_interp_monthly.zarr
 monthly/era5_<variable>.zarr
 seasonal/lesfmip_<variable>.zarr
 seasonal/era5_<variable>.zarr
+seasonal/lesfmip_sam.zarr                              the SAM index (notebook 01, section 6)
 results/<variable>/<full|sample>/<name>.zarr
 results/siconc/full/extent.zarr, climatology.zarr     the sea ice (notebook 01, section 5)
 ```
@@ -60,6 +66,8 @@ results/siconc/full/extent.zarr, climatology.zarr     the sea ice (notebook 01, 
 Off JASMIN both are `output/` in this repository.
 
 **Following a notebook.** Names end in their type: `_tree` (DataTree), `_ds` (Dataset), `_da` (DataArray), `_arr` (numpy array), `_df` (DataFrame). Each step prints what it made, and each method figure has a *quick look* before it: the arrays it is given, printed and drawn plainly with xarray's `.plot`, with all the code in the notebook. Every file opened or saved through `extant` is logged with its full path, and a store that cannot be found raises an error naming both places it looked and what each folder holds instead.
+
+**The SAM index.** Notebook 03's SAM section uses LEADER-EPESC working group 1's monthly SAM index of every member (`paths.SAM_RAW`, the files `archive/draft_current_DAILY.ipynb` opened), not one made here from sea-level pressure. Notebook 01, section 6 turns it into seasonal means; it shows the levels in a file so that `SAM_LEVEL` can be set to the right one (the draft took position 3, a later version of its reader position 0). The sample has no SAM index, so its section uses a made-up one (`sam.synthetic_index`) that only lets the code run.
 
 **Another variable.** Set `VARIABLE` at the top of each notebook. The variable needs an entry in `config.VARIABLES`, which says how to convert its units; `pr` and `sfcWind` are there but have not been run yet. Two things are not done for them yet. There is no ERA5 recipe: precipitation is a forecast accumulation, and wind speed has to be built from its u and v components. And some figure labels in `extant/plots` still talk about warming and cold or warm tails.
 

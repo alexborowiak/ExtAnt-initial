@@ -46,6 +46,10 @@ LEADER_EPESC = Path("/gws/ssde/j25b/leader_epesc")
 LESFMIP_RAW = LEADER_EPESC / "CMIP6_SinglForcHistSimul" / "InterpolatedFlds"
 LESFMIP_CATALOG = LEADER_EPESC / "catalogs" / "all-catalog_v1.csv"
 
+#(t): LEADER-EPESC working group 1's monthly SAM index of every LESFMIP member, as opened in
+#(t): archive/draft_current_DAILY.ipynb: /<experiment>/<model>/SAM_zonal_mon_<experiment>_<model>_<member>_interp.nc
+SAM_RAW = LEADER_EPESC / "wg1" / "monthly" / "NAM_SAM_new_update_LastVersion_UseThese" / "SAM_zonal_new_jasmin"
+
 #(t): Hourly ERA5 analyses: /<year>/<month>/<day>/*.<code>.nc
 ERA5_RAW = Path("/badc/ecmwf-era5/data/oper/an_sfc")
 

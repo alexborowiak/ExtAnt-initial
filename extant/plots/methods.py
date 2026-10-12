@@ -295,6 +295,108 @@ def permutation_schematic(experiment_final, hist_nat_final, permutations, is_exp
     return core.Panels(fig=fig, axes=np.array([ax_a, *mini, ax_c], dtype=object))
 
 
+#(t): Colours of the two tails in the probability-ratio figures
+TAIL_COLORS = {"warm": "#c0392b", "cold": "#2166ac"}
+
+
+@plot("figure")
+def probability_ratio_schematic(experiment_final, hist_nat_final, thresholds, shift, ratio_trials, experiment,
+                                return_period=20, units="°C", bins=30, figsize=(11, 12)):
+    """The probability ratio of a warm and a cold 1-in-N season, step by step.
+
+    a) the two ensembles' final years, hist-nat's two thresholds, and how
+       often each ensemble goes beyond them;
+    b) hist-nat moved by the change in the mean, against the experiment: what
+       the mean alone gives, and the gap the width (and shape) adds;
+    c) the bootstrap's ratios, both versions, for each tail.
+
+    Args:
+        experiment_final, hist_nat_final (xr.DataArray): The final years at one point, on (member, year).
+        thresholds (xr.DataArray): hist-nat's levels on (tail,), for this return period.
+        shift (float): The change in the mean, experiment minus hist-nat.
+        ratio_trials (xr.Dataset): ``pr`` and ``pr_mean_only`` on (trial, tail): every bootstrap trial's ratios.
+        experiment (str): Name of the experiment.
+        return_period (int): N.
+        units (str): Units of the variable.
+        bins (int): Histogram bins.
+        figsize (tuple): Figure size in inches.
+
+    Returns:
+        core.Panels: ``axes`` holds a, b and c.
+    """
+    exp_color, nat_color = _color(experiment), _color("hist-nat")
+    exp_values, nat_values = _clean(experiment_final), _clean(hist_nat_final)
+    shift = float(shift)
+    level = {tail: float(thresholds.sel(tail=tail)) for tail in ("warm", "cold")}
+    signs = {"warm": 1, "cold": -1}
+
+    def chance(values, tail):
+        return 100 * np.mean(signs[tail] * (values - level[tail]) > 0)
+
+    fig = plt.figure(figsize=figsize)
+    outer = GridSpec(5, 1, figure=fig, height_ratios=[2.3, 0.6, 2.3, 0.6, 2.3], hspace=0.55)
+    ax_a, ax_flow1, ax_b, ax_flow2, ax_c = (fig.add_subplot(outer[i]) for i in range(5))
+    edges = np.histogram_bin_edges(np.concatenate([exp_values, nat_values, nat_values + shift]), bins=bins)
+
+    #(t): a) the two ensembles and the thresholds
+    for values, name in ((nat_values, "hist-nat"), (exp_values, experiment)):
+        color = _color(name)
+        ax_a.hist(values, bins=edges, density=True, color=color, edgecolor=color, alpha=0.28, lw=1.4,
+                  label=f"{_label(name)}")
+    lines = []
+    for tail, value in level.items():
+        ax_a.axvline(value, color=TAIL_COLORS[tail], lw=1.8, ls="--")
+        lines.append(f"{tail}: hist-nat {chance(nat_values, tail):.1f}%, {experiment} {chance(exp_values, tail):.1f}%"
+                     f"  →  PR = {chance(exp_values, tail) / chance(nat_values, tail):.2f}")
+    ax_a.set_title(f"a  Beyond hist-nat's 1-in-{return_period} levels (dashed)", fontsize=15, pad=10)
+    ax_a.text(0.02, 0.95, "\n".join(lines), transform=ax_a.transAxes, va="top", fontsize=10)
+    ax_a.legend(frameon=False, fontsize=10, loc="upper right")
+
+    _flow(ax_flow1, f"Move hist-nat by the change in the mean, Δ = {shift:+.2f} {units}:\n"
+                    "the chance the experiment would have if its distribution had only shifted")
+
+    #(t): b) mean only against the experiment itself
+    moved = nat_values + shift
+    ax_b.hist(moved, bins=edges, density=True, histtype="step", color=nat_color, lw=2, label="hist-nat + Δ (mean only)")
+    ax_b.hist(exp_values, bins=edges, density=True, color=exp_color, edgecolor=exp_color, alpha=0.28, lw=1.4,
+              label=f"{experiment} (mean and width)")
+    lines = []
+    for tail, value in level.items():
+        ax_b.axvline(value, color=TAIL_COLORS[tail], lw=1.8, ls="--")
+        mean_only, full = chance(moved, tail) / chance(nat_values, tail), chance(exp_values, tail) / chance(nat_values, tail)
+        lines.append(f"{tail}: mean only {mean_only:.2f}, mean and width {full:.2f}")
+    ax_b.set_title("b  The mean alone, and the rest of the change", fontsize=15, pad=10)
+    ax_b.text(0.02, 0.95, "\n".join(lines), transform=ax_b.transAxes, va="top", fontsize=10)
+    ax_b.legend(frameon=False, fontsize=10, loc="upper right")
+    for ax in (ax_a, ax_b):
+        ax.set_xlabel(units, fontsize=12)
+        ax.set_ylabel("Density", fontsize=12)
+
+    n_trials = ratio_trials.sizes["trial"]
+    _flow(ax_flow2, f"Resample whole members of each ensemble with replacement, {n_trials:,} times,\n"
+                    "and recalculate both ratios against the same thresholds")
+
+    #(t): c) the bootstrap's ratios, on a log scale; a ratio of 0 (or beyond 64) piles up at the end
+    log_edges = np.linspace(-6, 6, 97)
+    for tail in ("warm", "cold"):
+        for name, style in (("pr", dict(alpha=0.45, histtype="stepfilled")),
+                            ("pr_mean_only", dict(histtype="step", lw=1.6, ls="--"))):
+            ratios = np.clip(np.asarray(ratio_trials[name].sel(tail=tail), dtype=float), 2.0 ** -6, 2.0 ** 6)
+            ax_c.hist(_clean(np.log2(ratios)), bins=log_edges, density=True, color=TAIL_COLORS[tail], **style,
+                      label=f"{tail}, {'mean and width' if name == 'pr' else 'mean only'}")
+    ax_c.axvline(0, color="k", lw=1)
+    ticks = np.arange(-6, 7, 2)
+    ax_c.set_xticks(ticks, [f"1/{2 ** -t}" if t < 0 else f"{2 ** t}" for t in ticks])
+    ax_c.set_xlabel("Probability ratio (log scale; 0 and beyond 64 at the ends)", fontsize=12)
+    ax_c.set_ylabel("Density", fontsize=12)
+    ax_c.set_title("c  Bootstrap of the ratios", fontsize=15, pad=10)
+    ax_c.legend(frameon=False, fontsize=9, ncols=2)
+    for ax in (ax_a, ax_b, ax_c):
+        ax.tick_params(labelsize=11)
+        core.style_ax(ax)
+    return core.Panels(fig=fig, axes=np.array([ax_a, ax_b, ax_c], dtype=object))
+
+
 # ---------------------------------------------------------------------------
 # Following the data
 # ---------------------------------------------------------------------------

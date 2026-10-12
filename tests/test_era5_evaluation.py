@@ -387,9 +387,26 @@ def calibration(n_worlds=100, n_members=40):
     return pd.DataFrame(table)
 
 
+def test_rank_histogram_summary_and_summary_of():
+    #(c): Member-free, on 10 bins whatever the ensemble size, so models of different sizes stack
+    ensemble, obs = ev.align(*ev.simulate_ensemble(n_members=30, seed=1))
+    summary = ev.rank_histogram_summary(ensemble, obs, "anomaly", n_bins=10)
+    assert "member" not in summary.dims
+    assert summary.sizes["rank"] == 10
+    np.testing.assert_allclose(summary["obs_frequency"].sum("rank"), 100)
+    assert bool((summary["pseudo_lower"] <= summary["pseudo_upper"]).all())
+    #(c): summary_of aligns a tree node with ERA5 first, and drops the members
+    node = ensemble.rename("tas").to_dataset()
+    from_node = ev.summary_of(node, obs, ev.rank_histogram_summary, treatment="anomaly", n_bins=10)
+    xr.testing.assert_allclose(from_node["obs_frequency"], summary["obs_frequency"])
+    trend = ev.summary_of(node, obs, ev.statistic_test, statistics=("trend",))
+    assert "member" not in trend.dims and "percentile" in trend
+
+
 if __name__ == "__main__":
     worlds = int(sys.argv[1]) if len(sys.argv) > 1 else 100
     pd.set_option("display.width", 250)
     pd.set_option("display.max_columns", None)
     print(f"Fraction flagged over {worlds} synthetic worlds (40 members, 35 years x 4 seasons):")
     print(calibration(worlds).round(2))
+

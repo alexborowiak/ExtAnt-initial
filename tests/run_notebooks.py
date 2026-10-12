@@ -42,7 +42,8 @@ JASMIN = "(JASMIN)"
 
 #(t): Resampling settings in the notebooks, and what they become here
 TRIAL_CAPS = {"n_trials=10_000": "n_trials={}", "N_TRIALS = 1000": "N_TRIALS = {}", "n_permutations=5000": "n_permutations={}",
-              "DEMO_TRIALS = 10_000": "DEMO_TRIALS = {}", "N_PERMUTATIONS = 5000": "N_PERMUTATIONS = {}"}
+              "DEMO_TRIALS = 10_000": "DEMO_TRIALS = {}", "N_PERMUTATIONS = 5000": "N_PERMUTATIONS = {}",
+              "PR_TRIALS = 1000": "PR_TRIALS = {}", "N_MONTE_CARLO = 1000": "N_MONTE_CARLO = {}"}
 
 
 def stand_in_modules():

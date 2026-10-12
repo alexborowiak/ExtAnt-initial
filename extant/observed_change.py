@@ -55,6 +55,21 @@ def regional_mean(obj, region):
     return average(obj)
 
 
+def regional_means(obj, regions=REGIONS):
+    """``regional_mean`` of every region, along a new ``region`` dim; NaN for a region with no grid points.
+
+    Works on DataArrays, Datasets and DataTrees alike.
+
+    Args:
+        obj: Data on (lat, lon, ...).
+        regions (dict): Region name -> lat/lon selection, as in ``REGIONS``.
+    """
+    if isinstance(obj, xr.DataTree):
+        return obj.map_over_datasets(lambda ds: regional_means(ds, regions) if ds.data_vars else ds)
+    return xr.concat([regional_mean(obj, selection) for selection in regions.values()],
+                     dim=xr.Variable("region", list(regions)))
+
+
 # ---------------------------------------------------------------------------
 # 2. Consistency with each experiment
 # ---------------------------------------------------------------------------

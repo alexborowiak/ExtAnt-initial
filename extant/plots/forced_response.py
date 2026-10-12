@@ -777,7 +777,7 @@ def map_grid(da, scale, title=None, row_dim="model", col_dim="experiment", not_s
 
 @plot("figure")
 def count_grid(counts, n_models, title, label, above=(), row_dim="direction", col_dim="experiment", row_labels=None,
-               signed=True, panel_size=2.3, style=NOTEBOOK, tag=False, width=None, height=None):
+               group_dim=None, signed=True, panel_size=2.3, style=NOTEBOOK, tag=False, width=None, height=None):
     """How many models: the response itself first (``above``, e.g. the multi-model median), then a row of counts each.
 
     With ``signed`` (the default) the counts are of a significant increase
@@ -788,15 +788,27 @@ def count_grid(counts, n_models, title, label, above=(), row_dim="direction", co
     ``majority_scale``. Either way the colour bar's labels are the counts
     themselves, and its hue changes where more than half the models agree.
 
+    With ``group_dim`` the rows of counts come in sets, one set per value of
+    that dim, e.g. every experiment with seasons across::
+
+        DJF  MAM  JJA  SON
+        [ ]  [ ]  [ ]  [ ]   hist-GHG increase
+        [ ]  [ ]  [ ]  [ ]   hist-GHG decrease
+        [ ]  [ ]  [ ]  [ ]   hist-aer increase
+        [ ]  [ ]  [ ]  [ ]   hist-aer decrease
+        ======== count ========
+
     Args:
-        counts (xr.DataArray): Model counts on (row_dim, col_dim, lat, lon), e.g.
-            ``significance.significant_counts`` output.
+        counts (xr.DataArray): Model counts on (row_dim, col_dim, lat, lon), or (group_dim, row_dim, col_dim,
+            lat, lon) with ``group_dim``, e.g. ``significance.significant_counts`` output.
         n_models (int): The most models there can be, the end of the colour bar.
         title (str): Figure title.
         label (str): Colour-bar label: what the counts count.
         above (Sequence[Row]): Rows drawn above the counts, each with its own colour bar.
         row_dim, col_dim (str): Dims mapped to the rows of counts and to the columns.
         row_labels (dict | None): Label for each row value, e.g. {"increase": "Significant increase"}.
+        group_dim (str | None): Dim the rows of counts are repeated for, e.g. "experiment", each row labelled
+            with its value then its row label; one set of rows if None.
         signed (bool): Increase and decrease rows on one diverging scale; False for counts with no sign.
         panel_size (float): Width and height of each panel, in inches.
         style (Style): ``NOTEBOOK`` or ``PAPER``.
@@ -814,8 +826,14 @@ def count_grid(counts, n_models, title, label, above=(), row_dim="direction", co
     else:
         drawn = counts
         scale = majority_scale(n_models, label)
-    count_rows = [Row(drawn.sel({row_dim: value}), scale, str((row_labels or {}).get(value, value)))
-                  for value in drawn[row_dim].values]
+    groups = [None] if group_dim is None else list(drawn[group_dim].values)
+    count_rows = []
+    for group in groups:
+        selection = {} if group is None else {group_dim: group}
+        for value in drawn[row_dim].values:
+            row_label = str((row_labels or {}).get(value, value))
+            label = row_label if group is None else f"{group}\n{row_label}"
+            count_rows.append(Row(drawn.sel({**selection, row_dim: value}), scale, label))
     return row_grid([*above, *count_rows], title, col_dim=col_dim, panel_size=panel_size, style=style, tag=tag,
                     width=width, height=height)
 

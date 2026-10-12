@@ -834,6 +834,62 @@ def rank_histogram_test(ensemble, obs, treatment="anomaly", pool_dims=(SAMPLE_DI
     return result
 
 
+def rank_histogram_summary(ensemble, obs, treatment="anomaly", n_bins=10, pool_dims=(SAMPLE_DIM,), alpha=ALPHA):
+    """``rank_histogram_test`` without the members: the histograms on ``n_bins`` bins, and the test's statistics.
+
+    Every ensemble's histograms come out on the same bins of scaled rank
+    (``regroup_ranks``), whatever its number of members, and the
+    pseudo-observations are reduced to their range, so the results of every
+    model stack into one Dataset, as the paper's figures need.
+
+    Args:
+        ensemble, obs (xr.DataArray): Output of ``align``.
+        treatment (str): One of ``TREATMENTS``.
+        n_bins (int): Bins of scaled rank.
+        pool_dims (Sequence[str]): Pooled into each histogram (("year",) gives one per season).
+        alpha (float): Two-sided significance level; the pseudo-observations' range is its central 1 - alpha.
+
+    Returns:
+        xr.Dataset:
+            obs_frequency                              (rank) ERA5's histogram, % in each bin
+            pseudo_lower, pseudo_median, pseudo_upper  (rank) the pseudo-observations' range and median
+            era5, lower, median, upper, percentile, pvalue, verdict, testable
+                                                       (statistic) the test of each of ``RANKS``
+    """
+    result = rank_histogram_test(ensemble, obs, treatment, pool_dims=pool_dims, alpha=alpha)
+    pseudo = regroup_ranks(result["pseudo_frequency"], n_bins)
+    bounds = nan_quantile(pseudo, [alpha / 2, 0.5, 1 - alpha / 2], MEMBER_DIM)
+    tests = result[[name for name in RESULT_VARIABLES if name != "members"]]
+    return tests.assign(
+        obs_frequency=regroup_ranks(result["obs_frequency"], n_bins),
+        pseudo_lower=bounds.isel(quantile=0, drop=True),
+        pseudo_median=bounds.isel(quantile=1, drop=True),
+        pseudo_upper=bounds.isel(quantile=2, drop=True),
+    ).drop_vars(["obs_rank", "pseudo_rank"], errors="ignore")
+
+
+def summary_of(ds, obs, test, variable="tas", years=None, **kwargs):
+    """One test of a tree node's ``variable`` against ``obs``, aligned first, without the members.
+
+    For ``datatree.reduce_to_dataset``: e.g.
+    ``partial(summary_of, obs=era5_da, test=rank_histogram_summary, treatment="anomaly")``
+    tests every node, and the member-free results stack into one Dataset.
+
+    Args:
+        ds (xr.Dataset): One node, with ``variable`` on (member, year, ...).
+        obs (xr.DataArray): ERA5 on (year, ...), the same other dims.
+        test (Callable): A test taking ``(ensemble, obs, **kwargs)``, e.g. ``statistic_test``.
+        variable (str): The variable tested.
+        years (slice | None): The years compared (see ``align``).
+        **kwargs: Passed to ``test``.
+
+    Returns:
+        xr.Dataset: The test's result, with any ``member`` dim dropped.
+    """
+    result = test(*align(ds[variable], obs, years=years), **kwargs)
+    return result.drop_dims(MEMBER_DIM, errors="ignore")
+
+
 def running_mean(frequency, window=5, rank_dim="rank"):
     """Centred running mean over the interior ranks, as drawn on Suarez-Gutierrez et al.'s histograms.
 

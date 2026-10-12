@@ -106,9 +106,12 @@ class Variable:
 #(c): and 10v, so neither has an ERA5 recipe in convert.py yet.
 #(c): siconc (sea-ice concentration, %) is not analysed itself: it gives the sea-ice edge (``sea_ice``). Its
 #(c): table, SImon, is a guess at where the interpolated files are; check it against the folders on JASMIN.
+#(c): sam is the Southern Annular Mode index, already standardised, from ``paths.SAM_RAW`` rather than the
+#(c): LESFMIP files (``sam.open_index``); it is the predictor of the SAM regression (notebook 03, section 11).
 VARIABLES = {
     "tas": Variable("tas", "Near-surface air temperature", "°C", offset=-273.15, era5_code="2t", era5_name="t2m"),
     "pr": Variable("pr", "Precipitation", "mm day⁻¹", scale=86400.0),
     "sfcWind": Variable("sfcWind", "Near-surface wind speed", "m s⁻¹"),
     "siconc": Variable("siconc", "Sea-ice concentration", "%", table="SImon"),
+    "sam": Variable("sam", "Southern Annular Mode index", "standard deviations"),
 }

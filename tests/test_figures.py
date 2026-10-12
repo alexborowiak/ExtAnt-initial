@@ -294,6 +294,11 @@ def test_forced_response_figures():
                            above=[fr.Row(change.median("model"), change_scale, "Median")])
     assert panels.axes.shape == (3, 2)
     assert len(panels.extras["cbars"]) == 2
+    #(c): An increase and a decrease row for each experiment, seasons across: four rows, one colour bar
+    panels = fr.count_grid(counts.expand_dims(season=["DJF", "JJA"]), 3, title="How many, every experiment",
+                           label="Models", group_dim="experiment", col_dim="season")
+    assert panels.axes.shape == (4, 2)
+    assert len(panels.extras["cbars"]) == 1
     thresholds = xr.DataArray([0.5, 1, 2], dims="threshold", coords={"threshold": [0.5, 1, 2]})
     panels = fr.count_grid((np.abs(change) > thresholds).sum("model"), 3, title="How many apart", label="Models",
                            row_dim="threshold", signed=False)
