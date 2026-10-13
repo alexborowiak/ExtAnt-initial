@@ -1,4 +1,4 @@
-"""Find the LESFMIP sea-ice concentration on CEDA and save a small sample of it, with ERA5's sea-ice cover.
+r"""Find the LESFMIP sea-ice concentration on CEDA and save a small sample of it, with ERA5's sea-ice cover.
 
 The sea ice is not in the LEADER-EPESC folders. It is in CEDA's copy of the CMIP6 archive, on each model's own
 ocean grid (siconc) or atmosphere grid (siconca), in three trees:

@@ -1,0 +1,9 @@
+variable,,siconc,siconc,siconc,siconc,siconc,siconc,siconca,siconca,siconca
+experiment,,hist-GHG,hist-aer,hist-nat,hist-stratO3,hist-totalO3,historical,hist-GHG,hist-aer,historical
+project,model,,,,,,,,,
+CMIP6,CanESM5,10.0,10.0,10.0,10.0,,35.0,,,
+CMIP6,GISS-E2-1-G,,,,,,,5.0,5.0,10.0
+CMIP6,HadGEM3-GC31-LL,55.0,55.0,60.0,,50.0,55.0,,,
+CMIP6,MIROC6,3.0,3.0,3.0,3.0,,50.0,,,
+CMIP6,MPI-ESM1-2-LR,,,,,,2.0,,,1.0
+CMIP6,NorESM2-LM,3.0,3.0,3.0,,,1.0,,,
