@@ -1,4 +1,4 @@
-"""The hist-nat bootstrap gives exactly the numbers of the original per-trial xarray code, and detects a widening."""
+"""The hist-nat bootstrap gives exactly the numbers of the per-trial xarray code, and detects a widening and a shift."""
 
 import numpy as np
 import pytest
@@ -25,56 +25,41 @@ def _slow_quantile_range(da, quantiles=(0.05, 0.95), dims=("member", "year")):
     return q.sel(quantile=quantiles[1], drop=True) - q.sel(quantile=quantiles[0], drop=True)
 
 
-def _slow_hist_nat_samples(hist_nat, n_sample, years, quantiles, n_trials, batch_size, seed):
-    """The original bootstrap: gather each batch of trials and take xarray quantiles."""
+def _slow_hist_nat_samples(hist_nat, n_sample, quantiles, n_trials, seed):
+    """The bootstrap the slow way: gather each trial's members and take xarray quantiles over all their years."""
     rng = np.random.default_rng(seed)
-    n_members, n_years = hist_nat.sizes["member"], hist_nat.sizes["year"]
-    half = years // 2
-    centres = np.arange(half, n_years - half)
-    sampled = np.tile(centres, n_trials // centres.size)
-    if n_trials % centres.size:
-        sampled = np.concatenate([sampled, rng.choice(centres, n_trials % centres.size, replace=False)])
-    rng.shuffle(sampled)
-    offsets = np.arange(-half, half + 1)
-    batches = []
-    for start in range(0, n_trials, batch_size):
-        n = min(batch_size, n_trials - start)
-        members = np.argpartition(rng.random((n, n_members)), n_sample - 1, axis=1)[:, :n_sample]
-        year_index = sampled[start:start + n][:, None] + offsets[None, :]
-        pool = hist_nat.isel(member=xr.DataArray(members, dims=("trial", "sample_member")),
-                             year=xr.DataArray(year_index, dims=("trial", "sample_year")))
-        batches.append(_slow_quantile_range(pool, quantiles, ("sample_member", "sample_year")).astype("float32"))
-    return xr.concat(batches, dim="trial").assign_coords(trial=np.arange(n_trials))
+    members = np.argpartition(rng.random((n_trials, hist_nat.sizes["member"])), n_sample - 1, axis=1)[:, :n_sample]
+    pool = hist_nat.isel(member=xr.DataArray(members, dims=("trial", "sample_member")))
+    return _slow_quantile_range(pool, quantiles, ("sample_member", "year")).astype("float32").assign_coords(
+        trial=np.arange(n_trials))
 
 
 @pytest.mark.parametrize("dask", [False, True])
 def test_bootstrap_qrange_equals_the_per_trial_code(dask):
-    hist_nat = _ensemble(14, n_years=40)
-    slow = _slow_hist_nat_samples(hist_nat, 8, 11, (0.05, 0.95), 170, 50, seed=4)
-    fast = sig.bootstrap_qrange(hist_nat.chunk({"lat": 1}) if dask else hist_nat, 8, years=11, n_trials=170, seed=4)
+    hist_nat = _ensemble(14, n_years=21)
+    slow = _slow_hist_nat_samples(hist_nat, 8, (0.05, 0.95), 170, seed=4)
+    fast = sig.bootstrap_qrange(hist_nat.chunk({"lat": 1}) if dask else hist_nat, 8, n_trials=170, seed=4)
     np.testing.assert_array_equal(fast.transpose(*slow.dims).values, slow.values)
 
 
 def test_bootstrap_qrange_on_a_dataset_is_the_same():
     """Mapped over a DataTree, the function is given Datasets."""
-    hist_nat = _ensemble(14, n_years=40)
-    from_array = sig.bootstrap_qrange(hist_nat, 8, years=11, n_trials=50)
-    from_dataset = sig.bootstrap_qrange(hist_nat.to_dataset(name="tas"), 8, years=11, n_trials=50)
+    hist_nat = _ensemble(14, n_years=21)
+    from_array = sig.bootstrap_qrange(hist_nat, 8, n_trials=50)
+    from_dataset = sig.bootstrap_qrange(hist_nat.to_dataset(name="tas"), 8, n_trials=50)
     np.testing.assert_array_equal(from_dataset.tas.values, from_array.values)
 
 
 def test_the_bootstrap_test_detects_a_wider_experiment():
-    """The width test as notebook 03 runs it: the change, the null from hist-nat alone, and the p-value."""
-    hist_nat = _ensemble(30, n_years=60)
-    hist_nat_qrange = quantile_range(hist_nat)
-    null = sig.bootstrap_qrange(hist_nat, 10, years=21, n_trials=300) - hist_nat_qrange
+    """The width test as notebook 03 runs it: the experiment's width against 10 hist-nat members over the same years."""
+    hist_nat = _ensemble(30, n_years=21)
+    trials = sig.bootstrap_qrange(hist_nat, 10, n_trials=300)
     for experiment, expected in ((_ensemble(30, n_years=21, scale=2.0), "wide"), (_ensemble(30, n_years=21), "same")):
-        change = quantile_range(experiment) - hist_nat_qrange
-        pvalue = sig.pvalue_two_sided(null, change)
+        pvalue = sig.pvalue_two_sided(trials, quantile_range(experiment))
         assert float(pvalue.min()) >= 1 / 301 and float(pvalue.max()) <= 1
         significant = float((pvalue < 0.05).mean())
         assert significant > 0.9 if expected == "wide" else significant < 0.3
-        # The all-NaN point has no change and no p-value
+        # The all-NaN point has no width and no p-value
         assert pvalue.isel(season=1, lat=1, lon=2).isnull().all()
 
 
@@ -87,71 +72,50 @@ def test_pvalue_is_nan_where_the_observed_value_is():
 
 def test_hist_nat_bootstrap_needs_enough_members():
     with pytest.raises(ValueError):
-        sig.bootstrap_qrange(_ensemble(8, n_years=40), 10, years=21)
+        sig.bootstrap_qrange(_ensemble(8, n_years=21), 10)
 
 
 def test_bootstrap_draws_are_the_trials_of_bootstrap_qrange():
     """Each trial rebuilt from bootstrap_draws (same seed) gives bootstrap_qrange's number, as the schematic checks."""
-    hist_nat = _ensemble(30, n_years=60).isel(season=0, lat=0, lon=0)
-    selected, window_starts = sig.bootstrap_draws(30, 60, years=21, n_trials=300, seed=4)
-    trials = sig.bootstrap_qrange(hist_nat, years=21, n_trials=300, seed=4)
+    hist_nat = _ensemble(30, n_years=21).isel(season=0, lat=0, lon=0)
+    selected = sig.bootstrap_draws(30, n_trials=300, seed=4)
+    trials = sig.bootstrap_qrange(hist_nat, n_trials=300, seed=4)
     values = hist_nat.values
     for trial in (0, 1, 150, 299):
-        start = window_starts[trial]
-        pooled = values[selected[trial], start:start + 21]
-        width = np.diff(np.nanquantile(pooled, [0.05, 0.95]))[0]
+        width = np.diff(np.nanquantile(values[selected[trial]], [0.05, 0.95]))[0]
         np.testing.assert_allclose(width, float(trials.sel(trial=trial)), atol=1e-5)
-    assert int(selected.sum(1).min()) == sig.N_BOOTSTRAP_MEMBERS
+    assert int(selected.sum(1).min()) == int(selected.sum(1).max()) == sig.N_BOOTSTRAP_MEMBERS
 
 
 @pytest.mark.parametrize("dask", [False, True])
-def test_bootstrap_mean_and_variance_are_those_of_each_trial(dask):
-    """Each trial rebuilt from bootstrap_draws (same seed) gives the same mean and variance, NaN skipped."""
-    hist_nat = _ensemble(30, n_years=60, shift=250.0)
-    selected, window_starts = sig.bootstrap_draws(30, 60, years=21, n_trials=200, seed=4)
+def test_bootstrap_mean_is_that_of_each_trial(dask):
+    """Each trial rebuilt from bootstrap_draws (same seed) gives the same mean, NaN skipped."""
+    hist_nat = _ensemble(30, n_years=21, shift=250.0)
+    selected = sig.bootstrap_draws(30, n_trials=200, seed=4)
     data = hist_nat.chunk({"lat": 1}) if dask else hist_nat
-    means = sig.bootstrap_mean(data, years=21, n_trials=200, seed=4)
-    variances = sig.bootstrap_variance(data, years=21, n_trials=200, seed=4)
+    means = sig.bootstrap_mean(data, n_trials=200, seed=4)
     values = hist_nat.transpose("member", "year", ...).values
     for trial in (0, 1, 100, 199):
-        start = window_starts[trial]
-        pooled = values[selected[trial], start:start + 21].reshape(-1, *values.shape[2:])
+        pooled = values[selected[trial]].reshape(-1, *values.shape[2:])
         np.testing.assert_allclose(means.sel(trial=trial).transpose("season", "lat", "lon"),
                                    np.nanmean(pooled, axis=0), rtol=1e-12)
-        np.testing.assert_allclose(variances.sel(trial=trial).transpose("season", "lat", "lon"),
-                                   np.nanvar(pooled, axis=0, ddof=1), rtol=1e-9)
 
 
 def test_bootstrap_mean_on_a_dataset_is_the_same():
-    hist_nat = _ensemble(14, n_years=40)
-    from_array = sig.bootstrap_variance(hist_nat, 8, years=11, n_trials=50)
-    from_dataset = sig.bootstrap_variance(hist_nat.to_dataset(name="tas"), 8, years=11, n_trials=50)
+    hist_nat = _ensemble(14, n_years=21)
+    from_array = sig.bootstrap_mean(hist_nat, 8, n_trials=50)
+    from_dataset = sig.bootstrap_mean(hist_nat.to_dataset(name="tas"), 8, n_trials=50)
     np.testing.assert_array_equal(from_dataset.tas.values, from_array.values)
 
 
-def test_welch_t_is_scipys():
-    from scipy.stats import ttest_ind
-    a, b = RNG.standard_normal(40) + 0.5, 2 * RNG.standard_normal(70)
-    t = sig.welch_t(a.mean(), a.var(ddof=1), a.size, b.mean(), b.var(ddof=1), b.size)
-    assert t == pytest.approx(ttest_ind(a, b, equal_var=False).statistic)
-
-
-def test_the_bootstrapped_t_test_finds_a_shift_and_not_a_bigger_ensemble():
-    """The mean test as notebook 03 runs it: t at the size of a trial, against the trials' t."""
-    hist_nat = _ensemble(30, n_years=60)
-    hist_nat_mean = hist_nat.mean(["member", "year"])
-    hist_nat_variance = hist_nat.var(["member", "year"], ddof=1)
-    hist_nat_count = hist_nat.count(["member", "year"])
-    trial_size = 10 * 21
-    null = sig.welch_t(sig.bootstrap_mean(hist_nat, 10, years=21, n_trials=300),
-                       sig.bootstrap_variance(hist_nat, 10, years=21, n_trials=300), trial_size,
-                       hist_nat_mean, hist_nat_variance, hist_nat_count)
-    #(c): 50 members, five times a trial's: at its own size its t would be about sqrt(5) times too big
-    for experiment, expected in ((_ensemble(50, n_years=21, shift=0.5), "shifted"), (_ensemble(50, n_years=21), "same")):
-        t = sig.welch_t(experiment.mean(["member", "year"]), experiment.var(["member", "year"], ddof=1), trial_size,
-                        hist_nat_mean, hist_nat_variance, hist_nat_count)
-        significant = float((sig.pvalue_two_sided(null, t) < 0.05).mean())
-        assert significant > 0.9 if expected == "shifted" else significant < 0.1
+def test_the_mean_test_finds_a_shift():
+    """The mean test as notebook 03 runs it: the experiment's mean against 10 hist-nat members over the same years."""
+    hist_nat = _ensemble(30, n_years=21)
+    trials = sig.bootstrap_mean(hist_nat, 10, n_trials=300)
+    for experiment, expected in ((_ensemble(30, n_years=21, shift=0.5), "shifted"), (_ensemble(30, n_years=21), "same")):
+        pvalue = sig.pvalue_two_sided(trials, experiment.mean(["member", "year"]))
+        significant = float((pvalue < 0.05).mean())
+        assert significant > 0.9 if expected == "shifted" else significant < 0.3
 
 
 def test_significant_counts_count_each_sign_and_skip_missing_models():

@@ -17,15 +17,14 @@ anomalies at different longitudes would cancel.
 
 The tests
 ---------
-mean    the bootstrapped t-test (``sig.bootstrap_mean``, ``sig.bootstrap_variance``,
-        ``sig.welch_t``) of each member's zonal-mean series: its final years
-        against hist-nat's whole record, against the zonal means of the width
-        test's trials. A mean is linear, so the change in the zonal mean is the
-        zonal mean of the change: the test is of exactly the plotted line.
-width   the zonal mean of the hist-nat bootstrap trials (``sig.bootstrap_qrange``).
-        Each trial draws the same members and years at every grid point, so the
-        trial's changes averaged over longitude are one draw of the zonal-mean
-        width change that natural variability gives on its own.
+mean    the zonal mean of the hist-nat bootstrap trials of the mean
+        (``sig.bootstrap_mean``): 10 hist-nat members over the same final years.
+        A mean is linear, so the change in the zonal mean is the zonal mean of
+        the change: the test is of exactly the plotted line.
+width   the zonal mean of the hist-nat bootstrap trials of the width
+        (``sig.bootstrap_qrange``). Each trial draws the same members at every
+        grid point, so the trial's changes averaged over longitude are one draw
+        of the zonal-mean change that natural variability gives on its own.
 
 The low and high extremes have no test of their own.
 """

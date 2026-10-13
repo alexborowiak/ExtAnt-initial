@@ -1,4 +1,4 @@
-"""The SAM steps: opening the index files, the regression, the phases and the synthetic index."""
+"""The SAM steps: opening the index files, the phases and the synthetic index."""
 
 import numpy as np
 import xarray as xr
@@ -23,23 +23,44 @@ def test_open_index(tmp_path):
     assert index["sam"].attrs["level"] == 850.0
 
 
-def test_regression_sums_recover_the_slope():
-    rng = np.random.default_rng(1)
-    index = xr.Dataset({"sam": (("member", "year"), rng.normal(size=(40, 30)))},
-                       coords={"member": [f"r{i}" for i in range(40)], "year": np.arange(30)})
-    temperature = xr.Dataset({"tas": 2.0 * index["sam"] + 0.1 * rng.normal(size=(40, 30))})
-    #(c): One member the index does not have, which is left out
-    temperature = xr.concat([temperature, temperature.isel(member=[0]).assign_coords(member=["extra"])], "member")
-    sums = sam.regression_sums(temperature, index)
-    np.testing.assert_allclose(float(sums["products"] / sums["squares"]), 2.0, atol=0.01)
+def test_phase_masks_cut_at_the_thresholds():
+    index = xr.Dataset({"sam": (("member", "year", "season"), [[[-2.0], [-1.0], [0.0], [1.0], [2.0], [np.nan]]])},
+                       coords={"member": ["r1"], "year": np.arange(6), "season": ["DJF"]})
+    thresholds = xr.Dataset({"sam": (("quantile", "season"), [[-1.0], [1.0]])},
+                            coords={"quantile": list(sam.TERCILES), "season": ["DJF"]})
+    masks = sam.phase_masks(index, thresholds)["in_phase"].sel(member="r1", season="DJF")
+    assert list(masks["phase"].values) == list(sam.PHASES)
+    #(c): The boundaries themselves are neutral; a season with no index is in no phase
+    np.testing.assert_array_equal(masks.sel(phase="negative"), [1, 0, 0, 0, 0, 0])
+    np.testing.assert_array_equal(masks.sel(phase="neutral"), [0, 1, 1, 1, 0, 0])
+    np.testing.assert_array_equal(masks.sel(phase="positive"), [0, 0, 0, 0, 1, 0])
 
 
-def test_by_phase():
-    index = xr.Dataset({"sam": (("member", "year"), [[1.0, -1.0, 2.0]])}, coords={"member": ["r1"], "year": [1, 2, 3]})
-    values = xr.DataArray([[10.0, 20.0, 30.0]], dims=("member", "year"), coords=index.coords)
-    split = sam.by_phase(values, index)
-    np.testing.assert_allclose(split.sel(phase="positive").values, [[10.0, np.nan, 30.0]])
-    np.testing.assert_allclose(split.sel(phase="negative").values, [[np.nan, 20.0, np.nan]])
+def test_by_phase_keeps_each_phase_s_seasons_and_the_years_both_have():
+    coords = {"member": ["r1"], "year": [1, 2, 3], "season": ["DJF"]}
+    index = xr.Dataset({"sam": (("member", "year", "season"), [[[1.0], [-1.0], [0.0]]])}, coords=coords)
+    thresholds = xr.Dataset({"sam": (("quantile", "season"), [[-0.5], [0.5]])},
+                            coords={"quantile": list(sam.TERCILES), "season": ["DJF"]})
+    masks = sam.phase_masks(index, thresholds)
+    #(c): Values over years 2 and 3 only, as the final years would be
+    values = xr.DataArray([[[20.0], [30.0]]], dims=("member", "year", "season"),
+                          coords={"member": ["r1"], "year": [2, 3], "season": ["DJF"]})
+    split = sam.by_phase(values, masks).sel(member="r1", season="DJF")
+    assert list(split["year"].values) == [2, 3]
+    np.testing.assert_array_equal(split.sel(phase="negative"), [20.0, np.nan])
+    np.testing.assert_array_equal(split.sel(phase="neutral"), [np.nan, 30.0])
+    assert split.sel(phase="positive").isnull().all()
+
+
+def test_hist_nat_terciles_put_a_third_in_each_phase():
+    from functools import partial
+    from extant import quantiles as qc
+    rng = np.random.default_rng(3)
+    index = xr.Dataset({"sam": (("member", "year", "season"), rng.normal(size=(30, 21, 4)))},
+                       coords={"member": np.arange(30), "year": np.arange(21), "season": ["DJF", "JJA", "MAM", "SON"]})
+    thresholds = partial(qc.pooled_quantiles, quantiles=sam.TERCILES)(index)
+    shares = sam.phase_masks(index, thresholds)["in_phase"].mean(["member", "year"])
+    np.testing.assert_allclose(shares, 1 / 3, atol=0.01)
 
 
 def test_synthetic_index_matches_the_tree():

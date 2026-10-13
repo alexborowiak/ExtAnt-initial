@@ -157,17 +157,20 @@ def test_method_figures():
 
     hist, nat = members(30, 2.0, 1.2), members(30)
     final, nat_final = hist.isel(year=slice(-21, None)), nat.isel(year=slice(-21, None))
-    selected, window_starts = sig.bootstrap_draws(30, years.size, n_trials=200)
-    null = sig.bootstrap_qrange(nat, n_trials=200) - qc.quantile_range(nat)
-    change = qc.quantile_range(final) - qc.quantile_range(nat)
-    methods.bootstrap_schematic(nat, final, null, selected, window_starts, change, sig.pvalue_two_sided(null, change),
-                                "historical")
-    nat_stats = (nat.mean(), nat.var(ddof=1), nat.count())
-    null_t = sig.welch_t(sig.bootstrap_mean(nat, n_trials=200), sig.bootstrap_variance(nat, n_trials=200), 210,
-                         *nat_stats)
-    t = sig.welch_t(final.mean(), final.var(ddof=1), 210, *nat_stats)
-    methods.bootstrap_t_schematic(nat, final, null_t, selected, window_starts, t, sig.pvalue_two_sided(null_t, t),
-                                  "historical")
+    selected = sig.bootstrap_draws(30, n_trials=200)
+    trial_widths = sig.bootstrap_qrange(nat_final, n_trials=200)
+    width = qc.quantile_range(final)
+    methods.bootstrap_schematic(nat_final, final, trial_widths, selected, width,
+                                sig.pvalue_two_sided(trial_widths, width), "historical")
+    trial_means = sig.bootstrap_mean(nat_final, n_trials=200)
+    mean = final.mean()
+    methods.bootstrap_mean_schematic(nat_final, final, trial_means, selected, mean,
+                                     sig.pvalue_two_sided(trial_means, mean), "historical")
+    index = xr.DataArray(rng.standard_normal((30, 21)), dims=("member", "year"))
+    phases = xr.concat([final.where(index < -0.4), final.where(abs(index) <= 0.4), final.where(index > 0.4)],
+                       dim=xr.Variable("phase", ["negative", "neutral", "positive"]))
+    methods.sam_phase_demo(index, index + 0.5, xr.DataArray([-0.4, 0.4], dims="quantile"), phases, phases + 1.0,
+                           "historical")
     weights =rc.permutation_weights(200, 30, 30, np.random.default_rng(0))
     permutations = weights @ np.concatenate([final.mean("year").values, nat_final.mean("year").values])
     methods.permutation_schematic(final, nat_final, permutations, weights > 0, float(final.mean() - nat_final.mean()),

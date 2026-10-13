@@ -29,7 +29,8 @@ def _members(n, shift=0.0, scale=1.0):
 @pytest.fixture(scope="module")
 def tree():
     nodes = {}
-    for model, n in (("A", 20), ("B", 12)):
+    #(c): The sizes of LESFMIP's hist-nat ensembles: at most 50, at least 20 (the bootstrap draws 10 of them)
+    for model, n in (("A", 50), ("B", 20)):
         nodes[f"{model}/hist-nat"] = xr.Dataset({"tas": _members(n)})
         nodes[f"{model}/historical"] = xr.Dataset({"tas": _members(n, shift=2.0, scale=1.5)})
         nodes[f"{model}/hist-GHG"] = xr.Dataset({"tas": _members(n)})
@@ -39,11 +40,11 @@ def tree():
 @pytest.fixture(scope="module")
 def width(tree):
     """The zonal width test as notebook 03 runs it: zonal means of the map change and of the bootstrap trials."""
-    hist_nat_tree = tree.match("*/hist-nat")
-    hist_nat_qrange = datatree.reduce_to_dataset(hist_nat_tree, qc.quantile_range).tas.sel(experiment="hist-nat", drop=True)
-    final_qrange = datatree.reduce_to_dataset(tree.isel(year=slice(-YEARS_TESTED, None)), qc.quantile_range).tas
+    final_tree = tree.isel(year=slice(-YEARS_TESTED, None))
+    final_qrange = datatree.reduce_to_dataset(final_tree, qc.quantile_range).tas
+    hist_nat_qrange = final_qrange.sel(experiment="hist-nat", drop=True)
     change = zonal.zonal_mean((final_qrange - hist_nat_qrange).drop_sel(experiment="hist-nat"))
-    trials = datatree.reduce_to_dataset(hist_nat_tree, partial(sig.bootstrap_qrange, years=YEARS_TESTED, n_trials=200))
+    trials = datatree.reduce_to_dataset(final_tree.match("*/hist-nat"), partial(sig.bootstrap_qrange, n_trials=200))
     null = zonal.zonal_mean(trials.tas.sel(experiment="hist-nat", drop=True) - hist_nat_qrange)
     bounds = null.quantile([0.025, 0.975], dim="trial")
     return xr.Dataset({

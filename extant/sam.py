@@ -1,30 +1,27 @@
-"""The Southern Annular Mode (SAM): its forced change, and how much of each forcing's temperature change goes with it.
+"""The Southern Annular Mode (SAM): which phase each season is in, so every result can be split by it.
 
 The index is not computed here. LEADER-EPESC working group 1 made a monthly
 SAM index for every LESFMIP member (``paths.SAM_RAW``, the files
 archive/draft_current_DAILY.ipynb opened): the zonal-mean index of Gong & Wang
 (1999), the difference between standardised zonal means at 40°S and 65°S, one
 file per member with ``SAM`` on (time_mm, level). Notebook 01 (section 6) turns
-it into seasonal means; notebook 03 (section 13) does the rest:
+it into seasonal means; notebook 03 (*The SAM phases*) cuts it into phases:
 
-    the forced change     each experiment's final-years ensemble-mean SAM minus hist-nat's (as for
-                          temperature, notebook 03 section 4)
-    the regression β(x)   temperature on the SAM, at every grid point, from internal variability alone:
-                          both as each member minus its own ensemble's mean, so the forced changes of
-                          both are gone and only how they vary together is left
-    the split             SAM-congruent change β(x) x ΔSAM, and the residual Δmean - β(x) x ΔSAM
-    by phase              the width of temperature in seasons with a positive and with a negative SAM
+    negative   the index below hist-nat's lower tercile
+    neutral    between hist-nat's two terciles
+    positive   above its upper tercile
 
-The split assumes the forced change of the SAM has the same temperature pattern
-as its internal variability. That is the standard assumption, but it is one.
-Ozone, the SAM and sea ice are linked, so the split does not fully separate them.
+hist-nat's terciles over the final years, per model and season, members and
+years pooled, and the same for every experiment of the model: hist-nat has a
+third of its seasons in each phase, and an experiment whose SAM has shifted
+has more in one. Each section of notebook 03 then has a *By SAM phase*
+subsection that redoes its result with the seasons of one phase alone.
 
 Sections
 --------
 1. Opening the index files
-2. The regression of temperature on the SAM
-3. Temperature in each SAM phase
-4. A synthetic index, so the steps run on the sample data
+2. The phases
+3. A synthetic index, so the steps run on the sample data
 """
 
 import re
@@ -84,60 +81,57 @@ def open_index(files, level=0):
 
 
 # ---------------------------------------------------------------------------
-# 2. The regression of temperature on the SAM
+# 2. The phases
 # ---------------------------------------------------------------------------
 
-@skip_empty
-def regression_sums(temperature, index, variable="tas", dims=("member", "year")):
-    """The two sums of a regression through the origin of temperature on the SAM index, over ``dims``.
+#(t): The three phases, from the lowest index to the highest
+PHASES = ("negative", "neutral", "positive")
 
-    Give it anomalies with a mean of zero (each member minus its ensemble's
-    mean): then the slope is Σ T'S' / Σ S'², and keeping the two sums apart
-    lets several experiments' be added before dividing. Only the members and
-    years both have are used, and only where both have data.
+#(t): Where hist-nat's index is cut into the phases: its terciles, so a third of its seasons fall in each
+TERCILES = (1 / 3, 2 / 3)
+
+
+@skip_empty
+def phase_masks(index, thresholds):
+    """Which phase each season is in: True in one of the three along ``phase``, by where its index falls.
+
+    negative: below the lower threshold; neutral: between the two, both
+    included; positive: above the upper one. A season with no index is in none.
 
     Args:
-        temperature (xr.Dataset): ``variable`` on (member, year, season, lat, lon).
         index (xr.Dataset): ``sam`` on (member, year, season).
-        variable (str): The temperature variable.
-        dims (Sequence[str]): Summed over.
+        thresholds (xr.Dataset): ``sam`` on (quantile, season): the lower and upper boundary, hist-nat's
+            ``TERCILES``.
 
     Returns:
-        xr.Dataset: ``products`` Σ T'S' and ``squares`` Σ S'², on the remaining dims.
+        xr.Dataset: ``in_phase`` on (phase, member, year, season), boolean.
     """
-    t, s = xr.align(temperature[variable], index["sam"], join="inner")
-    valid = t.notnull() & s.notnull()
-    return xr.Dataset({"products": (t * s).where(valid).sum(dims), "squares": (s ** 2).where(valid).sum(dims)})
-
-
-# ---------------------------------------------------------------------------
-# 3. Temperature in each SAM phase
-# ---------------------------------------------------------------------------
-
-#(t): The two phases: the index above zero, and below it
-PHASES = ("positive", "negative")
+    sam_index = index["sam"]
+    lower = thresholds["sam"].isel(quantile=0, drop=True)
+    upper = thresholds["sam"].isel(quantile=1, drop=True)
+    masks = [sam_index < lower, (sam_index >= lower) & (sam_index <= upper), sam_index > upper]
+    return xr.Dataset({"in_phase": xr.concat(masks, dim=xr.Variable("phase", list(PHASES)))})
 
 
 @skip_empty
-def by_phase(values, index):
-    """``values`` in the seasons with a positive SAM, and in those with a negative one, along a new ``phase`` dim.
+def by_phase(values, masks):
+    """``values`` in the seasons of each phase alone, along a new ``phase`` dim; NaN in every other season.
 
-    Every other season is NaN in each, so pooled statistics of each phase use
-    only its own seasons. Only the members and years both have are kept.
+    Only the members and years both have are kept, so the final years of
+    ``values`` take the masks of those years.
 
     Args:
         values (xr.Dataset | xr.DataArray): On (member, year, season, ...).
-        index (xr.Dataset): ``sam`` on (member, year, season).
+        masks (xr.Dataset): ``phase_masks`` output.
 
     Returns:
-        The type of ``values``, with ``phase`` first.
+        The type of ``values``, with ``phase`` added.
     """
-    values, sam = xr.align(values, index["sam"], join="inner")
-    return xr.concat([values.where(sam > 0), values.where(sam < 0)], dim=xr.Variable("phase", list(PHASES)))
+    return values.where(masks["in_phase"])
 
 
 # ---------------------------------------------------------------------------
-# 4. A synthetic index for the sample data
+# 3. A synthetic index for the sample data
 # ---------------------------------------------------------------------------
 
 #(t): The synthetic index's trend from 1970 (per decade) in each experiment: a stand-in for the summer trend of the

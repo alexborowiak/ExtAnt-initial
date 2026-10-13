@@ -80,3 +80,23 @@ def test_bootstrap_member_mean():
     #(c): The same seed and number of members draw the same members
     again = pr.bootstrap_member_mean(members * 2, n_trials=4000, seed=0)
     xr.testing.assert_allclose(again, 2 * trials)
+
+
+def test_member_beyond_pools_the_seasons_of_one_phase():
+    """Members with different numbers of seasons (one SAM phase): the pooled chance counts every season once."""
+    values = xr.DataArray([[3.0, 3.0, 1.0, np.nan], [3.0, np.nan, np.nan, np.nan]], dims=("member", "year"))
+    threshold = xr.DataArray([2.0, 2.0], dims="tail", coords={"tail": ["warm", "cold"]})
+    beyond = pr.member_beyond(values, threshold)
+    np.testing.assert_array_equal(beyond.sel(tail="warm"), [2, 1])
+    np.testing.assert_array_equal(beyond.sel(tail="cold"), [1, 0])
+    #(c): 3 of 4 seasons are warm, where the members' own shares (2/3 and 1) would average 5/6
+    chance = beyond.sum("member") / values.count(["member", "year"])
+    np.testing.assert_allclose(chance.sel(tail="warm"), 0.75)
+    #(c): Bootstrapped with one seed, each trial's chance is pooled the same way
+    trials = (pr.bootstrap_member_mean(beyond, n_trials=50, seed=0)
+              / pr.bootstrap_member_mean(values.count("year"), n_trials=50, seed=0))
+    weights = pr.resample_weights(2, 50, np.random.default_rng(0))
+    expected = (weights @ beyond.sel(tail="warm").values) / (weights @ values.count("year").values)
+    np.testing.assert_allclose(trials.sel(tail="warm"), expected)
+    #(c): A missing threshold stays missing
+    assert pr.member_beyond(values, threshold.where(threshold.tail == "warm")).sel(tail="cold").isnull().all()

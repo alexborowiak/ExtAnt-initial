@@ -63,9 +63,9 @@ def count_schematic(hist_nat, experiment_values, changes, pvalues, counts, point
     """How a "how many models" map is made: one test per model at one grid point, counted, then mapped.
 
     Left, one panel per model: hist-nat's values and the experiment's at the
-    point (members and years pooled; notebook 05 gives hist-nat's whole record
-    and the experiment's final years, as the bootstrapped t-test compares
-    them), their means, the change and its p-value, and the verdict. Right:
+    point (members and years pooled; notebook 05 gives both over the final
+    years, as the hist-nat bootstrap of the mean compares them), their means,
+    the change and its p-value, and the verdict. Right:
     the count map of the experiment, with the point starred: the number there
     is the number of red (or blue) verdicts on the left.
 

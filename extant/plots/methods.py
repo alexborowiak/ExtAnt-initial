@@ -3,17 +3,20 @@
 Two kinds:
 
 - schematics of the significance tests, step by step: ``bootstrap_schematic``
-  (the hist-nat bootstrap of the change in width), ``bootstrap_t_schematic``
-  (the bootstrapped t-test of the mean change, on the same draws) and
-  ``permutation_schematic`` (the member-block permutation test of the mean
-  change), and ``probability_ratio_schematic`` and ``shift_only_schematic``
-  (the probability ratio, and how much of it the shift of the mean gives).
-  Each is given the test's own pieces at one point, as notebook 03 makes
-  them, and rebuilds its example trials from the test's draws, so every
-  number on it is the test's own;
+  (the hist-nat bootstrap of the width), ``bootstrap_mean_schematic`` (the
+  same bootstrap of the mean, on the same draws) and ``permutation_schematic``
+  (the member-block permutation test of the mean change), and
+  ``probability_ratio_schematic`` and ``shift_only_schematic`` (the
+  probability ratio, and how much of it the shift of the mean gives). Each is
+  given the test's own pieces at one point, as notebook 03 makes them, and
+  rebuilds its example trials from the test's draws, so every number on it is
+  the test's own. A bootstrap trial is one sample, so each of its example
+  panels shows that sample alone; a permutation splits the members in two, so
+  each of its panels shows both groups;
 - quick looks that follow the data through the notebooks: monthly to seasonal
   means, the year x season split, a rolling quantile, the smoothing, the
-  change against hist-nat, the forced response, and signal and noise.
+  change against hist-nat, the forced response, signal and noise, and the SAM
+  phases.
 
 Every function is a figure function (``@plot("figure")``) returning ``core.Panels``,
 which unpacks as ``fig, axes``. The two schematics build their own GridSpec, as
@@ -88,28 +91,53 @@ def _range_bar(ax, low, high, height, color, lw=3):
     ax.plot([low, high], [height, height], color=color, lw=lw, solid_capstyle="butt")
 
 
+def _trial_samples(hist_nat_values, selected, n_trials):
+    """The example trials of panel b: (position, the values of that trial's members, pooled)."""
+    return [(position, _clean(hist_nat_values[selected[position]])) for position in _example_trials(n_trials)]
+
+
+def _trial_axes(ax, position, edges, top):
+    ax.text(0.04, 0.94, f"{position + 1:,}", transform=ax.transAxes, va="top", fontsize=8)
+    ax.set_xlim(edges[0], edges[-1])
+    ax.set_ylim(0, top * 1.12)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+
+def _bootstrap_distribution(ax, trials, observed, hist_nat_value, experiment, n_members, bins):
+    """Panel c: every trial's value, their central 95%, hist-nat's own value and the experiment's."""
+    exp_color, nat_color = _color(experiment), _color("hist-nat")
+    trials = _clean(trials)
+    low, high = np.quantile(trials, [0.025, 0.975])
+    ax.axvspan(low, high, color="0.9", zorder=0, label="central 95% of trials")
+    ax.hist(trials, bins=bins, density=True, color=nat_color, edgecolor=nat_color, alpha=0.65, lw=0.8,
+            label="hist-nat trials")
+    ax.axvline(hist_nat_value, color=REFERENCE_GREY, lw=1.5, label=f"hist-nat, all {n_members} members")
+    ax.axvline(observed, color=exp_color, lw=2.5, ls="--", label=f"{experiment}")
+    ax.set_ylabel("Density", fontsize=12)
+    ax.legend(frameon=False, fontsize=10)
+
+
 @plot("figure")
-def bootstrap_schematic(hist_nat, final, null, selected, window_starts, qrange_change, pvalue, experiment,
-                        quantiles=(0.05, 0.95), units="°C", bins=40, figsize=(11, 15)):
-    """The hist-nat bootstrap of the change in width (Q95 - Q05), step by step.
+def bootstrap_schematic(hist_nat, final, trials, selected, observed, pvalue, experiment, quantiles=(0.05, 0.95),
+                        units="°C", bins=40, figsize=(11, 15)):
+    """The hist-nat bootstrap of the width (Q95 - Q05), step by step.
 
-    a) the change being tested: the experiment's final years against hist-nat's
-       whole record, each with its Q05-Q95 range;
-    b) example trials: each pools N different hist-nat members over one random
-       window, and its change in width is what natural variability and N
-       members alone can give;
-    c) every trial's change, against which the observed change is judged.
+    a) the two ensembles over the same final years, each with its Q05-Q95 range;
+    b) example trials: each pools N different hist-nat members over those
+       years, one sample, and its width is what natural variability and N
+       members alone give;
+    c) every trial's width, against which the experiment's is judged.
 
-    Each trial in b is rebuilt from ``selected`` and ``window_starts`` and
-    checked against ``null``, so the draws must be the ones behind ``null``.
+    Each trial in b is rebuilt from ``selected`` and checked against
+    ``trials``, so the draws must be the ones behind ``trials``.
 
     Args:
-        hist_nat (xr.DataArray): hist-nat's whole record at one point, on (member, year).
+        hist_nat (xr.DataArray): hist-nat's final years at one point, on (member, year).
         final (xr.DataArray): The experiment's final years at the same point, on (member, year).
-        null (xr.DataArray): Each trial's change in width, on (trial,).
+        trials (xr.DataArray): Each trial's width, on (trial,).
         selected (np.ndarray): (trial, member) True for each trial's hist-nat members.
-        window_starts (np.ndarray): (trial,) the index along ``year`` where each trial's window starts.
-        qrange_change (float): The observed change in width.
+        observed (float): The experiment's width.
         pvalue (float): Its p-value.
         experiment (str): Name of the experiment tested.
         quantiles (tuple[float, float]): The width's lower and upper quantile.
@@ -122,112 +150,82 @@ def bootstrap_schematic(hist_nat, final, null, selected, window_starts, qrange_c
     """
     exp_color, nat_color = _color(experiment), _color("hist-nat")
     hist_nat_values = hist_nat.transpose("member", "year").values
-    year_values = hist_nat["year"].values
-    full = _clean(hist_nat_values)
-    final_values = _clean(final)
-    null_values = np.asarray(null, dtype=float)
-    n_members, years, n_trials = int(selected[0].sum()), final.sizes["year"], null_values.size
-    change, pvalue = float(qrange_change), float(pvalue)
+    nat_values, exp_values = _clean(hist_nat_values), _clean(final)
+    trial_values = np.asarray(trials, dtype=float)
+    n_members, years, n_trials = int(selected[0].sum()), hist_nat.sizes["year"], trial_values.size
+    observed, pvalue = float(observed), float(pvalue)
+    nat_width = _qrange(nat_values, quantiles)[0]
 
     fig, ax_a, ax_flow1, mini, ax_flow2, ax_c = _schematic_axes(figsize)
 
-    #(t): a) the experiment's final years against the whole hist-nat record, both centred on 0 to compare widths
-    full_c, final_c = full - full.mean(), final_values - final_values.mean()
-    edges = np.histogram_bin_edges(np.concatenate([full_c, final_c]), bins=30)
-    ax_a.hist(full_c, bins=edges, density=True, color=nat_color, edgecolor=nat_color, alpha=0.28, lw=1.4,
-              label=f"hist-nat, whole record ({hist_nat_values.shape[0]} members × {hist_nat_values.shape[1]} years)")
-    ax_a.hist(final_c, bins=edges, density=True, color=exp_color, edgecolor=exp_color, alpha=0.28, lw=1.4,
-              label=f"{experiment}, final {years} years ({final.sizes['member']} members)")
+    #(t): a) the two ensembles over the same years, each centred on its own mean so their widths compare
+    nat_c, exp_c = nat_values - nat_values.mean(), exp_values - exp_values.mean()
+    edges = np.histogram_bin_edges(np.concatenate([nat_c, exp_c]), bins=30)
+    ax_a.hist(nat_c, bins=edges, density=True, color=nat_color, edgecolor=nat_color, alpha=0.28, lw=1.4,
+              label=f"{_label('hist-nat')}, {hist_nat_values.shape[0]} members")
+    ax_a.hist(exp_c, bins=edges, density=True, color=exp_color, edgecolor=exp_color, alpha=0.28, lw=1.4,
+              label=f"{_label(experiment)}, {final.sizes['member']} members")
     top = ax_a.get_ylim()[1]
-    _range_bar(ax_a, *_qrange(full_c, quantiles)[1:], 0.07 * top, nat_color)
-    _range_bar(ax_a, *_qrange(final_c, quantiles)[1:], 0.13 * top, exp_color)
-    ax_a.set_title("a  The change in width to test", fontsize=15, pad=10)
+    _range_bar(ax_a, *_qrange(nat_c, quantiles)[1:], 0.07 * top, nat_color)
+    _range_bar(ax_a, *_qrange(exp_c, quantiles)[1:], 0.13 * top, exp_color)
+    ax_a.set_title(f"a  The final {years} years of each ensemble", fontsize=15, pad=10)
     ax_a.set_xlabel(f"Value minus its own mean ({units})", fontsize=12)
     ax_a.set_ylabel("Density", fontsize=12)
     ax_a.legend(frameon=False, fontsize=10)
-    ax_a.text(0.02, 0.95, rf"$\Delta_{{obs}}$ = {change:+.2f} {units}" "\n" "(bars: Q05 to Q95)",
-              transform=ax_a.transAxes, va="top", fontsize=11)
+    ax_a.text(0.02, 0.95, rf"$\Delta_{{obs}}$ = {observed:.2f} − {nat_width:.2f} = {observed - nat_width:+.2f} {units}"
+              "\n" "(bars: Q05 to Q95)", transform=ax_a.transAxes, va="top", fontsize=11)
 
-    _flow(ax_flow1, f"Draw {n_members} different hist-nat members and one random {years}-year window,\n"
-                    f"pool their {n_members * years} values (green) and compare their width with the whole record's (grey)")
+    _flow(ax_flow1, f"Draw {n_members} of the {hist_nat_values.shape[0]} hist-nat members, keep the same {years} years,\n"
+                    f"pool their {n_members * years} values and take Q95 − Q05")
 
-    #(t): b) example trials, with exactly the draws behind panel c
-    samples = []
-    for position in _example_trials(n_trials):
-        start = int(window_starts[position])
-        pooled = _clean(hist_nat_values[selected[position], start:start + years])
-        samples.append((position, start, pooled - pooled.mean()))
-    edges = np.histogram_bin_edges(np.concatenate([full_c, *[s for *_, s in samples]]), bins=16)
-    top = max(np.histogram(s, edges, density=True)[0].max() for *_, s in samples)
-    full_range = _qrange(full_c, quantiles)
-
-    for ax, (position, start, values) in zip(mini, samples):
-        ax.hist(full_c, bins=edges, density=True, histtype="step", color=REFERENCE_GREY, lw=1.0)
+    #(t): b) example trials, each its own sample alone, with exactly the draws behind panel c
+    samples = [(position, values - values.mean())
+               for position, values in _trial_samples(hist_nat_values, selected, n_trials)]
+    edges = np.histogram_bin_edges(np.concatenate([values for _, values in samples]), bins=16)
+    top = max(np.histogram(values, edges, density=True)[0].max() for _, values in samples)
+    for ax, (position, values) in zip(mini, samples):
         ax.hist(values, bins=edges, density=True, color=nat_color, edgecolor=nat_color, alpha=0.28, lw=0.8)
         width, low, high = _qrange(values, quantiles)
-        _range_bar(ax, *full_range[1:], 0.07 * top, REFERENCE_GREY, lw=2)
-        _range_bar(ax, low, high, 0.15 * top, nat_color, lw=2)
-        delta = width - full_range[0]
+        _range_bar(ax, low, high, 0.1 * top, nat_color, lw=2)
         #(c): The same number as the test's own trial (float32 there)
-        assert np.isclose(delta, null_values[position], atol=1e-3), "trial does not match the test"
-        ax.text(0.04, 0.94, f"{position + 1:,}", transform=ax.transAxes, va="top", fontsize=8)
-        ax.text(0.04, 0.80, f"{year_values[start]}–{year_values[start + years - 1]}", transform=ax.transAxes,
-                va="top", fontsize=7, color="0.35")
-        ax.text(0.96, 0.94, rf"$\Delta$={delta:+.2f}", transform=ax.transAxes, ha="right", va="top", fontsize=8)
-        ax.set_xlim(edges[0], edges[-1])
-        ax.set_ylim(0, top * 1.12)
-        ax.set_xticks([])
-        ax.set_yticks([])
+        assert np.isclose(width, trial_values[position], atol=1e-3), "trial does not match the test"
+        ax.text(0.96, 0.94, f"W={width:.2f}", transform=ax.transAxes, ha="right", va="top", fontsize=8)
+        _trial_axes(ax, position, edges, top)
     mini[0].set_title("b  Example trials", fontsize=15, loc="left", pad=10)
 
-    _flow(ax_flow2, f"Repeat {n_trials:,} times, one $\\Delta$ per trial: the changes natural variability\n"
-                    r"and sampling alone produce. Then where does the observed $\Delta$ fall among them?")
+    _flow(ax_flow2, f"Repeat {n_trials:,} times: the widths {n_members} hist-nat members give on their own.\n"
+                    f"Then where does {experiment}'s width fall among them?")
 
-    #(t): c) every trial's change, and the observed one
-    null_values = _clean(null_values)
-    low, high = np.quantile(null_values, [0.025, 0.975])
-    ax_c.axvspan(low, high, color="0.9", zorder=0, label="central 95% of trials")
-    ax_c.hist(null_values, bins=bins, density=True, color=nat_color, edgecolor=nat_color, alpha=0.65, lw=0.8,
-              label="hist-nat trials")
-    ax_c.axvline(change, color=exp_color, lw=2.5, ls="--", label=f"{experiment} (observed)")
+    #(t): c) every trial's width, and the experiment's
+    _bootstrap_distribution(ax_c, trial_values, observed, nat_width, experiment, hist_nat_values.shape[0], bins)
     ax_c.set_title(f"c  Bootstrap distribution\n$p$ = {pvalue:.3f}", fontsize=15, pad=8)
-    ax_c.set_xlabel(f"Change in Q95 − Q05 ({units})", fontsize=12)
-    ax_c.set_ylabel("Density", fontsize=12)
-    ax_c.legend(frameon=False, fontsize=10)
+    ax_c.set_xlabel(f"Q95 − Q05 ({units})", fontsize=12)
 
     for ax in (ax_a, ax_c):
         ax.tick_params(labelsize=11)
     return core.Panels(fig=fig, axes=np.array([ax_a, *mini, ax_c], dtype=object))
 
 
-def _welch_t(values, reference_mean, reference_variance, reference_count, size):
-    """Welch's t of ``values`` against the reference, with ``values`` counted as ``size`` values."""
-    return (values.mean() - reference_mean) / np.sqrt(values.var(ddof=1) / size + reference_variance / reference_count)
-
-
 @plot("figure")
-def bootstrap_t_schematic(hist_nat, final, null, selected, window_starts, t, pvalue, experiment, units="°C",
-                          bins=40, figsize=(11, 15)):
-    """The bootstrapped t-test of the mean change, step by step: the width test's draws, with t in place of the width.
+def bootstrap_mean_schematic(hist_nat, final, trials, selected, observed, pvalue, experiment, units="°C", bins=40,
+                             figsize=(11, 15)):
+    """The hist-nat bootstrap of the mean, step by step: the width test's draws, with the mean in place of the width.
 
-    a) the change being tested: the experiment's final years against hist-nat's
-       whole record, and its t, worked out at the size of one trial;
-    b) example trials: each pools N different hist-nat members over one random
-       window, and its t against the whole record is what natural variability
-       and N members alone can give;
-    c) every trial's t, against which the observed t is judged.
+    a) the two ensembles over the same final years, with their means;
+    b) example trials: each pools N different hist-nat members over those
+       years, one sample, and its mean is what natural variability and N
+       members alone give;
+    c) every trial's mean, against which the experiment's is judged.
 
-    Each trial in b is rebuilt from ``selected`` and ``window_starts`` and
-    checked against ``null``, so the draws must be the ones behind ``null``,
-    and every t must count a sample as one trial's N × years values.
+    Each trial in b is rebuilt from ``selected`` and checked against
+    ``trials``, so the draws must be the ones behind ``trials``.
 
     Args:
-        hist_nat (xr.DataArray): hist-nat's whole record at one point, on (member, year).
+        hist_nat (xr.DataArray): hist-nat's final years at one point, on (member, year).
         final (xr.DataArray): The experiment's final years at the same point, on (member, year).
-        null (xr.DataArray): Each trial's t, on (trial,).
+        trials (xr.DataArray): Each trial's mean, on (trial,).
         selected (np.ndarray): (trial, member) True for each trial's hist-nat members.
-        window_starts (np.ndarray): (trial,) the index along ``year`` where each trial's window starts.
-        t (float): The observed t.
+        observed (float): The experiment's mean.
         pvalue (float): Its p-value.
         experiment (str): Name of the experiment tested.
         units (str): Units of the variable.
@@ -239,76 +237,51 @@ def bootstrap_t_schematic(hist_nat, final, null, selected, window_starts, t, pva
     """
     exp_color, nat_color = _color(experiment), _color("hist-nat")
     hist_nat_values = hist_nat.transpose("member", "year").values
-    year_values = hist_nat["year"].values
-    full = _clean(hist_nat_values)
-    final_values = _clean(final)
-    null_values = np.asarray(null, dtype=float)
-    n_members, years, n_trials = int(selected[0].sum()), final.sizes["year"], null_values.size
-    trial_size = n_members * years
-    full_mean, full_variance = full.mean(), full.var(ddof=1)
-    t, pvalue = float(t), float(pvalue)
+    nat_values, exp_values = _clean(hist_nat_values), _clean(final)
+    trial_values = np.asarray(trials, dtype=float)
+    n_members, years, n_trials = int(selected[0].sum()), hist_nat.sizes["year"], trial_values.size
+    observed, pvalue = float(observed), float(pvalue)
+    nat_mean = nat_values.mean()
 
     fig, ax_a, ax_flow1, mini, ax_flow2, ax_c = _schematic_axes(figsize)
 
-    #(t): a) the experiment's final years against the whole hist-nat record, with their means
-    edges = np.histogram_bin_edges(np.concatenate([full, final_values]), bins=30)
-    ax_a.hist(full, bins=edges, density=True, color=nat_color, edgecolor=nat_color, alpha=0.28, lw=1.4,
-              label=f"hist-nat, whole record ({hist_nat_values.shape[0]} members × {hist_nat_values.shape[1]} years)")
-    ax_a.hist(final_values, bins=edges, density=True, color=exp_color, edgecolor=exp_color, alpha=0.28, lw=1.4,
-              label=f"{experiment}, final {years} years ({final.sizes['member']} members)")
-    ax_a.axvline(full_mean, color=nat_color, lw=2)
-    ax_a.axvline(final_values.mean(), color=exp_color, lw=2)
-    ax_a.set_title("a  The change in the mean to test", fontsize=15, pad=10)
+    #(t): a) the two ensembles over the same years, with their means
+    edges = np.histogram_bin_edges(np.concatenate([nat_values, exp_values]), bins=30)
+    ax_a.hist(nat_values, bins=edges, density=True, color=nat_color, edgecolor=nat_color, alpha=0.28, lw=1.4,
+              label=f"{_label('hist-nat')}, {hist_nat_values.shape[0]} members")
+    ax_a.hist(exp_values, bins=edges, density=True, color=exp_color, edgecolor=exp_color, alpha=0.28, lw=1.4,
+              label=f"{_label(experiment)}, {final.sizes['member']} members")
+    ax_a.axvline(nat_mean, color=nat_color, lw=2)
+    ax_a.axvline(observed, color=exp_color, lw=2)
+    ax_a.set_title(f"a  The final {years} years of each ensemble", fontsize=15, pad=10)
     ax_a.set_xlabel(units, fontsize=12)
     ax_a.set_ylabel("Density", fontsize=12)
     ax_a.legend(frameon=False, fontsize=10)
-    ax_a.text(0.02, 0.95, rf"$\Delta_{{obs}}$ = {final_values.mean() - full_mean:+.2f} {units}" "\n"
-              rf"$t_{{obs}}$ = {t:+.2f} (at $n$ = {trial_size}, one trial's size)" "\n" "(lines: the means)",
+    ax_a.text(0.02, 0.95, rf"$\Delta_{{obs}}$ = {observed - nat_mean:+.2f} {units}" "\n" "(lines: the means)",
               transform=ax_a.transAxes, va="top", fontsize=11)
 
-    _flow(ax_flow1, f"Draw {n_members} different hist-nat members and one random {years}-year window,\n"
-                    f"pool their {trial_size} values (green) and work out their t against the whole record (grey)")
+    _flow(ax_flow1, f"Draw {n_members} of the {hist_nat_values.shape[0]} hist-nat members, keep the same {years} years,\n"
+                    f"pool their {n_members * years} values and take their mean")
 
-    #(t): b) example trials, with exactly the draws behind panel c
-    samples = []
-    for position in _example_trials(n_trials):
-        start = int(window_starts[position])
-        samples.append((position, start, _clean(hist_nat_values[selected[position], start:start + years])))
-    edges = np.histogram_bin_edges(np.concatenate([full, *[s for *_, s in samples]]), bins=16)
-    top = max(np.histogram(s, edges, density=True)[0].max() for *_, s in samples)
-
-    for ax, (position, start, values) in zip(mini, samples):
-        ax.hist(full, bins=edges, density=True, histtype="step", color=REFERENCE_GREY, lw=1.0)
+    #(t): b) example trials, each its own sample alone, with exactly the draws behind panel c
+    samples = _trial_samples(hist_nat_values, selected, n_trials)
+    edges = np.histogram_bin_edges(np.concatenate([values for _, values in samples]), bins=16)
+    top = max(np.histogram(values, edges, density=True)[0].max() for _, values in samples)
+    for ax, (position, values) in zip(mini, samples):
         ax.hist(values, bins=edges, density=True, color=nat_color, edgecolor=nat_color, alpha=0.28, lw=0.8)
-        ax.axvline(full_mean, color=REFERENCE_GREY, lw=1.5)
         ax.axvline(values.mean(), color=nat_color, lw=1.5)
-        trial_t = _welch_t(values, full_mean, full_variance, full.size, trial_size)
-        #(c): The same number as the test's own trial (whose hist-nat mean and variance may be float32)
-        assert np.isclose(trial_t, null_values[position], rtol=1e-3, atol=1e-3), "trial does not match the test"
-        ax.text(0.04, 0.94, f"{position + 1:,}", transform=ax.transAxes, va="top", fontsize=8)
-        ax.text(0.04, 0.80, f"{year_values[start]}–{year_values[start + years - 1]}", transform=ax.transAxes,
-                va="top", fontsize=7, color="0.35")
-        ax.text(0.96, 0.94, f"$t$={trial_t:+.2f}", transform=ax.transAxes, ha="right", va="top", fontsize=8)
-        ax.set_xlim(edges[0], edges[-1])
-        ax.set_ylim(0, top * 1.12)
-        ax.set_xticks([])
-        ax.set_yticks([])
+        assert np.isclose(values.mean(), trial_values[position], rtol=1e-6, atol=1e-6), "trial does not match the test"
+        ax.text(0.96, 0.94, f"mean={values.mean():.2f}", transform=ax.transAxes, ha="right", va="top", fontsize=8)
+        _trial_axes(ax, position, edges, top)
     mini[0].set_title("b  Example trials", fontsize=15, loc="left", pad=10)
 
-    _flow(ax_flow2, f"Repeat {n_trials:,} times, one $t$ per trial: the t natural variability\n"
-                    r"and sampling alone produce. Then where does the observed $t$ fall among them?")
+    _flow(ax_flow2, f"Repeat {n_trials:,} times: the means {n_members} hist-nat members give on their own.\n"
+                    f"Then where does {experiment}'s mean fall among them?")
 
-    #(t): c) every trial's t, and the observed one
-    null_values = _clean(null_values)
-    low, high = np.quantile(null_values, [0.025, 0.975])
-    ax_c.axvspan(low, high, color="0.9", zorder=0, label="central 95% of trials")
-    ax_c.hist(null_values, bins=bins, density=True, color=nat_color, edgecolor=nat_color, alpha=0.65, lw=0.8,
-              label="hist-nat trials")
-    ax_c.axvline(t, color=exp_color, lw=2.5, ls="--", label=f"{experiment} (observed)")
+    #(t): c) every trial's mean, and the experiment's
+    _bootstrap_distribution(ax_c, trial_values, observed, nat_mean, experiment, hist_nat_values.shape[0], bins)
     ax_c.set_title(f"c  Bootstrap distribution\n$p$ = {pvalue:.3f}", fontsize=15, pad=8)
-    ax_c.set_xlabel(f"t against hist-nat's whole record (n = {trial_size})", fontsize=12)
-    ax_c.set_ylabel("Density", fontsize=12)
-    ax_c.legend(frameon=False, fontsize=10)
+    ax_c.set_xlabel(f"Mean ({units})", fontsize=12)
 
     for ax in (ax_a, ax_c):
         ax.tick_params(labelsize=11)
@@ -957,3 +930,76 @@ def member_count_heatmap(counts, title="Ensemble members"):
     panels.fig.colorbar(image, ax=ax, label="Members", fraction=0.08, pad=0.04)
     ax.set_title(title)
     return panels
+
+
+#(t): Colours of the three SAM phases
+PHASE_COLORS = {"negative": "#2166ac", "neutral": "0.45", "positive": "#b2182b"}
+
+
+@plot("figure")
+def sam_phase_demo(hist_nat_index, experiment_index, thresholds, hist_nat_values, experiment_values, experiment,
+                   units="°C", bins=20):
+    """The SAM phases at one point and season: how the seasons are sorted, and temperature in each phase.
+
+    a) the SAM index of both ensembles over the final years, hist-nat's two
+       terciles (dashed) and the share of each ensemble's seasons in each
+       phase; b-d) temperature in the seasons of one phase, both ensembles,
+       with their means and the change between them.
+
+    Args:
+        hist_nat_index, experiment_index (xr.DataArray): The index over the final years, on (member, year).
+        thresholds (xr.DataArray): hist-nat's terciles, on (quantile,).
+        hist_nat_values, experiment_values (xr.DataArray): Temperature over the same years and season, on
+            (phase, member, year): ``sam.by_phase`` output.
+        experiment (str): The experiment.
+        units (str): Units of the variable.
+        bins (int): Histogram bins.
+
+    Returns:
+        core.Panels: ``axes`` holds a, then one panel per phase.
+    """
+    phases = list(hist_nat_values["phase"].values)
+    exp_color, nat_color = _color(experiment), _color("hist-nat")
+    lower, upper = (float(value) for value in thresholds.values)
+    fig = plt.figure(figsize=(12, 7.5))
+    outer = GridSpec(2, len(phases), figure=fig, hspace=0.5, wspace=0.25)
+    ax_a = fig.add_subplot(outer[0, :])
+    phase_axes = [fig.add_subplot(outer[1, k]) for k in range(len(phases))]
+
+    #(t): a) the index, the terciles, and the share of each ensemble's seasons in each phase
+    nat_index, exp_index = _clean(hist_nat_index), _clean(experiment_index)
+    edges = np.histogram_bin_edges(np.concatenate([nat_index, exp_index]), bins=30)
+    for values, name in ((nat_index, "hist-nat"), (exp_index, experiment)):
+        ax_a.hist(values, bins=edges, density=True, color=_color(name), edgecolor=_color(name), alpha=0.28, lw=1.4,
+                  label=_label(name))
+    for value in (lower, upper):
+        ax_a.axvline(value, color="k", lw=1.2, ls="--")
+    shares = []
+    for name, values in (("hist-nat", nat_index), (experiment, exp_index)):
+        in_phase = [np.mean(values < lower), np.mean((values >= lower) & (values <= upper)), np.mean(values > upper)]
+        shares.append(f"{name}: " + ", ".join(f"{phase} {100 * share:.0f}%" for phase, share in zip(phases, in_phase)))
+    ax_a.text(0.02, 0.95, "\n".join(shares), transform=ax_a.transAxes, va="top", fontsize=10)
+    ax_a.set_title("a  The SAM index over the final years, cut at hist-nat's terciles (dashed)", fontsize=13,
+                   loc="left")
+    ax_a.set_xlabel("SAM index", fontsize=11)
+    ax_a.set_ylabel("Density", fontsize=11)
+    ax_a.legend(frameon=False, fontsize=10, loc="upper right")
+    core.style_ax(ax_a)
+
+    #(t): b-d) temperature in each phase's seasons
+    edges = np.histogram_bin_edges(np.concatenate([_clean(hist_nat_values), _clean(experiment_values)]), bins=bins)
+    for letter, ax, phase in zip("bcd", phase_axes, phases):
+        nat, exp = _clean(hist_nat_values.sel(phase=phase)), _clean(experiment_values.sel(phase=phase))
+        for values, color in ((nat, nat_color), (exp, exp_color)):
+            if values.size:
+                ax.hist(values, bins=edges, density=True, color=color, edgecolor=color, alpha=0.28, lw=1.2)
+                ax.axvline(values.mean(), color=color, lw=2)
+        change = exp.mean() - nat.mean() if nat.size and exp.size else np.nan
+        ax.text(0.03, 0.95, f"Δ = {change:+.2f} {units}\nseasons: {nat.size} and {exp.size}",
+                transform=ax.transAxes, va="top", fontsize=9)
+        ax.set_title(f"{letter}  {phase.capitalize()} SAM", fontsize=13, loc="left", color=PHASE_COLORS.get(phase, "k"))
+        ax.set_xlabel(units, fontsize=11)
+        ax.set_yticks([])
+        core.style_ax(ax)
+    phase_axes[0].set_ylabel("Density", fontsize=11)
+    return core.Panels(fig=fig, axes=np.array([ax_a, *phase_axes], dtype=object))

@@ -34,10 +34,10 @@ What is in `extant/`:
 | `loading` | opening the monthly stores, the seasonal means and the sample |
 | `preprocessing` | monthly to seasonal means, and ERA5 onto the model grid |
 | `quantiles` | rolling quantiles and LOWESS (numba) |
-| `significance` | the hist-nat bootstrap (of the width, and of the mean for the bootstrapped t-test), Welch t-test, multi-model agreement |
+| `significance` | the hist-nat bootstrap (10 hist-nat members over the same final years) of the width and of the mean, Welch t-test, multi-model agreement |
 | `response_change` | mean, width and tail changes, the member-block permutation test, additivity |
 | `probability_ratio` | how much more often a season beyond hist-nat's percentiles (warm or cold), the shift-only ratio, and the bootstrap of members |
-| `sam` | the SAM index files, the regression of temperature on the SAM, the SAM phases, and a synthetic index for the sample |
+| `sam` | the SAM index files, the SAM phases (hist-nat's terciles) every result is split by, and a synthetic index for the sample |
 | `fingerprinting` | optimal fingerprinting: the vectors, fingerprints, noise covariance (Ledoit-Wolf), OLS and TLS fits, Monte Carlo ranges and the residual test |
 | `zonal` | zonal means of the change (mean, low and high extremes, width) and tests of them |
 | `sea_ice` | sea-ice extent and the equivalent latitude of the ice edge |
@@ -67,7 +67,7 @@ Off JASMIN both are `output/` in this repository.
 
 **Following a notebook.** Names end in their type: `_tree` (DataTree), `_ds` (Dataset), `_da` (DataArray), `_arr` (numpy array), `_df` (DataFrame). Each step prints what it made, and each method figure has a *quick look* before it: the arrays it is given, printed and drawn plainly with xarray's `.plot`, with all the code in the notebook. Every file opened or saved through `extant` is logged with its full path, and a store that cannot be found raises an error naming both places it looked and what each folder holds instead.
 
-**The SAM index.** Notebook 03's SAM section uses LEADER-EPESC working group 1's monthly SAM index of every member (`paths.SAM_RAW`, the files `archive/draft_current_DAILY.ipynb` opened), not one made here from sea-level pressure. Notebook 01, section 6 turns it into seasonal means; it shows the levels in a file so that `SAM_LEVEL` can be set to the right one (the draft took position 3, a later version of its reader position 0). The sample has no SAM index, so its section uses a made-up one (`sam.synthetic_index`) that only lets the code run.
+**The SAM index.** Notebook 03's SAM phases use LEADER-EPESC working group 1's monthly SAM index of every member (`paths.SAM_RAW`, the files `archive/draft_current_DAILY.ipynb` opened), not one made here from sea-level pressure. Notebook 01, section 6 turns it into seasonal means; it shows the levels in a file so that `SAM_LEVEL` can be set to the right one (the draft took position 3, a later version of its reader position 0). The sample has no SAM index, so it uses a made-up one (`sam.synthetic_index`) that only lets the code run.
 
 **Another variable.** Set `VARIABLE` at the top of each notebook. The variable needs an entry in `config.VARIABLES`, which says how to convert its units; `pr` and `sfcWind` are there but have not been run yet. Two things are not done for them yet. There is no ERA5 recipe: precipitation is a forecast accumulation, and wind speed has to be built from its u and v components. And some figure labels in `extant/plots` still talk about warming and cold or warm tails.
 
@@ -87,6 +87,7 @@ The second runs every notebook on the sample data, skipping the JASMIN-only sect
 ## Notes
 
 - Seasons are DJF/MAM/JJA/SON, and DJF is labelled by the year of its December. Every experiment is cut at the end of 2014, so the record ends with DJF 2013 and "the final 21 years" are 1993–2013 in every experiment.
-- The width test (03, section 2) is a bootstrap from hist-nat alone, with 10 members, so one null distribution serves every experiment of a model.
+- The width and mean tests (03, sections 2 and 4) compare an experiment's final 21 years with 10 random hist-nat members over the same years (a bootstrap from hist-nat alone), so one null distribution serves every experiment of a model.
+- Every section of 03 that has a *By SAM phase* subsection (the mean, the width and tails, the probability ratios) redoes its result in the seasons of each SAM phase: negative, neutral and positive, cut at hist-nat's terciles.
 - The zonal-mean figures (notebook 04, section 7) follow the layout of Bracegirdle et al. (2024), [doi:10.1038/s41612-024-00822-y](https://doi.org/10.1038/s41612-024-00822-y), Figs 1–3, 6 and 8, but show every model on its own and this project's changes against hist-nat.
 - ERA5 evaluation follows Suarez-Gutierrez, Milinski and Maher (2021), *Clim. Dyn.* 57, 2557–2580, [doi:10.1007/s00382-021-05821-w](https://doi.org/10.1007/s00382-021-05821-w).

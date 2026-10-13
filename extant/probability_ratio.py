@@ -24,6 +24,13 @@ each ensemble (``bootstrap_member_mean``). The thresholds stay fixed: each
 trial asks how often the resampled members go beyond the same levels, so the
 spread is how well the two ensembles pin down the chance of one defined event.
 
+By SAM phase (notebook 03, sections 10 and 11), the events and thresholds are
+the same, and the chance is of a season beyond them among the seasons of one
+phase. Members then have different numbers of seasons, so the chance is pooled:
+every member's count of seasons beyond the threshold (``member_beyond``) over
+their count of seasons. Bootstrapping both counts with the same seed draws the
+same members for both, so each trial's chance is pooled too.
+
 Sections
 --------
 1. The levels and the thresholds
@@ -107,6 +114,27 @@ def member_exceedance(values, threshold, dim="year"):
     beyond = (TAIL_SIGNS * (values - threshold)) > 0
     #(c): A comparison with NaN is False, which would count as "not beyond"; keep missing data missing instead
     return beyond.where(values.notnull() & threshold.notnull()).mean(dim)
+
+
+@skip_empty
+def member_beyond(values, threshold, dim="year"):
+    """How many of each member's years are beyond the threshold: above it for the warm tail, below it for the cold.
+
+    For the seasons of one SAM phase, whose number differs from member to
+    member: the chance is then ``member_beyond(...).sum('member')`` over
+    ``values.count(['member', 'year'])``, every season counted once.
+
+    Args:
+        values (xr.Dataset | xr.DataArray): Seasonal means on (member, year, ...), NaN in the seasons left out.
+        threshold (the same type): On (tail, chance, ...), from ``thresholds`` (or moved by a change).
+        dim (str): The years.
+
+    Returns:
+        The same type, on (member, tail, chance, ...): a count, NaN where the threshold has no data.
+    """
+    beyond = (TAIL_SIGNS * (values - threshold)) > 0
+    #(c): A season left out (NaN) compares False, so it is not counted; a missing threshold stays missing
+    return beyond.sum(dim).where(threshold.notnull())
 
 
 # ---------------------------------------------------------------------------

@@ -2,11 +2,12 @@
 
 All resampling works on whole members, so each member's time series stays intact.
 
-The width test's null is a bootstrap of hist-nat alone (``bootstrap_qrange``):
-its Q-range kernels run in numba, compiled (like those in ``quantiles``) parallel
-over grid points for data in memory and serial for dask blocks. The bootstrapped
-t-test of the mean uses the same trials (``bootstrap_mean``, ``bootstrap_variance``
-and ``welch_t``).
+The width test and the mean test (notebook 03, sections 2 and 4) compare an
+experiment's final years with hist-nat's over the same years. Their null is a
+bootstrap of hist-nat alone: each trial is 10 different hist-nat members, all
+the years given pooled (``bootstrap_draws``). ``bootstrap_qrange`` gives each
+trial's width (numba kernels, parallel over grid points for data in memory and
+serial for dask blocks), ``bootstrap_mean`` its mean, from the same draws.
 """
 
 import numpy as np
@@ -14,7 +15,6 @@ import scipy.special
 import xarray as xr
 from numba import njit, prange
 
-from .config import WINDOW
 from .quantiles import numpy_lerp
 from .datatree import skip_empty
 from .stats import nan_quantile
@@ -153,42 +153,38 @@ def _group_qrange(values, members, n_valid, in_group, n_group, q_low, q_high):
             - _group_quantile(values, members, n_valid, in_group, n_group, q_low, False))
 
 
-def _window_qrange(data, selected, starts, length, trials, first, q_low, q_high, out):
-    """``out[s, t]``: the Q-range of trial t's selected members over its window of years.
+def _trial_qrange(data, selected, q_low, q_high, out):
+    """``out[s, t]``: the Q-range of trial t's members, all their years pooled, at point s.
 
-    Trials are grouped by window, so each point's window is sorted once for all
-    the trials that use it: trials ``trials[first[w]:first[w + 1]]`` use the
-    years ``starts[w]:starts[w] + length``.
+    Each point's values are sorted once, for every trial.
 
     Args:
         data (np.ndarray): (point, member, year).
         selected (np.ndarray): (trial, member) True for the members each trial samples.
     """
-    n_points, n_members, _ = data.shape
+    n_points, n_members, n_years = data.shape
     for s in prange(n_points):
-        values = np.empty(n_members * length)
-        members = np.empty(n_members * length, dtype=np.int64)
+        values = np.empty(n_members * n_years)
+        members = np.empty(n_members * n_years, dtype=np.int64)
         counts = np.empty(n_members, dtype=np.int64)
-        for w in range(starts.size):
-            n_valid = _sorted_pool(data[s, :, starts[w]:starts[w] + length], values, members, counts)
-            for i in range(first[w], first[w + 1]):
-                t = trials[i]
-                n_group = 0
-                for m in range(n_members):
-                    if selected[t, m]:
-                        n_group += counts[m]
-                out[s, t] = _group_qrange(values, members, n_valid, selected[t], n_group, q_low, q_high)
+        n_valid = _sorted_pool(data[s], values, members, counts)
+        for t in range(selected.shape[0]):
+            n_group = 0
+            for m in range(n_members):
+                if selected[t, m]:
+                    n_group += counts[m]
+            out[s, t] = _group_qrange(values, members, n_valid, selected[t], n_group, q_low, q_high)
 
 
-_window_qrange_serial = njit(nogil=True)(_window_qrange)
-_window_qrange_parallel = njit(parallel=True)(_window_qrange)
+_trial_qrange_serial = njit(nogil=True)(_trial_qrange)
+_trial_qrange_parallel = njit(parallel=True)(_trial_qrange)
 
 
-def _window_block(data, selected, starts, length, trials, first, q_low, q_high, parallel):
+def _qrange_block(data, selected, q_low, q_high, parallel):
     points = np.ascontiguousarray(data.reshape(-1, *data.shape[-2:]))
     out = np.empty((points.shape[0], selected.shape[0]), dtype=np.float32)
-    kernel = _window_qrange_parallel if parallel else _window_qrange_serial
-    kernel(points, selected, starts, length, trials, first, q_low, q_high, out)
+    kernel = _trial_qrange_parallel if parallel else _trial_qrange_serial
+    kernel(points, selected, q_low, q_high, out)
     return out.reshape(*data.shape[:-2], selected.shape[0])
 
 
@@ -196,74 +192,44 @@ def _window_block(data, selected, starts, length, trials, first, q_low, q_high, 
 N_BOOTSTRAP_MEMBERS = 10
 
 
-def bootstrap_draws(n_hist_nat_members, n_hist_nat_years, n_members=N_BOOTSTRAP_MEMBERS, years=WINDOW,
-                    n_trials=10_000, seed=0):
-    """Which hist-nat members and which window of years each bootstrap trial uses.
-
-    Each trial takes ``n_members`` different members and one ``years``-long
-    window. Every complete window is used about equally often: the windows
-    are cycled through in a random order, and the remainder drawn at random.
+def bootstrap_draws(n_hist_nat_members, n_members=N_BOOTSTRAP_MEMBERS, n_trials=10_000, seed=0):
+    """Which hist-nat members each bootstrap trial uses: ``n_members`` different ones, at random.
 
     Args:
-        n_hist_nat_members, n_hist_nat_years (int): Size of the hist-nat ensemble.
+        n_hist_nat_members (int): Members in the hist-nat ensemble.
         n_members (int): Members per trial.
-        years (int): Window length (odd).
         n_trials (int): Trials.
         seed (int): Random seed.
 
     Returns:
-        tuple[np.ndarray, np.ndarray]: ``selected``, (trial, member) True for each
-        trial's members, and ``window_starts``, (trial,) the first year index of each trial's window.
+        np.ndarray: ``selected``, (trial, member) True for each trial's members.
     """
     if n_members > n_hist_nat_members:
         raise ValueError("n_members cannot exceed the hist-nat members available.")
-    if years % 2 == 0:
-        raise ValueError("years must be odd.")
 
     rng = np.random.default_rng(seed)
-    half_window = years // 2
-
-    # All centre years that have a complete window.
-    valid_centre_indices = np.arange(half_window, n_hist_nat_years - half_window)
-    n_valid_windows = len(valid_centre_indices)
-
-    n_full_repeats = n_trials // n_valid_windows
-    n_extra_trials = n_trials % n_valid_windows
-
-    sampled_centre_indices = np.tile(valid_centre_indices, n_full_repeats)
-
-    if n_extra_trials:
-        sampled_centre_indices = np.concatenate([
-            sampled_centre_indices,
-            rng.choice(valid_centre_indices, n_extra_trials, replace=False),
-        ])
-
-    rng.shuffle(sampled_centre_indices)
-
-    # N distinct members per trial (the N smallest of one uniform draw per member).
+    #(c): The n_members smallest of one uniform draw per member: n_members different members, every set as likely
     sampled_member_indices = np.argpartition(
         rng.random((n_trials, n_hist_nat_members)), n_members - 1, axis=1,
     )[:, :n_members]
     selected = np.zeros((n_trials, n_hist_nat_members), dtype=np.bool_)
     np.put_along_axis(selected, sampled_member_indices, True, axis=1)
-
-    return selected, sampled_centre_indices - half_window
+    return selected
 
 
 @skip_empty
-def bootstrap_qrange(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, years=WINDOW, quantiles=(0.05, 0.95), n_trials=1000,
-                     seed=0):
+def bootstrap_qrange(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, quantiles=(0.05, 0.95), n_trials=1000, seed=0):
     """The Q-range (e.g. Q95 - Q05) of each hist-nat bootstrap trial.
 
-    Trial k pools the values of ``n_members`` different hist-nat members over
-    one ``years``-year window, the draws of ``bootstrap_draws(..., seed=seed)``:
-    the members ``selected[k]`` and the years from ``window_starts[k]``. NaN
-    are skipped. Every grid point uses the same draws.
+    Trial k pools every year given of ``n_members`` different hist-nat members,
+    those ``bootstrap_draws(..., seed=seed)`` picks: given hist-nat's final 21
+    years, each trial is 10 of its members over those years. NaN are skipped,
+    so a trial of the seasons of one SAM phase pools only those. Every grid
+    point uses the same draws.
 
     Args:
-        hist_nat (xr.DataArray | xr.Dataset): hist-nat's whole record, on (member, year, ...).
+        hist_nat (xr.DataArray | xr.Dataset): hist-nat over the years compared, on (member, year, ...).
         n_members (int): Members per trial.
-        years (int): Window length (odd).
         quantiles (tuple[float, float]): The lower and upper quantile.
         n_trials (int): Trials.
         seed (int): Random seed.
@@ -271,23 +237,16 @@ def bootstrap_qrange(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, years=WINDOW, quan
     Returns:
         The same type, with ``member`` and ``year`` replaced by ``trial`` (first, numbered from 0).
     """
-    selected, window_starts = bootstrap_draws(hist_nat.sizes["member"], hist_nat.sizes["year"], n_members, years,
-                                              n_trials, seed)
-
-    #(c): Trials grouped by window, so each window is sorted once
-    trials = np.argsort(window_starts, kind="stable")
-    starts, counts = np.unique(window_starts, return_counts=True)
-    first = np.concatenate([[0], np.cumsum(counts)])
+    selected = bootstrap_draws(hist_nat.sizes["member"], n_members, n_trials, seed)
 
     if hist_nat.chunks:
         hist_nat = hist_nat.chunk({"member": -1, "year": -1})
     out = xr.apply_ufunc(
-        _window_block,
+        _qrange_block,
         hist_nat,
         input_core_dims=[["member", "year"]],
         output_core_dims=[["trial"]],
-        kwargs=dict(selected=selected, starts=starts, length=years, trials=trials, first=first,
-                    q_low=quantiles[0], q_high=quantiles[1], parallel=not hist_nat.chunks),
+        kwargs=dict(selected=selected, q_low=quantiles[0], q_high=quantiles[1], parallel=not hist_nat.chunks),
         dask="parallelized",
         output_dtypes=[np.float32],
         dask_gufunc_kwargs={"output_sizes": {"trial": n_trials}},
@@ -295,106 +254,39 @@ def bootstrap_qrange(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, years=WINDOW, quan
     return out.transpose("trial", ...).assign_coords(trial=np.arange(n_trials))
 
 
-# ---------------------------------------------------------------------------
-# The bootstrapped t-test: each trial's mean and variance
-# ---------------------------------------------------------------------------
-# The trials of ``bootstrap_qrange`` (the same ``bootstrap_draws``), so the mean
-# and the width are tested against the same draws. A trial's mean and variance
-# need only the sum of its values, the sum of their squares and their count, so
-# each member's sum over every window comes from one cumulative sum along the
-# years, and a trial adds up its members' sums over its window.
-
-def _trial_sums(data, members, window_starts, years):
-    """(..., member, year) -> (..., trial): the sum of each trial's members' values over its window.
-
-    Args:
-        data (np.ndarray): The values to add up, with no NaN (replaced by 0 beforehand).
-        members (np.ndarray): (trial, n_members) the members of each trial.
-        window_starts (np.ndarray): (trial,) the first year index of each trial's window.
-        years (int): Window length.
-    """
-    #(c): cumulative[..., i] is the sum of the first i years, so the window starting at s sums to
-    #(c): cumulative[..., s + years] - cumulative[..., s]
-    cumulative = np.cumsum(data, axis=-1, dtype=np.float64)
-    cumulative = np.concatenate([np.zeros(cumulative.shape[:-1] + (1,)), cumulative], axis=-1)
-    window_sums = cumulative[..., years:] - cumulative[..., :-years]
-    #(c): One member of every trial at a time: gathering them all at once would hold n_members copies of the result
-    total = np.zeros(data.shape[:-2] + (len(window_starts),))
-    for trial_members in members.T:
-        total += window_sums[..., trial_members, window_starts]
-    return total
-
-
-def _bootstrap_sum(values, n_members, years, n_trials, seed):
-    """Each trial's sum of ``values``: the members and windows of ``bootstrap_draws(..., seed=seed)``."""
-    selected, window_starts = bootstrap_draws(values.sizes["member"], values.sizes["year"], n_members, years,
-                                              n_trials, seed)
-    #(c): Each trial's members as indices: every row of selected has n_members True
-    members = np.nonzero(selected)[1].reshape(n_trials, n_members)
-
-    if values.chunks:
-        values = values.chunk({"member": -1, "year": -1})
-    out = xr.apply_ufunc(
-        _trial_sums,
-        values,
-        input_core_dims=[["member", "year"]],
-        output_core_dims=[["trial"]],
-        kwargs=dict(members=members, window_starts=window_starts, years=years),
-        dask="parallelized",
-        output_dtypes=[np.float64],
-        dask_gufunc_kwargs={"output_sizes": {"trial": n_trials}},
-    )
-    return out.transpose("trial", ...).assign_coords(trial=np.arange(n_trials))
+def _trial_total(values, selected_da):
+    """Each trial's total of ``values`` (on member, ...) over its members: one matrix product."""
+    if isinstance(values, xr.Dataset):
+        return values.map(lambda da: xr.dot(selected_da, da, dim="member"))
+    return xr.dot(selected_da, values, dim="member")
 
 
 @skip_empty
-def bootstrap_mean(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, years=WINDOW, n_trials=1000, seed=0):
+def bootstrap_mean(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, n_trials=1000, seed=0):
     """The mean of each hist-nat bootstrap trial's values, pooled; NaN are skipped.
 
     The trials of ``bootstrap_qrange`` with the same arguments: trial k pools
-    ``n_members`` different hist-nat members over one ``years``-year window,
-    the draws of ``bootstrap_draws(..., seed=seed)``. Every grid point uses the same draws.
+    every year given of the ``n_members`` hist-nat members
+    ``bootstrap_draws(..., seed=seed)`` picks. A trial's mean is the sum of its
+    members' values over how many there are, so each member's sum and count
+    over the years are added up for every trial at once. Every grid point uses the same draws.
 
     Args:
-        hist_nat (xr.DataArray | xr.Dataset): hist-nat's whole record, on (member, year, ...).
+        hist_nat (xr.DataArray | xr.Dataset): hist-nat over the years compared, on (member, year, ...).
         n_members (int): Members per trial.
-        years (int): Window length (odd).
         n_trials (int): Trials.
         seed (int): Random seed.
 
     Returns:
         The same type, with ``member`` and ``year`` replaced by ``trial`` (first, numbered from 0).
     """
-    draws = dict(n_members=n_members, years=years, n_trials=n_trials, seed=seed)
-    total = _bootstrap_sum(hist_nat.fillna(0), **draws)
-    count = _bootstrap_sum(hist_nat.notnull(), **draws)
-    return total / count
-
-
-@skip_empty
-def bootstrap_variance(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, years=WINDOW, n_trials=1000, seed=0):
-    """The variance (ddof=1) of each hist-nat bootstrap trial's values, pooled; NaN are skipped.
-
-    The trials of ``bootstrap_mean`` with the same arguments. From each
-    trial's sum, sum of squares and count n: (sum of squares - sum² / n) / (n - 1).
-
-    Args:
-        hist_nat (xr.DataArray | xr.Dataset): hist-nat's whole record, on (member, year, ...).
-        n_members (int): Members per trial.
-        years (int): Window length (odd).
-        n_trials (int): Trials.
-        seed (int): Random seed.
-
-    Returns:
-        The same type, with ``member`` and ``year`` replaced by ``trial`` (first, numbered from 0).
-    """
-    draws = dict(n_members=n_members, years=years, n_trials=n_trials, seed=seed)
-    #(c): Centred first: the variance is the same, and the sums of squares stay small, so the subtraction loses nothing
-    centred = hist_nat.astype("float64") - hist_nat.mean(["member", "year"])
-    total = _bootstrap_sum(centred.fillna(0), **draws)
-    total_squares = _bootstrap_sum((centred ** 2).fillna(0), **draws)
-    count = _bootstrap_sum(centred.notnull(), **draws)
-    return (total_squares - total ** 2 / count) / (count - 1)
+    selected = bootstrap_draws(hist_nat.sizes["member"], n_members, n_trials, seed)
+    selected_da = xr.DataArray(selected.astype(np.float64), dims=("trial", "member"),
+                               coords={"trial": np.arange(n_trials)})
+    #(c): sum skips NaN; count counts what it added, so a member with no values in a trial adds nothing
+    total = _trial_total(hist_nat.sum("year", dtype=np.float64), selected_da)
+    count = _trial_total(hist_nat.count("year"), selected_da)
+    return (total / count).transpose("trial", ...)
 
 
 # ---------------------------------------------------------------------------
@@ -495,18 +387,6 @@ def area_mean(da, lat="lat", lon="lon"):
 # ---------------------------------------------------------------------------
 # Parametric
 # ---------------------------------------------------------------------------
-
-def welch_t(mean1, variance1, n1, mean2, variance2, n2):
-    """Welch's t from two samples' means, variances and sizes: (mean1 - mean2) / sqrt(variance1 / n1 + variance2 / n2).
-
-    The bootstrapped t-test (notebook 03, section 4) gives the experiment ``n1``
-    = the size of a bootstrap trial, not its own size. The part of hist-nat's
-    variability that every member shares (natural forcing, drift) does not
-    average out over members, so in a t taken at the experiment's own size it
-    would count more than in a trial's, and too much would be significant.
-    """
-    return (mean1 - mean2) / np.sqrt(variance1 / n1 + variance2 / n2)
-
 
 @skip_empty
 def ttest_welch(da1, da2, dims=("year", "member"), variable="tas"):

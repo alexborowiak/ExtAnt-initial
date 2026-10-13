@@ -42,10 +42,11 @@ def _mean_response(tree, years=11):
 
 
 def _tails(tree, years=11):
-    """Notebook 03's tails: the change in Q05, Q50 and Q95, final years against hist-nat's whole record."""
+    """Notebook 03's tails: the change in Q05, Q50 and Q95, final years against hist-nat over the same years."""
     quantiles = partial(qc.pooled_quantiles, quantiles=[0.05, 0.5, 0.95])
-    final = datatree.reduce_to_dataset(tree.isel(year=slice(-years, None)), quantiles).tas.drop_sel(experiment="hist-nat")
-    hist_nat = datatree.reduce_to_dataset(tree.match("*/hist-nat"), quantiles).tas.sel(experiment="hist-nat", drop=True)
+    final_q = datatree.reduce_to_dataset(tree.isel(year=slice(-years, None)), quantiles).tas
+    final = final_q.drop_sel(experiment="hist-nat")
+    hist_nat = final_q.sel(experiment="hist-nat", drop=True)
     q05, q50, q95 = ((final - hist_nat).sel(quantile=q, drop=True) for q in (0.05, 0.5, 0.95))
     upper, lower = q95 - q50, q50 - q05
     return xr.Dataset({"upper_tail_change": upper, "lower_tail_change": lower, "width_change": upper + lower,

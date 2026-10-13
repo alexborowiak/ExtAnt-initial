@@ -8,9 +8,9 @@ Reading them:
     columns     the mean; the low and the high extremes, both measured from the
                 median; the width between them (= high - low)
     lines       experiments (FORCING_COLORS), or models (MODEL_COLORS)
-    dots        the zonal-mean change is significant: the mean by the
-                bootstrapped t-test, the width by the hist-nat bootstrap; the
-                extremes have no test, so no dots
+    dots        the zonal-mean change is significant by the hist-nat bootstrap
+                (10 hist-nat members over the same final years), the mean's and
+                the width's; the extremes have no test, so no dots
     grey band   in the width column: the central 95% of the zonal-mean width
                 changes hist-nat's own variability gives (one per model)
     dashed      the sea-ice edge as an equivalent latitude, in each
