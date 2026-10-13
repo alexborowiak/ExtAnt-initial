@@ -20,6 +20,8 @@ pattern mean the same thing in every figure:
     counts            more than half the models changes the hue: reds to browns (increase), blues to
                       purples (decrease), greys to greens (no sign, ``majority_scale``); white is none
     3 x 3 key         the mean and the width together (``joint_scale``)
+    black lines       the sea-ice edge (15% contour), solid for the experiment and dashed for hist-nat
+                      (``edges``, from ``plots.sea_ice.edge_pair``)
 
 Sections
 --------
@@ -43,6 +45,7 @@ from .. import config
 from .era5_evaluation import EVAL_RC, INK, MODEL_COLORS, MODEL_MARKERS
 from plotting_modules.constants import FORCING_COLORS
 from .response_change import HATCH_COLOR, HATCH_WIDTH, NOT_SIGNIFICANT_HATCH, round_ticks
+from .sea_ice import draw_edges, edge_handles
 from plotting_modules import core
 from plotting_modules.utils import plot
 
@@ -368,11 +371,15 @@ class Block:
             share one colour bar.
         not_significant (dict | None): Row label -> boolean masks, dotted where True: an xr.Dataset
             with a variable for each column that has a test, or a list with None where there is none.
+        edges (dict | None): Row label -> one concentration field per column (None for none), each on
+            (edge, lat, lon): the 15% contour of each is drawn on the map, styled by its ``edge`` label
+            (``plots.sea_ice.EDGES``).
     """
 
     rows: dict
     scales: list
     not_significant: dict = None
+    edges: dict = None
 
 
 @dataclass
@@ -384,12 +391,39 @@ class Column:
         scale (Scale): Its colour scale.
         title (str): Column title ('\\n' for a second line).
         not_significant (xr.DataArray | None): Boolean, the same dims: dotted where True.
+        edges (xr.DataArray | None): Concentration on (edge, lat, lon), or (edge, row_dim, lat, lon): the
+            sea-ice edges drawn on each map (``plots.sea_ice.edge_pair``).
     """
 
     data: xr.DataArray
     scale: Scale
     title: str
     not_significant: xr.DataArray = None
+    edges: xr.DataArray = None
+
+
+def _select(da, selection):
+    """``da`` at ``selection``, ignoring the dims it does not have (edges shared by every row, say).
+
+    None if ``da`` is None or lacks one of the values (a model with no sea ice, say), so nothing is drawn there.
+    """
+    if da is None:
+        return None
+    selection = {dim: value for dim, value in selection.items() if dim in da.dims}
+    if any(value not in da[dim].values for dim, value in selection.items()):
+        return None
+    return da.sel(selection)
+
+
+def _edge_labels(blocks):
+    """The ``edge`` labels drawn anywhere in ``blocks``, in order of first appearance."""
+    labels = []
+    for block in blocks:
+        for fields in (block.edges or {}).values():
+            for field in fields:
+                if field is not None:
+                    labels += [str(label) for label in field["edge"].values if str(label) not in labels]
+    return labels
 
 
 def _fields(row):
@@ -501,6 +535,7 @@ def block_grid(blocks, title=None, column_titles=None, panel_size=2.5, style=NOT
     column_titles = list(column_titles) if column_titles is not None else [str(n) for n in first_names]
     labels = [label for block in blocks for label in block.rows]
     dotted = any(block.not_significant for block in blocks)
+    edge_labels = _edge_labels(blocks)
 
     #(c): Every length in inches: room on the left for the longest row label
     longest = max((len(line) for label in labels for line in str(label).splitlines()), default=0)
@@ -532,7 +567,7 @@ def block_grid(blocks, title=None, column_titles=None, panel_size=2.5, style=NOT
                     _text_height(style.tick_size, tick_lines) + _text_height(style.cbar_label_size, label_lines) + 0.12
                     + (0.15 if b < len(blocks) - 1 else 0)]
         kinds += [None, ("cbar", b), None]
-    bottom = _text_height(style.cbar_label_size) + 0.2 if dotted else 0.05
+    bottom = _text_height(style.cbar_label_size) + 0.2 if dotted or edge_labels else 0.05
     n_panel_rows = heights.count(None)
 
     #(c): The title is wrapped to the figure's width, and takes room at the top, which a page height takes from the
@@ -565,8 +600,9 @@ def block_grid(blocks, title=None, column_titles=None, panel_size=2.5, style=NOT
             for i, (label, row) in enumerate(block.rows.items()):
                 names, fields = _fields(row)
                 masks = _masks((block.not_significant or {}).get(label), names)
+                row_edges = (block.edges or {}).get(label) or [None] * len(fields)
                 grid_row = kinds.index(("panel", b, i))
-                for j, (field, scale, mask) in enumerate(zip(fields, block.scales, masks)):
+                for j, (field, scale, mask, edges) in enumerate(zip(fields, block.scales, masks, row_edges)):
                     ax = fig.add_subplot(grid[grid_row, j], projection=ccrs.SouthPolarStereo())
                     axes[row_index, j] = ax
                     if field is None or not bool(field.notnull().any()):
@@ -577,6 +613,8 @@ def block_grid(blocks, title=None, column_titles=None, panel_size=2.5, style=NOT
                     if mask is not None and bool(mask.any()):
                         maps.plot_hatch(ax, mask, hatch=NOT_SIGNIFICANT_HATCH, color=HATCH_COLOR,
                                         linewidth=style.hatch_width)
+                    if edges is not None:
+                        draw_edges(ax, edges, scale=0.75 if style is PAPER else 1.0)
                 block_rows.append(row_index)
                 row_index += 1
 
@@ -609,11 +647,12 @@ def block_grid(blocks, title=None, column_titles=None, panel_size=2.5, style=NOT
         if title:
             fig.text(0.5, 1 - 0.1 / height, title, ha="center", va="top", fontsize=style.title_size,
                      fontweight="bold", color=INK)
-        if dotted:
-            fig.legend(handles=[Patch(facecolor="white", edgecolor="0.4", hatch=NOT_SIGNIFICANT_HATCH,
-                                      label=not_significant_label)],
-                       loc="lower center", frameon=False, handlelength=2.2, handleheight=1.2,
-                       bbox_to_anchor=(0.5, 0.0), fontsize=style.cbar_label_size)
+        handles = [Patch(facecolor="white", edgecolor="0.4", hatch=NOT_SIGNIFICANT_HATCH,
+                         label=not_significant_label)] if dotted else []
+        handles += edge_handles(edge_labels)
+        if handles:
+            fig.legend(handles=handles, loc="lower center", frameon=False, handlelength=2.2, handleheight=1.2,
+                       bbox_to_anchor=(0.5, 0.0), fontsize=style.cbar_label_size, ncols=len(handles))
     return core.Panels(fig=fig, axes=axes, artists=artists, extras={"cbars": cbars})
 
 
@@ -648,11 +687,14 @@ def field_grid(columns, title=None, row_dim=None, row_labels=None, panel_size=2.
 
     labels = ["" if value is None else str((row_labels or {}).get(value, value)) for value in values]
     dotted = any(column.not_significant is not None for column in columns)
+    edged = any(column.edges is not None for column in columns)
     block = Block(
         rows={label: [pick(column.data, value) for column in columns] for label, value in zip(labels, values)},
         scales=[column.scale for column in columns],
         not_significant={label: [pick(column.not_significant, value) for column in columns]
                          for label, value in zip(labels, values)} if dotted else None,
+        edges={label: [_select(column.edges, {row_dim: value}) for column in columns]
+               for label, value in zip(labels, values)} if edged else None,
     )
     return block_grid([block], title=title, column_titles=[column.title for column in columns],
                       panel_size=panel_size, style=style, tag=tag, not_significant_label=not_significant_label,
@@ -669,12 +711,15 @@ class Row:
         scale (Scale): Its colour scale.
         title (str): Row label ('\\n' for a second line).
         not_significant (xr.DataArray | None): Boolean, the same dims: dotted where True.
+        edges (xr.DataArray | None): Concentration on (edge, [row_dim], [col_dim], lat, lon): the sea-ice
+            edges drawn on each map (``plots.sea_ice.edge_pair``); dims it lacks are shared by every panel.
     """
 
     data: xr.DataArray
     scale: Scale
     title: str
     not_significant: xr.DataArray = None
+    edges: xr.DataArray = None
 
 
 @plot("figure")
@@ -734,6 +779,9 @@ def row_grid(rows, title=None, row_dim=None, row_labels=None, col_dim="season", 
                 block.not_significant = block.not_significant or {}
                 block.not_significant[label] = [row.not_significant.sel({**selection, col_dim: column})
                                                 for column in columns]
+            if row.edges is not None:
+                block.edges = block.edges or {}
+                block.edges[label] = [_select(row.edges, {**selection, col_dim: column}) for column in columns]
 
     return block_grid(blocks, title=title, column_titles=[str((col_labels or {}).get(c, c)) for c in columns],
                       panel_size=panel_size, style=style, tag=tag, not_significant_label=not_significant_label,
@@ -743,7 +791,7 @@ def row_grid(rows, title=None, row_dim=None, row_labels=None, col_dim="season", 
 @plot("figure")
 def map_grid(da, scale, title=None, row_dim="model", col_dim="experiment", not_significant=None, row_labels=None,
              col_labels=None, panel_size=2.3, style=NOTEBOOK, tag=False, not_significant_label="Not significant",
-             width=None, height=None):
+             width=None, height=None, edges=None):
     """One quantity over two dims, e.g. every model (rows) and experiment (columns), dotted where not significant.
 
     A ``field_grid`` with one column per value of ``col_dim``, all on one Scale, so one colour bar.
@@ -762,13 +810,16 @@ def map_grid(da, scale, title=None, row_dim="model", col_dim="experiment", not_s
         not_significant_label (str): Legend entry for the dots.
         width (float | None): The figure's width in inches; the panels fill it.
         height (float | None): The most the figure can be tall, in inches.
+        edges (xr.DataArray | None): Concentration on (edge, [row_dim], [col_dim], lat, lon): the sea-ice
+            edges drawn on each map (``plots.sea_ice.edge_pair``); dims it lacks are shared by every panel.
 
     Returns:
         core.Panels
     """
     columns = [
         Column(da.sel({col_dim: value}), scale, str((col_labels or {}).get(value, value)),
-               None if not_significant is None else not_significant.sel({col_dim: value}))
+               None if not_significant is None else not_significant.sel({col_dim: value}),
+               _select(edges, {col_dim: value}))
         for value in da[col_dim].values
     ]
     return field_grid(columns, title, row_dim=row_dim, row_labels=row_labels, panel_size=panel_size, style=style,
@@ -777,7 +828,8 @@ def map_grid(da, scale, title=None, row_dim="model", col_dim="experiment", not_s
 
 @plot("figure")
 def count_grid(counts, n_models, title, label, above=(), row_dim="direction", col_dim="experiment", row_labels=None,
-               group_dim=None, signed=True, panel_size=2.3, style=NOTEBOOK, tag=False, width=None, height=None):
+               group_dim=None, signed=True, panel_size=2.3, style=NOTEBOOK, tag=False, width=None, height=None,
+               edges=None):
     """How many models: the response itself first (``above``, e.g. the multi-model median), then a row of counts each.
 
     With ``signed`` (the default) the counts are of a significant increase
@@ -815,6 +867,8 @@ def count_grid(counts, n_models, title, label, above=(), row_dim="direction", co
         tag (bool): Letter the panels.
         width (float | None): The figure's width in inches; the panels fill it.
         height (float | None): The most the figure can be tall, in inches.
+        edges (xr.DataArray | None): Concentration on (edge, [col_dim], lat, lon): the sea-ice edges drawn on
+            every row of counts (give the rows ``above`` their own).
 
     Returns:
         core.Panels
@@ -833,7 +887,7 @@ def count_grid(counts, n_models, title, label, above=(), row_dim="direction", co
         for value in drawn[row_dim].values:
             row_label = str((row_labels or {}).get(value, value))
             label = row_label if group is None else f"{group}\n{row_label}"
-            count_rows.append(Row(drawn.sel({**selection, row_dim: value}), scale, label))
+            count_rows.append(Row(drawn.sel({**selection, row_dim: value}), scale, label, edges=edges))
     return row_grid([*above, *count_rows], title, col_dim=col_dim, panel_size=panel_size, style=style, tag=tag,
                     width=width, height=height)
 

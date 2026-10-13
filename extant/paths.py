@@ -53,8 +53,22 @@ SAM_RAW = LEADER_EPESC / "wg1" / "monthly" / "NAM_SAM_new_update_LastVersion_Use
 #(t): Hourly ERA5 analyses: /<year>/<month>/<day>/*.<code>.nc
 ERA5_RAW = Path("/badc/ecmwf-era5/data/oper/an_sfc")
 
+#(t): CEDA's copy of the CMIP6 archive, where the sea ice is (notebook 09), each model on its own grid:
+#(t): <root>/<institution>/<model>/<experiment>/<member>/<table>/<variable>/<grid>/latest/*.nc. DAMIP holds the single-
+#(t): forcing runs, CMIP historical (and piControl, with the cell areas); CMIP6Plus/LESFMIP's newer runs (members
+#(t): f2023-r<n>...) use updated forcing and are not pooled with them
+CEDA_CMIP6 = {
+    "DAMIP": Path("/badc/cmip6/data/CMIP6/DAMIP"),
+    "CMIP": Path("/badc/cmip6/data/CMIP6/CMIP"),
+    "LESFMIP": Path("/badc/cmip6/data/CMIP6Plus/LESFMIP"),
+}
+
 #(t): The 3x3-cell sample used by the tests and the notebooks' sample sections
 SAMPLE_DIR = REPO / "tests" / "data"
+
+#(t): The sea-ice sample (scripts/sea_ice_sample.py): one member of each model and experiment, 2013-2014, south of
+#(t): 40°S, on each model's own grid, with its cell areas; and ERA5's sea-ice cover at 00 UTC on the 15th of each month
+SEA_ICE_SAMPLE_DIR = SAMPLE_DIR / "sea_ice"
 
 # ---------------------------------------------------------------------------
 # Outputs

@@ -2,13 +2,13 @@
 
 How greenhouse gases, aerosols, ozone and natural forcing have each changed Antarctic near-surface climate in the LESFMIP single-forcing large ensembles. The analysis covers both the mean and the spread of the seasonal distribution, and checks the models against ERA5 to see where they can be trusted.
 
-The data are on JASMIN. A small sample (a 3×3 block of grid cells from two models, plus ERA5) is in `tests/data`, so all of the code can be run and tested off JASMIN.
+The data are on JASMIN. A small sample (a 3×3 block of grid cells from two models, plus ERA5) is in `tests/data`, and a sea-ice sample (one member of each model and experiment for 2013–2014, plus ERA5) in `tests/data/sea_ice`, so all of the code can be run and tested off JASMIN.
 
 ## Layout
 
 ```
 notebooks/
-    01_process_data.ipynb              raw files -> monthly stores -> seasonal means (once per variable); sea ice and the SAM index (once)
+    01_process_data.ipynb              raw files -> monthly stores -> seasonal means (once per variable); the SAM index (once)
     02_era5_evaluation.ipynb           are the models consistent with ERA5? is the observed change detectable? (and the regional evaluation the paper uses)
     03_forced_response.ipynb           the calculations, each method explained; saves every result (probability ratios, SAM, additivity of the variance)
     04_forced_response_figures.ipynb   figures, from the saved results: four for every result, from what goes in to how many models agree
@@ -16,9 +16,11 @@ notebooks/
     06_paper_figures.ipynb             the paper's main and supplementary figures, in print style (PDF and PNG)
     07_figure_candidates.ipynb         every candidate figure of the planning notes (A-F), the verification against ERA5, and the layouts L1-L5
     08_optimal_fingerprinting.ipynb    are the observed regional seasonal trends explained by the forcings, and is each forcing's size right?
+    09_sea_ice.ipynb                   the sea ice from CEDA onto the 2.5° grid, against ERA5, and with the mean and width changes
 extant/                                the code the notebooks use
 plotting_modules/                      the general plotting package: panel grids, polar maps, colour bars
 tests/                                 pytest suite, the sample data, and a script that runs every notebook
+scripts/                               sea_ice_sample.py: what sea ice CEDA has, and the sea-ice sample (run on JASMIN)
 archive/                               the old draft notebooks
 docs/images/                           reference figures
 ```
@@ -40,7 +42,7 @@ What is in `extant/`:
 | `sam` | the SAM index files, the SAM phases (hist-nat's terciles) every result is split by, and a synthetic index for the sample |
 | `fingerprinting` | optimal fingerprinting: the vectors, fingerprints, noise covariance (Ledoit-Wolf), OLS and TLS fits, Monte Carlo ranges and the residual test |
 | `zonal` | zonal means of the change (mean, low and high extremes, width) and tests of them |
-| `sea_ice` | sea-ice extent and the equivalent latitude of the ice edge |
+| `sea_ice` | the sea ice onto the 2.5° grid (with each cell's ocean area), extent and the equivalent latitude of the ice edge, the test against ERA5, and the zones where the ice changed |
 | `era5_evaluation` | the ERA5 tests (Suarez-Gutierrez et al., 2021) |
 | `observed_change` | detection, consistency, records and scaling factors |
 | `datatree`, `stats` | DataTree helpers, fast quantiles and KDEs |
@@ -60,7 +62,7 @@ seasonal/lesfmip_<variable>.zarr
 seasonal/era5_<variable>.zarr
 seasonal/lesfmip_sam.zarr                              the SAM index (notebook 01, section 6)
 results/<variable>/<full|sample>/<name>.zarr
-results/siconc/full/extent.zarr, climatology.zarr     the sea ice (notebook 01, section 5)
+results/siconc/<full|sample>/extent.zarr, climatology.zarr, ...     the sea ice (notebook 09)
 ```
 
 Off JASMIN both are `output/` in this repository.
@@ -71,7 +73,7 @@ Off JASMIN both are `output/` in this repository.
 
 **Another variable.** Set `VARIABLE` at the top of each notebook. The variable needs an entry in `config.VARIABLES`, which says how to convert its units; `pr` and `sfcWind` are there but have not been run yet. Two things are not done for them yet. There is no ERA5 recipe: precipitation is a forecast accumulation, and wind speed has to be built from its u and v components. And some figure labels in `extant/plots` still talk about warming and cold or warm tails.
 
-**Sea ice.** The figures in notebook 04, section 7 mark the sea-ice edge, as Bracegirdle et al. (2024, *npj Clim. Atmos. Sci.* 7, 276) do, from the sea-ice concentration `siconc`. Notebook 01, section 5 converts it and saves each member's extent and the final-years mean concentration; run it once. The raw files are looked for in `paths.lesfmip_raw('siconc')`, i.e. under the `SImon` folder next to `Amon`. That folder is a guess: set the right one as the `table` of `siconc` in `config.VARIABLES`. Without the sea ice, everything else runs and the figures leave the edge out.
+**Sea ice.** The sea ice is not in the LEADER-EPESC folders but in CEDA's copy of the CMIP6 archive (`paths.CEDA_CMIP6`: DAMIP for the single forcings, CMIP for historical), each model on its own ocean grid, with far fewer members than the temperature. Notebook 09 puts it on the 2.5° grid (each cell the area-weighted mean of the points in it, and its ocean area, so the extent counts only the ocean of coastal cells), saves it as monthly stores next to the temperature's, checks it against ERA5's sea-ice cover, and compares the change in sea ice with the mean and width changes. Its `extent` and `climatology` give the sea-ice edge on the maps of notebook 04 (sections 1, 4, 5 and 7: hist-nat's dashed, the experiment's solid) and notebook 07's D panels, as Bracegirdle et al. (2024, *npj Clim. Atmos. Sci.* 7, 276) mark it. `scripts/sea_ice_sample.py` lists what CEDA has and makes the sample. Without the sea ice, everything else runs and the figures leave the edge out.
 
 ## Tests
 

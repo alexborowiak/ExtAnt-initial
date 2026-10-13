@@ -141,6 +141,29 @@ def open_lesfmip_sample(path=paths.SAMPLE_DIR, models=None, experiments=None):
     return xr.DataTree.from_dict(nodes)
 
 
+def sea_ice_sample_files(path=paths.SEA_ICE_SAMPLE_DIR):
+    """The sea-ice sample's model files, one row each, with the file of the cell areas of its grid.
+
+    The files (``scripts/sea_ice_sample.py``) are ``lesfmip/<model>_<experiment>_<variable>_<member>_<grid>.nc``,
+    on each model's own grid, and ``lesfmip/<model>_<areacello|areacella>_<grid>.nc``.
+
+    Returns:
+        pd.DataFrame: model, experiment, variable, member, grid, path and area_path.
+    """
+    areas = {"siconc": "areacello", "siconca": "areacella"}
+    rows = []
+    for file in sorted((Path(path) / "lesfmip").glob("*.nc")):
+        parts = file.stem.split("_")
+        if len(parts) != 5:
+            continue
+        model, experiment, variable, member, grid = parts
+        rows.append({"model": model, "experiment": experiment, "variable": variable, "member": member, "grid": grid,
+                     "path": file, "area_path": file.parent / f"{model}_{areas[variable]}_{grid}.nc"})
+    if not rows:
+        raise FileNotFoundError(f"no sea-ice sample files in {Path(path) / 'lesfmip'}")
+    return pd.DataFrame(rows)
+
+
 def open_era5_sample(path=paths.SAMPLE_DIR):
     """The sample ERA5 file, like ``open_era5_monthly``: monthly ``tas`` in K from 1979, on (time, lat, lon)."""
     file = Path(path) / "era5_sample.nc"

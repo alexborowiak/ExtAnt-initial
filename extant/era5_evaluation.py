@@ -502,7 +502,7 @@ def combine_tests(*results):
 # ---------------------------------------------------------------------------
 
 def statistic_test(ensemble, obs, statistics=tuple(STATISTICS), sample_dim=SAMPLE_DIM,
-                   member_dim=MEMBER_DIM, reference=None, alpha=ALPHA):
+                   member_dim=MEMBER_DIM, reference=None, alpha=ALPHA, registry=None):
     """Test ERA5 against the ensemble one statistic at a time.
 
     For each statistic: give ERA5 and every member the same treatment, compute
@@ -536,12 +536,14 @@ def statistic_test(ensemble, obs, statistics=tuple(STATISTICS), sample_dim=SAMPL
         sample_dim, member_dim (str): Dimension names.
         reference (slice | None): Anomaly reference years (only 'anomaly' uses it).
         alpha (float): Two-sided significance level.
+        registry (dict | None): Name -> ``Diagnostic`` for every name in ``statistics``; ``MOMENTS`` and
+            ``STATISTICS`` if None. Another variable brings its own (e.g. ``sea_ice.ERA5_DIAGNOSTICS``).
 
     Returns:
         xr.Dataset: ``locate`` output on a ``statistic`` dim, with ``label``,
         ``units`` and ``treatment`` coordinates along it.
     """
-    registry = {**MOMENTS, **STATISTICS}
+    registry = registry or {**MOMENTS, **STATISTICS}
     treated = {}
     results = []
     for name in statistics:

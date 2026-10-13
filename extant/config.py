@@ -104,14 +104,15 @@ class Variable:
 #(c): pr and sfcWind follow the CMIP conventions (kg m-2 s-1 and m s-1) but have not been run yet. ERA5
 #(c): precipitation is a forecast accumulation (fc_sfc, not an_sfc) and wind speed has to be built from 10u
 #(c): and 10v, so neither has an ERA5 recipe in convert.py yet.
-#(c): siconc (sea-ice concentration, %) is not analysed itself: it gives the sea-ice edge (``sea_ice``). Its
-#(c): table, SImon, is a guess at where the interpolated files are; check it against the folders on JASMIN.
+#(c): siconc (sea-ice concentration, %) is not in the LEADER-EPESC folders: notebook 09 takes it from CEDA's copy of
+#(c): CMIP6 (``paths.CEDA_CMIP6``, table SImon), each model on its own grid, and puts it on the 2.5° grid. ERA5's
+#(c): sea-ice cover (code ci) is a fraction from 0 to 1; notebook 09 stores it in % like the models.
 #(c): sam is the Southern Annular Mode index, already standardised, from ``paths.SAM_RAW`` rather than the
 #(c): LESFMIP files (``sam.open_index``); it sorts the seasons into SAM phases (notebook 03, *The SAM phases*).
 VARIABLES = {
     "tas": Variable("tas", "Near-surface air temperature", "°C", offset=-273.15, era5_code="2t", era5_name="t2m"),
     "pr": Variable("pr", "Precipitation", "mm day⁻¹", scale=86400.0),
     "sfcWind": Variable("sfcWind", "Near-surface wind speed", "m s⁻¹"),
-    "siconc": Variable("siconc", "Sea-ice concentration", "%", table="SImon"),
+    "siconc": Variable("siconc", "Sea-ice concentration", "%", era5_code="ci", era5_name="siconc", table="SImon"),
     "sam": Variable("sam", "Southern Annular Mode index", "standard deviations"),
 }

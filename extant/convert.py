@@ -1,6 +1,8 @@
 """Raw files to monthly zarr stores: LESFMIP (one netCDF file per member) and ERA5 (hourly files).
 
-Used by notebook 01 on JASMIN, once per variable. Only the pieces are here
+Used by notebook 01 on JASMIN, once per variable, and by notebook 09 for the
+sea ice, which is in CEDA's copy of the CMIP6 archive rather than the
+LEADER-EPESC folders (the last section finds its files). Only the pieces are here
 (finding the files, opening one model's members together, a month of ERA5,
 joining the ERA5 years); the loops, what is left to do and the checks are in
 the notebook. Everything is written under ``paths.SCRATCH``; move it to
@@ -123,13 +125,14 @@ def era5_south(ds):
     return ds.sortby("latitude").sel(latitude=slice(-90.0, ERA5_LAT_MAX))
 
 
-def era5_files(variable, year, month=None):
-    """The hourly ERA5 files of one year (or month), sorted."""
+def era5_files(variable, year, month=None, hour=None):
+    """The hourly ERA5 files of one year (or month), sorted; with ``hour``, only that hour (UTC) of each day."""
     code = config.VARIABLES[variable].era5_code
     if code is None:
         raise ValueError(f"no ERA5 recipe for {variable} yet: see config.VARIABLES")
     months = f"{month:02d}" if month else "*"
-    return sorted(Path(paths.ERA5_RAW).glob(f"{year}/{months}/*/*.{code}.nc"))
+    hours = "" if hour is None else f"{hour:02d}00"
+    return sorted(Path(paths.ERA5_RAW).glob(f"{year}/{months}/*/*{hours}.{code}.nc"))
 
 
 def era5_month_mean(files, name):
@@ -167,3 +170,84 @@ def combine_era5_years(variable):
         shutil.rmtree(year_store)
     logger.info(f"ERA5 {variable}: {dict(saved.sizes)} saved, {len(year_stores)} year stores removed")
     return saved
+
+
+# ---------------------------------------------------------------------------
+# CEDA's CMIP6 archive: the sea ice
+# ---------------------------------------------------------------------------
+
+#(t): The sea ice, on the ocean grid (siconc) or the atmosphere grid (siconca), and the cell areas of each grid
+#(t): (areacello, areacella), as (table, variable). A model's cell areas are the same in every run, so they are
+#(t): also looked for in piControl, which often has them when the other runs do not
+CEDA_SEA_ICE = (("SImon", "siconc"), ("SImon", "siconca"))
+CEDA_AREAS = (("Ofx", "areacello"), ("fx", "areacella"))
+
+
+def file_years(path):
+    """First and last year of a CMIP file, from the dates at the end of its name (..._185001-201412.nc)."""
+    match = re.search(r"_(\d{4})\d*-(\d{4})\d*\.nc$", Path(path).name)
+    return (int(match[1]), int(match[2])) if match else (None, None)
+
+
+def member_number(member):
+    """The n of r<n> in a member label, so that r2 sorts before r10."""
+    return int(re.search(r"r(\d+)i", member)[1])
+
+
+def ceda_folder_row(folder):
+    """One inventory row for a .../<member>/<table>/<variable>/<grid>/latest folder of CEDA's archive."""
+    folder = Path(folder)
+    files = sorted(folder.glob("*.nc"))
+    spans = [file_years(path) for path in files]
+    starts = [start for start, _ in spans if start is not None]
+    ends = [end for _, end in spans if end is not None]
+    institution, model, experiment, member, table, variable, grid = folder.parts[-8:-1]
+    root = folder.parents[7]
+    return {"project": root.parent.name, "activity": root.name, "institution": institution, "model": model,
+            "experiment": experiment, "member": member, "table": table, "variable": variable, "grid": grid,
+            "n_files": len(files), "start": min(starts, default=None), "end": max(ends, default=None),
+            "folder": str(folder)}
+
+
+def ceda_inventory(models, experiments, roots=None):
+    """Every folder of the sea ice and the cell areas for ``models`` and ``experiments`` in CEDA's archive.
+
+    Args:
+        models, experiments (Sequence[str]): What to look for (the cell areas also in piControl).
+        roots (Sequence[Path] | None): The trees searched; every one of ``paths.CEDA_CMIP6`` if None.
+
+    Returns:
+        pd.DataFrame: One row per member and variable: project, activity, institution, model, experiment,
+        member, table, variable, grid, the number of files, the first and last year, and the folder.
+    """
+    roots = list(paths.CEDA_CMIP6.values()) if roots is None else roots
+    wanted = [(table, variable, list(experiments)) for table, variable in CEDA_SEA_ICE]
+    wanted += [(table, variable, [*experiments, "piControl"]) for table, variable in CEDA_AREAS]
+    rows = []
+    for root in roots:
+        for model in models:
+            for table, variable, searched in wanted:
+                for experiment in searched:
+                    pattern = Path(root) / "*" / model / experiment / "*" / table / variable / "*" / "latest"
+                    folders = sorted(Path(root).glob(str(pattern.relative_to(root))))
+                    rows += [ceda_folder_row(folder) for folder in folders]
+    columns = ["project", "activity", "institution", "model", "experiment", "member", "table", "variable", "grid",
+               "n_files", "start", "end", "folder"]
+    table_df = pd.DataFrame(rows, columns=columns)
+    order = table_df["member"].map(member_number) if len(table_df) else table_df["member"]
+    return table_df.assign(number=order).sort_values(["model", "experiment", "variable", "number"]).drop(
+        columns="number").reset_index(drop=True)
+
+
+def ceda_member_files(rows):
+    """Member label -> its files, for inventory rows of one model, experiment and variable (``ceda_inventory``)."""
+    return {row.member: sorted(Path(row.folder).glob("*.nc")) for row in rows.itertuples()}
+
+
+def ceda_area_file(inventory, model, variable, grid):
+    """The cell-area file (``areacello`` or ``areacella``) of one model's grid, from any run that has it."""
+    rows = inventory[(inventory["model"] == model) & (inventory["variable"] == variable)
+                     & (inventory["grid"] == grid)]
+    if rows.empty:
+        raise FileNotFoundError(f"no {variable} on grid {grid} for {model} in the inventory")
+    return sorted(Path(rows["folder"].iloc[0]).glob("*.nc"))[0]
