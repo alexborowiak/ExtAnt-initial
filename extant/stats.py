@@ -50,6 +50,37 @@ def nan_quantile(da, q, dim):
     return result.isel(quantile=0, drop=True) if np.ndim(q) == 0 else result
 
 
+def _weighted_sums(values, weights):
+    return values @ weights.T
+
+
+def weighted_member_sums(values, weights):
+    """Each trial's weighted sum over the members: ``values`` (member, ...) and ``weights`` (trial, member).
+
+    One matrix product per dask block, so the result keeps the blocks of
+    ``values`` with the trials added. ``xr.dot`` gives the same numbers, but
+    dask's einsum splits every block into hundreds of small ones (about 2,500
+    tasks for one full-size node instead of 5), which a whole tree of them
+    turns into more tasks than the scheduler can hold.
+
+    Args:
+        values (xr.DataArray | xr.Dataset): On (member, ...).
+        weights (np.ndarray): (trial, member): row k is how much each member counts in trial k.
+
+    Returns:
+        The type of ``values``, with ``member`` replaced by ``trial`` (first, numbered from 0).
+    """
+    if values.chunks:
+        values = values.chunk({"member": -1})
+    out = xr.apply_ufunc(
+        _weighted_sums, values,
+        input_core_dims=[["member"]], output_core_dims=[["trial"]],
+        kwargs={"weights": weights}, dask="parallelized", output_dtypes=[np.float64],
+        dask_gufunc_kwargs={"output_sizes": {"trial": weights.shape[0]}},
+    )
+    return out.transpose("trial", ...).assign_coords(trial=np.arange(weights.shape[0]))
+
+
 def _fast_kde_block(arr, x, bandwidth):
     """
     arr has shape (..., sample)

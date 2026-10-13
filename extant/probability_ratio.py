@@ -42,7 +42,7 @@ import numpy as np
 import xarray as xr
 
 from .datatree import skip_empty
-from .stats import nan_quantile
+from .stats import nan_quantile, weighted_member_sums
 
 # ---------------------------------------------------------------------------
 # 1. The levels and the thresholds
@@ -176,7 +176,4 @@ def bootstrap_member_mean(members, n_trials=1000, seed=0):
         The same type, with ``member`` replaced by ``trial`` (first, numbered from 0).
     """
     weights = resample_weights(members.sizes["member"], n_trials, np.random.default_rng(seed))
-    weights_da = xr.DataArray(weights, dims=("trial", "member"), coords={"trial": np.arange(n_trials)})
-    if isinstance(members, xr.Dataset):
-        return members.map(lambda da: xr.dot(weights_da, da, dim="member"))
-    return xr.dot(weights_da, members, dim="member")
+    return weighted_member_sums(members, weights)

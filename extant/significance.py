@@ -17,7 +17,7 @@ from numba import njit, prange
 
 from .quantiles import numpy_lerp
 from .datatree import skip_empty
-from .stats import nan_quantile
+from .stats import nan_quantile, weighted_member_sums
 
 
 # ---------------------------------------------------------------------------
@@ -254,13 +254,6 @@ def bootstrap_qrange(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, quantiles=(0.05, 0
     return out.transpose("trial", ...).assign_coords(trial=np.arange(n_trials))
 
 
-def _trial_total(values, selected_da):
-    """Each trial's total of ``values`` (on member, ...) over its members: one matrix product."""
-    if isinstance(values, xr.Dataset):
-        return values.map(lambda da: xr.dot(selected_da, da, dim="member"))
-    return xr.dot(selected_da, values, dim="member")
-
-
 @skip_empty
 def bootstrap_mean(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, n_trials=1000, seed=0):
     """The mean of each hist-nat bootstrap trial's values, pooled; NaN are skipped.
@@ -280,13 +273,11 @@ def bootstrap_mean(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, n_trials=1000, seed=
     Returns:
         The same type, with ``member`` and ``year`` replaced by ``trial`` (first, numbered from 0).
     """
-    selected = bootstrap_draws(hist_nat.sizes["member"], n_members, n_trials, seed)
-    selected_da = xr.DataArray(selected.astype(np.float64), dims=("trial", "member"),
-                               coords={"trial": np.arange(n_trials)})
+    selected = bootstrap_draws(hist_nat.sizes["member"], n_members, n_trials, seed).astype(np.float64)
     #(c): sum skips NaN; count counts what it added, so a member with no values in a trial adds nothing
-    total = _trial_total(hist_nat.sum("year", dtype=np.float64), selected_da)
-    count = _trial_total(hist_nat.count("year"), selected_da)
-    return (total / count).transpose("trial", ...)
+    total = weighted_member_sums(hist_nat.sum("year", dtype=np.float64), selected)
+    count = weighted_member_sums(hist_nat.count("year"), selected)
+    return total / count
 
 
 # ---------------------------------------------------------------------------
