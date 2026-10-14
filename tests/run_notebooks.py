@@ -6,7 +6,7 @@ Sections whose heading says (JASMIN) are skipped (the cluster, the raw-data
 conversion, the full-data opening sections, saving to the group workspace),
 so the notebooks run on the sample in tests/data instead. Everything the
 notebooks save goes to a temporary folder (EXTANT_SCRATCH, EXTANT_DATA and
-EXTANT_FIGURES point there), so notebook 04 reads what notebook 03 saved, just
+EXTANT_FIGURES point there), so notebooks 04a-04d read what notebook 03 saved, just
 as it does on JASMIN. Cells run in order in one namespace per notebook, as in
 Jupyter, from the notebooks folder; a failing cell is reported and the run
 carries on. Resampling cells use at most ``--trials`` trials (default 500),

@@ -8,21 +8,24 @@ The data are on JASMIN. A small sample (a 3×3 block of grid cells from two mode
 
 ```
 notebooks/
-    01_process_data.ipynb              raw files -> monthly stores -> seasonal means (once per variable); the SAM index (once)
-    02_era5_evaluation.ipynb           are the models consistent with ERA5? is the observed change detectable? (and the regional evaluation the paper uses)
-    03_forced_response.ipynb           the calculations, each method explained; saves every result (probability ratios, SAM, additivity of the variance)
-    04_forced_response_figures.ipynb   figures, from the saved results: four for every result, from what goes in to how many models agree
-    05_slide_figures.ipynb             figures for talks, including how the forced-response figures are made
-    06_paper_figures.ipynb             the paper's main and supplementary figures, in print style (PDF and PNG)
-    07_figure_candidates.ipynb         every candidate figure of the planning notes (A-F), the verification against ERA5, and the layouts L1-L5
-    08_optimal_fingerprinting.ipynb    are the observed regional seasonal trends explained by the forcings, and is each forcing's size right?
-    09_sea_ice.ipynb                   the sea ice from CEDA onto the 2.5° grid, against ERA5, and with the mean and width changes
-extant/                                the code the notebooks use
-plotting_modules/                      the general plotting package: panel grids, polar maps, colour bars
-tests/                                 pytest suite, the sample data, and a script that runs every notebook
-scripts/                               sea_ice_sample.py: what sea ice CEDA has, and the sea-ice sample (run on JASMIN)
-archive/                               the old draft notebooks
-docs/images/                           reference figures
+    01_process_data.ipynb                     raw files -> monthly stores -> seasonal means (once per variable); the SAM index (once)
+    02_era5_evaluation.ipynb                  are the models consistent with ERA5? is the observed change detectable? (and the regional evaluation the paper uses)
+    03_forced_response.ipynb                  the calculations, each method explained; saves every result (probability ratios, SAM, additivity of the variance)
+    04a_mean_and_signal_to_noise.ipynb        figures, from the saved results (four for every result, from what goes in to how many models agree): the mean change and S/N
+    04b_quantiles_and_width.ipynb             ... the quantile response, and the change in width and which tail
+    04c_distribution_additivity_zonal.ipynb   ... where the mean and the width changed together, additivity, zonal means and the sea-ice edge
+    04d_probability_ratios.ipynb              ... probability ratios and the shift-only ratio
+    05_slide_figures.ipynb                    figures for talks, including how the forced-response figures are made
+    06_paper_figures.ipynb                    the paper's main and supplementary figures, in print style (PDF and PNG)
+    07_figure_candidates.ipynb                every candidate figure of the planning notes (A-F), the verification against ERA5, and the layouts L1-L5
+    08_optimal_fingerprinting.ipynb           are the observed regional seasonal trends explained by the forcings, and is each forcing's size right?
+    09_sea_ice.ipynb                          the sea ice from CEDA onto the 2.5° grid, against ERA5, and with the mean and width changes
+extant/                                       the code the notebooks use
+plotting_modules/                             the general plotting package: panel grids, polar maps, colour bars
+tests/                                        pytest suite, the sample data, and a script that runs every notebook
+scripts/                                      sea_ice_sample.py: what sea ice CEDA has, and the sea-ice sample (run on JASMIN)
+archive/                                      the old draft notebooks
+docs/images/                                  reference figures
 ```
 
 What is in `extant/`:
@@ -47,7 +50,7 @@ What is in `extant/`:
 | `observed_change` | detection, consistency, records and scaling factors |
 | `datatree`, `stats` | DataTree helpers, fast quantiles and KDEs |
 | `jasmin` | starting the Dask cluster and sending this package to its workers |
-| `plots/` | the figures, one module per analysis module, plus `forced_response` (the map grids of notebook 04), `methods` (the step-by-step method figures), `paper_panels` (notebook 07's panels, each drawn into a figure or part of one so they can be put together), `fingerprinting` (notebook 08) and `multimodel` (used only by the archived notebook 04) |
+| `plots/` | the figures, one module per analysis module, plus `forced_response` (the map grids of notebooks 04a–04d), `methods` (the step-by-step method figures), `paper_panels` (notebook 07's panels, each drawn into a figure or part of one so they can be put together), `fingerprinting` (notebook 08) and `multimodel` (used only by the archived notebook 04) |
 
 ## Running it
 
@@ -91,5 +94,5 @@ The second runs every notebook on the sample data, skipping the JASMIN-only sect
 - Seasons are DJF/MAM/JJA/SON, and DJF is labelled by the year of its December. Every experiment is cut at the end of 2014, so the record ends with DJF 2013 and "the final 21 years" are 1993–2013 in every experiment.
 - The width and mean tests (03, sections 2 and 4) compare an experiment's final 21 years with 10 random hist-nat members over the same years (a bootstrap from hist-nat alone), so one null distribution serves every experiment of a model.
 - Every section of 03 that has a *By SAM phase* subsection (the mean, the width and tails, the probability ratios) redoes its result in the seasons of each SAM phase: negative, neutral and positive, cut at hist-nat's terciles.
-- The zonal-mean figures (notebook 04, section 7) follow the layout of Bracegirdle et al. (2024), [doi:10.1038/s41612-024-00822-y](https://doi.org/10.1038/s41612-024-00822-y), Figs 1–3, 6 and 8, but show every model on its own and this project's changes against hist-nat.
+- The zonal-mean figures (notebook 04c, section 7) follow the layout of Bracegirdle et al. (2024), [doi:10.1038/s41612-024-00822-y](https://doi.org/10.1038/s41612-024-00822-y), Figs 1–3, 6 and 8, but show every model on its own and this project's changes against hist-nat.
 - ERA5 evaluation follows Suarez-Gutierrez, Milinski and Maher (2021), *Clim. Dyn.* 57, 2557–2580, [doi:10.1007/s00382-021-05821-w](https://doi.org/10.1007/s00382-021-05821-w).
