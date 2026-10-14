@@ -1081,40 +1081,7 @@ def outside_frequency(plume, dims=SAMPLE_DIM):
 # Running everything at once
 # ---------------------------------------------------------------------------
 
-def evaluate(ensemble, obs, pool_dims=(SAMPLE_DIM, "season"), sample_dim=SAMPLE_DIM,
-             member_dim=MEMBER_DIM, reference=None, alpha=ALPHA):
-    """Run every test on one aligned ensemble and ERA5; everything the figures need.
 
-    Args:
-        ensemble, obs (xr.DataArray): Output of ``align``.
-        pool_dims (Sequence[str]): Pooled into the headline rank histograms; the
-            default pools the four seasons for four times the samples.
-        sample_dim, member_dim (str): Dimension names.
-        reference (slice | None): Anomaly reference years.
-        alpha (float): Two-sided significance level.
-
-    Returns:
-        dict:
-            moments         moment_test (mean, std, skewness, kurtosis), per season
-            statistics      statistic_test of the other statistics, per season
-            ranks           {treatment: rank_histogram_test pooled over ``pool_dims``}
-            ranks_seasonal  {treatment: rank_histogram_test per season}, without histograms
-            plumes          ensemble_plume for raw values and anomalies, along ``treatment``
-            distributions   distribution_summary for raw values, anomalies and detrended
-    """
-    kwargs = dict(sample_dim=sample_dim, member_dim=member_dim, reference=reference)
-    return {
-        "moments": moment_test(ensemble, obs, alpha=alpha, **kwargs),
-        "statistics": statistic_test(ensemble, obs, alpha=alpha, **kwargs),
-        "ranks": {t: rank_histogram_test(ensemble, obs, t, pool_dims, alpha=alpha, **kwargs)
-                  for t in TREATMENTS},
-        "ranks_seasonal": {t: rank_histogram_test(ensemble, obs, t, (sample_dim,), alpha=alpha,
-                                                  keep_histograms=False, **kwargs)
-                           for t in ("anomaly", "detrended")},
-        "plumes": xr.concat([ensemble_plume(ensemble, obs, t, **kwargs) for t in ("raw", "anomaly")],
-                            dim=xr.Variable("treatment", ["raw", "anomaly"])),
-        "distributions": distribution_summary(ensemble, obs, tuple(TREATMENTS), **kwargs),
-    }
 
 
 #(t): Rank statistics worth a scorecard column, per treatment (a detrended series has no rank trend to speak of)
