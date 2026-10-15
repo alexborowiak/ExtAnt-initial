@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 pytest.importorskip("plotting_modules")
 
-from extant import era5_evaluation as ev  # noqa: E402
+from extant import datatree, era5_evaluation as ev  # noqa: E402
 from extant.plots import era5_evaluation as evp  # noqa: E402
 from extant import response_change as rc  # noqa: E402
 from extant.plots import response_change as rcp  # noqa: E402
@@ -22,49 +22,103 @@ def close_figures():
     plt.close("all")
 
 
+def _tests(statistics):
+    """``ev.locate`` of each statistic (members and ERA5 in one Dataset), along a statistic dim, as in notebook 02."""
+    return xr.concat([ev.locate(values["members"], values["era5"]) for values in statistics.values()],
+                     dim=xr.Variable("statistic", list(statistics)))
+
+
 @pytest.fixture(scope="module")
-def results():
-    """``ev.evaluate`` output for two toy models at one point."""
-    return {name: ev.evaluate(*ev.align(*ev.simulate_ensemble(n_members=n, seed=n, **kwargs)))
-            for name, n, kwargs in (("A", 25, {}), ("B", 30, {"noise": 1.6}))}
+def point():
+    """Two toy models at one point, as notebook 02 has them: members and ERA5 on the same samples, side by side."""
+    nodes = {}
+    for name, n, kwargs in (("A", 25, {}), ("B", 30, {"noise": 1.6})):
+        ens, obs = ev.align(*ev.simulate_ensemble(n_members=n, seed=n, **kwargs))
+        nodes[f"{name}/historical"] = xr.Dataset({"members": ens, "era5": obs})
+    return xr.DataTree.from_dict(nodes)
 
 
-def test_distribution_grids(results):
-    one = results["A"]
-    evp.distribution_grid(one["distributions"], moments=one["moments"], title="one model")
-    evp.distribution_grid({m: r["distributions"] for m, r in results.items()}, season="DJF",
-                          moments={m: r["moments"] for m, r in results.items()})
+@pytest.fixture(scope="module")
+def tests(point):
+    """The moment test and the other statistics of every model, on (model, statistic, season)."""
+    point_ds = datatree.tree_to_dataset(point, dims=["model", "experiment"]).sel(experiment="historical", drop=True)
+    detrended_ds = point_ds.map(ev.detrend)
+    moments = _tests({
+        "mean": point_ds.mean("year"),
+        "std": detrended_ds.std("year", ddof=1),
+        "skewness": detrended_ds.map(ev.skewness),
+        "kurtosis": detrended_ds.map(ev.excess_kurtosis),
+    }).assign_coords(treatment=("statistic", ["raw", "detrended", "detrended", "detrended"]))
+    others = _tests({
+        "trend": point_ds.map(ev.trend),
+        "width": detrended_ds.map(ev.quantile_width),
+    }).assign_coords(treatment=("statistic", ["raw", "detrended"]))
+    return moments, others
 
 
-def test_plume_grids(results):
-    evp.plume_grid(results["A"]["plumes"], context=results["B"]["plumes"].sel(treatment=["anomaly"]))
-    plumes = xr.concat([r["plumes"].sel(treatment="anomaly") for r in results.values()], dim="model",
-                       coords="minimal", compat="override").assign_coords(model=list(results))
-    evp.plume_grid(plumes, row_dim="model", col_dim="season", sharey=True)
+def _ranks(point, treatment, pool_dims=("year", "season"), keep_histograms=True):
+    return point.map_over_datasets(lambda ds: ev.rank_histogram_test(
+        ds["members"], ds["era5"], treatment, pool_dims=pool_dims, keep_histograms=keep_histograms)
+        if ds.data_vars else ds)
 
 
-def test_statistic_and_rank_figures(results):
-    evp.statistic_grid(results["A"]["moments"])
-    evp.statistic_grid(results["A"]["statistics"], statistics=ev.SIGNAL_STATISTICS + ev.NOISE_STATISTICS)
-    evp.rank_histogram_row({t: r for t, r in results["A"]["ranks"].items()})
-    evp.rank_histogram_grid({m: r["ranks"] for m, r in results.items()})
-    ens, obs = ev.align(*ev.simulate_ensemble(n_members=20))
-    season_ens, season_obs = ens.sel(season="DJF"), obs.sel(season="DJF")
-    result = ev.rank_histogram_test(season_ens, season_obs, "anomaly")
-    evp.rank_anatomy(ev.treat(season_ens, "anomaly"), ev.treat(season_obs, "anomaly"), result)
+def test_distribution_grids(point, tests):
+    moments, _ = tests
+    one = point["A/historical"].to_dataset()
+    evp.distribution_grid(ev.distribution_summary(one["members"], one["era5"], ("raw", "anomaly", "detrended")),
+                          moments=moments.sel(model="A"), title="one model")
+    every = {node.parent.name: ev.distribution_summary(node["members"], node["era5"]) for node in point.leaves}
+    evp.distribution_grid(every, season="DJF", moments=moments)
 
 
-def test_summaries(results):
-    table = ev.summary_table(results)
+def test_plume_grids(point):
+    plumes = {node.parent.name: xr.concat([ev.ensemble_plume(node["members"], node["era5"], t)
+                                           for t in ("raw", "anomaly")], dim=xr.Variable("treatment", ["raw", "anomaly"]))
+              for node in point.leaves}
+    evp.plume_grid(plumes["A"], context=plumes["B"].sel(treatment=["anomaly"]))
+    every = xr.concat([plume.sel(treatment="anomaly") for plume in plumes.values()], dim="model",
+                      coords="minimal", compat="override").assign_coords(model=list(plumes))
+    evp.plume_grid(every, row_dim="model", col_dim="season", sharey=True)
+
+
+def test_statistic_and_rank_figures(point, tests):
+    moments, others = tests
+    evp.statistic_grid(moments.sel(model="A"))
+    evp.statistic_grid(others.sel(model="A"), statistics=["trend", "width"])
+    ranks = {label: _ranks(point, treatment) for label, treatment in
+             (("Raw values", "raw"), ("Anomalies", "anomaly"), ("Detrended anomalies", "detrended"))}
+    evp.rank_histogram_row({label: tree["A/historical"].to_dataset() for label, tree in ranks.items()})
+    evp.rank_histogram_grid(ranks)
+    one = point["A/historical"].to_dataset().sel(season="DJF")
+    result = ev.rank_histogram_test(one["members"], one["era5"], "anomaly")
+    evp.rank_anatomy(one["members"] - one["members"].mean("year"), one["era5"] - one["era5"].mean("year"), result)
+
+
+def test_summaries(point, tests):
+    moments, others = tests
+    seasonal = datatree.tree_to_dataset(_ranks(point, "anomaly", ("year",), False), dims=["model", "experiment"])
+    rank_rows = seasonal.sel(experiment="historical", drop=True)[["percentile", "verdict", "testable"]]
+    rank_rows = rank_rows.sel(statistic=["rank_trend", "dispersion"]).drop_vars(["label", "units"])
+    rank_rows = rank_rows.assign_coords(statistic=["rank_trend", "dispersion (anomaly)"])
+    table = xr.concat([moments[["percentile", "verdict", "testable"]], others[["percentile", "verdict", "testable"]],
+                       rank_rows], dim="statistic")
     evp.scorecard(table)
     evp.signal_noise_diagram(table)
     evp.signal_noise_diagram(table, y="width")
-    demo = {name: ev.evaluate(*ev.align(*ev.simulate_ensemble(n_members=20, **kwargs)))
-            for name, kwargs in ev.SCENARIOS.items()}
-    evp.scenario_grid(demo)
+    #(c): An unknown statistic (an experiment, say) is its own label
+    evp.scorecard(table.sel(statistic=["mean"]).assign_coords(statistic=["hist-nat"]))
+
+    demo = xr.concat([xr.Dataset(dict(zip(("members", "era5"), ev.simulate_ensemble(n_members=20, **kwargs))))
+                      for kwargs in ev.SCENARIOS.values()], dim=xr.Variable("scenario", list(ev.SCENARIOS)))
+    detrended = demo.map(ev.detrend)
+    demo_tests = _tests({"mean": demo.mean("year"), "std": detrended.std("year", ddof=1)})
+    evp.scenario_grid(ev.ensemble_plume(demo["members"], demo["era5"], "raw"),
+                      ev.rank_histogram_test(demo["members"], demo["era5"], "anomaly", ("year", "season")),
+                      ev.rank_histogram_test(demo["members"], demo["era5"], "detrended", ("year", "season")),
+                      demo_tests)
 
 
-def test_maps(results):
+def test_maps():
     pytest.importorskip("cartopy")
     lat, lon = np.arange(-87.5, -39.9, 10.0), np.arange(-180.0, 180.0, 30.0)
     field = xr.DataArray(np.random.default_rng(0).uniform(0, 100, (2, 4, lat.size, lon.size)),

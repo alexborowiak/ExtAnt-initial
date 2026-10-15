@@ -20,9 +20,7 @@ Sections
 3.  Statistics          the four moments (mean, std, skewness, kurtosis) and other statistics
                         (trend, width, tails, records, lag-1 autocorrelation, ...)
 4.  Locating ERA5       the percentile and p-value that every test reports
-5.  Moment test         the four moments, ERA5 against every member; the other statistics the
-                        same way; and the field test: is ERA5 flagged over more of a map than
-                        a perfect model would be?
+5.  Field test          is ERA5 flagged over more of a map than a perfect model would be?
 6.  Rank histograms     the Suarez-Gutierrez et al. (2021) test
 7.  Distributions       kernel density estimates and quantiles
 8.  Plume membership    is ERA5 inside the ensemble range?
@@ -41,12 +39,12 @@ seasons at once, or a whole map. ``obs`` is ERA5 in practice, but nothing here
 is ERA5-specific. Works on numpy- or dask-backed data; at a single point the
 data are tiny, so ``.load()`` them first.
 
-The two tests (sections 5 and 6) return datasets with the same layout, built
-by ``locate``, so they can be stacked with ``combine_tests`` and drawn by the
-same functions in ``plots.era5_evaluation``.
+Each test is run in notebook 02, one statistic at a time: treat ERA5 and the
+members alike, compute the statistic for each, then ``locate`` ERA5 among the
+members. Every result has the layout ``locate`` gives it, so the notebook can
+put several along a ``statistic`` dim and ``plots.era5_evaluation`` can draw them.
 """
 
-from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -54,7 +52,7 @@ import scipy.stats
 import xarray as xr
 
 from .quantiles import lowess_matrix_xarray
-from .significance import area_mean, pvalue_two_sided
+from .significance import area_mean
 from .stats import nan_quantile
 
 MEMBER_DIM = "member"
@@ -201,16 +199,6 @@ def treat(da, treatment, sample_dim=SAMPLE_DIM, reference=None):
 # short records, but identically so for ERA5 and the members, so the
 # comparison is unaffected.
 
-def mean(da, dim=SAMPLE_DIM):
-    """Mean over the samples."""
-    return da.mean(dim)
-
-
-def std(da, dim=SAMPLE_DIM):
-    """Standard deviation over the samples (ddof=1)."""
-    return da.std(dim, ddof=1)
-
-
 def _standardised_moment(da, dim, order):
     deviation = da - da.mean(dim)
     variance = (deviation**2).mean(dim)
@@ -331,11 +319,12 @@ def expected_records(n_years):
 
 @dataclass(frozen=True)
 class Diagnostic:
-    """How to compute, label and read one test statistic.
+    """How to label and read one test statistic in the figures.
 
     ``low`` and ``high`` say what it means for the *model* when ERA5 falls
     significantly below or above the members; the plots print them as the
-    verdict. ``func`` and ``treatment`` are used by ``statistic_test`` only.
+    verdict. ``treatment`` is the values notebook 02 computes it on, printed
+    when a result does not carry its own ``treatment`` coordinate.
     """
 
     label: str
@@ -343,21 +332,20 @@ class Diagnostic:
     low: str
     high: str
     treatment: str | None = None
-    func: Callable | None = None
 
 
-#(t): The four moments, each paired with the treatment that isolates what it tests
+#(t): The four moments, each with the treatment that isolates what it tests
 #(c): The mean is of the raw values (the climatology). The other three are of detrended values,
 #(c): so the forced trend over the record neither inflates the spread nor bends the shape.
 MOMENTS = {
     "mean": Diagnostic("Mean", "°C", "model too warm", "model too cold",
-                       treatment="raw", func=mean),
+                       treatment="raw"),
     "std": Diagnostic("Std. deviation", "°C", "model too variable", "model not variable enough",
-                      treatment="detrended", func=std),
+                      treatment="detrended"),
     "skewness": Diagnostic("Skewness", "", "model skewness too high", "model skewness too low",
-                           treatment="detrended", func=skewness),
+                           treatment="detrended"),
     "kurtosis": Diagnostic("Excess kurtosis", "", "model tails too heavy", "model tails too light",
-                           treatment="detrended", func=excess_kurtosis),
+                           treatment="detrended"),
 }
 
 #(t): Other statistics, tested in exactly the same way but not moments
@@ -365,21 +353,21 @@ MOMENTS = {
 #(c): changes the forced-response notebooks analyse. Then record counts and year-to-year memory.
 STATISTICS = {
     "trend": Diagnostic("Trend", "°C/decade", "model trend too large", "model trend too small",
-                        treatment="raw", func=trend),
+                        treatment="raw"),
     "emergence": Diagnostic("S/N (own change)", "", "model emerges too strongly", "model emerges too weakly",
-                            treatment="raw", func=self_signal_to_noise),
+                            treatment="raw"),
     "width": Diagnostic("Width (Q95 − Q05)", "°C", "model distribution too wide", "model distribution too narrow",
-                        treatment="detrended", func=quantile_width),
+                        treatment="detrended"),
     "lower_tail": Diagnostic("Cold tail (Q50 − Q05)", "°C", "model cold tail too long", "model cold tail too short",
-                             treatment="detrended", func=lower_tail_width),
+                             treatment="detrended"),
     "upper_tail": Diagnostic("Warm tail (Q95 − Q50)", "°C", "model warm tail too long", "model warm tail too short",
-                             treatment="detrended", func=upper_tail_width),
+                             treatment="detrended"),
     "records_high": Diagnostic("Record highs", "count", "model sets too many record highs",
-                               "model sets too few record highs", treatment="raw", func=record_highs),
+                               "model sets too few record highs", treatment="raw"),
     "records_low": Diagnostic("Record lows", "count", "model sets too many record lows",
-                              "model sets too few record lows", treatment="raw", func=record_lows),
+                              "model sets too few record lows", treatment="raw"),
     "lag1": Diagnostic("Lag-1 autocorrelation", "", "model too persistent", "model not persistent enough",
-                       treatment="detrended", func=lag1_autocorrelation),
+                       treatment="detrended"),
 }
 
 #(t): The other statistics grouped by the question they answer
@@ -420,6 +408,10 @@ def locate(members, observed, member_dim=MEMBER_DIM, alpha=ALPHA):
     With N members the smallest two-sided p-value is 2 / (N + 1), so at
     alpha = 0.1 an ensemble needs at least 20 members to show anything.
 
+    Only the members with a value count, so several models can sit side by
+    side on one ``member`` dim, each padded with NaN to the largest ensemble
+    (as ``datatree.tree_to_dataset`` leaves them): N is each model's own.
+
     Args:
         members (xr.DataArray): The statistic for every member: the null distribution.
         observed (xr.DataArray): The same statistic for ERA5.
@@ -432,7 +424,8 @@ def locate(members, observed, member_dim=MEMBER_DIM, alpha=ALPHA):
             members               every member's value (kept for plotting)
             lower, median, upper  the members' alpha/2, 50% and 1 - alpha/2 quantiles
             percentile            % of members below ERA5 (ties count half); 50 is ideal
-            pvalue                two-sided p-value (significance.pvalue_two_sided)
+            pvalue                two-sided p-value: twice the smaller tail, with ERA5 counted as one
+                                  more member (the +1s), at most 1
             verdict               -1 ERA5 significantly below the members, +1 above, 0 not flagged
             testable              whether N is large enough for anything to be flagged at all;
                                   where it is not, a verdict of 0 means "untestable", not "consistent"
@@ -443,7 +436,10 @@ def locate(members, observed, member_dim=MEMBER_DIM, alpha=ALPHA):
     percentile = 100 * (below + 0.5 * ties) / n
 
     bounds = nan_quantile(members, [alpha / 2, 0.5, 1 - alpha / 2], member_dim)
-    pvalue = pvalue_two_sided(members, observed, dim=member_dim, method="tails")
+    #(t): The two tails: the share of the members at or below ERA5, and at or above it
+    lower_tail = (below + ties + 1) / (n + 1)
+    upper_tail = (n - below + 1) / (n + 1)
+    pvalue = np.minimum(2 * np.minimum(lower_tail, upper_tail), 1)
     verdict = xr.where(pvalue < alpha, np.sign(percentile - 50), 0)
     #(c): The smallest possible two-sided p-value is 2 / (N + 1); if that is not below alpha nothing can be flagged
     testable = (2 / (n + 1)) < alpha
@@ -474,108 +470,14 @@ def _stack(results, names, registry, **attrs):
     return stacked
 
 
-def combine_tests(*results):
-    """Stack test results along ``statistic``, e.g. for a scorecard.
-
-    Only ``RESULT_VARIABLES`` are kept. A statistic that appears in several
-    results (e.g. rank dispersion of anomalies and of detrended anomalies) is
-    made unique by appending its treatment to its name and label.
-    """
-    parts = [result[list(RESULT_VARIABLES)] for result in results]
-    names = [name for part in parts for name in part["statistic"].values]
-    repeated = {name for name in names if names.count(name) > 1}
-
-    relabelled = []
-    for part in parts:
-        treatments = part["treatment"].values
-        relabelled.append(part.assign_coords(
-            statistic=[f"{s} ({t})" if s in repeated else s
-                       for s, t in zip(part["statistic"].values, treatments)],
-            label=("statistic", [f"{lab} ({t})" if s in repeated else lab
-                                 for s, lab, t in zip(part["statistic"].values, part["label"].values, treatments)]),
-        ))
-    return xr.concat(relabelled, dim="statistic", coords="minimal", compat="override")
-
-
 # ---------------------------------------------------------------------------
-# 5. Moment test (and the other statistics, tested the same way)
+# 5. Field test
 # ---------------------------------------------------------------------------
-
-def statistic_test(ensemble, obs, statistics=tuple(STATISTICS), sample_dim=SAMPLE_DIM,
-                   member_dim=MEMBER_DIM, reference=None, alpha=ALPHA, registry=None):
-    """Test ERA5 against the ensemble one statistic at a time.
-
-    For each statistic: give ERA5 and every member the same treatment, compute
-    the statistic over ``sample_dim`` for each, and ``locate`` ERA5 among the
-    members. The members' values are the sampling distribution of that
-    statistic for this record length under the model's climate, so no
-    parametric formula or effective sample size is needed. The treatment
-    isolates what is tested:
-
-        statistic   treatment   tests
-        The moments (``MOMENTS``; ``moment_test`` runs these four)
-        mean        raw         the climatology (mean-state bias)
-        std         detrended   the size of year-to-year variability (noise)
-        skewness    detrended   the asymmetry of the noise
-        kurtosis    detrended   the tail weight of the noise (excess kurtosis)
-        Other statistics (``STATISTICS``)
-        trend       raw         the forced response over the record (signal)
-        emergence   raw         the smoothed change over the record in units of the
-                                series' own noise (its S/N against itself)
-        width       detrended   the Q95 - Q05 width of the distribution
-        lower_tail  detrended   the length of the cold tail, Q50 - Q05
-        upper_tail  detrended   the length of the warm tail, Q95 - Q50
-        records_high, records_low
-                    raw         how many record highs / lows the record sets;
-                                1/2 + ... + 1/n are expected with no change at all
-        lag1        detrended   the year-to-year memory of the noise
-
-    Args:
-        ensemble, obs (xr.DataArray): Output of ``align``.
-        statistics (Sequence[str]): Keys of ``MOMENTS`` or ``STATISTICS``.
-        sample_dim, member_dim (str): Dimension names.
-        reference (slice | None): Anomaly reference years (only 'anomaly' uses it).
-        alpha (float): Two-sided significance level.
-        registry (dict | None): Name -> ``Diagnostic`` for every name in ``statistics``; ``MOMENTS`` and
-            ``STATISTICS`` if None. Another variable brings its own (e.g. ``sea_ice.ERA5_DIAGNOSTICS``).
-
-    Returns:
-        xr.Dataset: ``locate`` output on a ``statistic`` dim, with ``label``,
-        ``units`` and ``treatment`` coordinates along it.
-    """
-    registry = registry or {**MOMENTS, **STATISTICS}
-    treated = {}
-    results = []
-    for name in statistics:
-        diagnostic = registry[name]
-        if diagnostic.treatment not in treated:
-            treated[diagnostic.treatment] = (
-                treat(ensemble, diagnostic.treatment, sample_dim, reference),
-                treat(obs, diagnostic.treatment, sample_dim, reference),
-            )
-        ensemble_t, obs_t = treated[diagnostic.treatment]
-        results.append(locate(diagnostic.func(ensemble_t, sample_dim), diagnostic.func(obs_t, sample_dim),
-                              member_dim, alpha))
-
-    stacked = _stack(results, statistics, registry, test="statistic", alpha=alpha,
-                     n_members=ensemble.sizes[member_dim])
-    return stacked.assign_coords(treatment=("statistic", [registry[name].treatment for name in statistics]))
-
-
-def moment_test(ensemble, obs, **kwargs):
-    """The moment test: ERA5's mean, std, skewness and excess kurtosis among the members'.
-
-    ``statistic_test`` on the four ``MOMENTS``; it takes the same keyword
-    arguments. Use ``field_test`` on its output to ask whether a model is
-    acceptable over a whole map rather than point by point.
-    """
-    return statistic_test(ensemble, obs, tuple(MOMENTS), **kwargs).assign_attrs(test="moment")
-
 
 def _flagged(below, n_others, alpha):
     """Whether a value with ``below`` of ``n_others`` values under it is flagged by the two-sided rank test.
 
-    The same rule ``locate`` applies through ``pvalue_two_sided`` (ties aside):
+    The same rule ``locate`` applies (ties aside):
     p = 2 x (the smaller tail count + 1) / (n_others + 1).
     """
     above = n_others - below
@@ -601,8 +503,8 @@ def field_test(result, dims=("lat", "lon"), member_dim=MEMBER_DIM, alpha=ALPHA):
     and the pseudo-observations face exactly the same test.
 
     Args:
-        result (xr.Dataset): ``moment_test`` or ``statistic_test`` output on a
-            lat/lon grid, still with ``members``.
+        result (xr.Dataset): ``locate`` results (e.g. the four moments along a ``statistic``
+            dim) on a lat/lon grid, still with ``members``.
         dims (Sequence[str]): The map dimensions; areas are cos(latitude)-weighted.
         member_dim (str): Member dimension.
         alpha (float): Significance level, for the point-wise tests and the field test.
@@ -870,28 +772,6 @@ def rank_histogram_summary(ensemble, obs, treatment="anomaly", n_bins=10, pool_d
     ).drop_vars(["obs_rank", "pseudo_rank"], errors="ignore")
 
 
-def summary_of(ds, obs, test, variable="tas", years=None, **kwargs):
-    """One test of a tree node's ``variable`` against ``obs``, aligned first, without the members.
-
-    For ``datatree.reduce_to_dataset``: e.g.
-    ``partial(summary_of, obs=era5_da, test=rank_histogram_summary, treatment="anomaly")``
-    tests every node, and the member-free results stack into one Dataset.
-
-    Args:
-        ds (xr.Dataset): One node, with ``variable`` on (member, year, ...).
-        obs (xr.DataArray): ERA5 on (year, ...), the same other dims.
-        test (Callable): A test taking ``(ensemble, obs, **kwargs)``, e.g. ``statistic_test``.
-        variable (str): The variable tested.
-        years (slice | None): The years compared (see ``align``).
-        **kwargs: Passed to ``test``.
-
-    Returns:
-        xr.Dataset: The test's result, with any ``member`` dim dropped.
-    """
-    result = test(*align(ds[variable], obs, years=years), **kwargs)
-    return result.drop_dims(MEMBER_DIM, errors="ignore")
-
-
 def running_mean(frequency, window=5, rank_dim="rank"):
     """Centred running mean over the interior ranks, as drawn on Suarez-Gutierrez et al.'s histograms.
 
@@ -1075,40 +955,6 @@ def outside_frequency(plume, dims=SAMPLE_DIM):
         "expected_outside": plume["expected_outside"],
         "n_samples": plume["below"].count(dims),
     })
-
-
-# ---------------------------------------------------------------------------
-# Running everything at once
-# ---------------------------------------------------------------------------
-
-
-
-
-#(t): Rank statistics worth a scorecard column, per treatment (a detrended series has no rank trend to speak of)
-SUMMARY_RANKS = {"anomaly": ("dispersion", "rank_trend"), "detrended": ("dispersion",)}
-
-
-def summary_table(results, rank_statistics=SUMMARY_RANKS, member_dim=MEMBER_DIM):
-    """Stack every model's per-season test results into one (model, statistic, season) dataset.
-
-    Args:
-        results (dict[str, dict]): Model -> ``evaluate`` output.
-        rank_statistics (dict[str, Sequence[str]]): Treatment -> keys of ``RANKS``
-            to include from the per-season rank tests.
-        member_dim (str): Member dimension, dropped because its size differs between models.
-
-    Returns:
-        xr.Dataset: ``RESULT_VARIABLES`` except ``members``, on ``model``,
-        ``statistic`` and ``season``.
-    """
-    tables = []
-    for model, result in results.items():
-        ranks = [result["ranks_seasonal"][t].sel(statistic=list(names)) for t, names in rank_statistics.items()]
-        table = combine_tests(result["moments"], result["statistics"], *ranks).drop_dims(member_dim)
-        tables.append(table.expand_dims(model=[model]))
-    table = xr.concat(tables, dim="model", coords="minimal", compat="override")
-    table.attrs = {"alpha": next(iter(results.values()))["moments"].attrs["alpha"]}
-    return table
 
 
 # ---------------------------------------------------------------------------

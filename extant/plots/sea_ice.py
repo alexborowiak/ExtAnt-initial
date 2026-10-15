@@ -464,7 +464,7 @@ def edge_latitudes(members, era5, title=None):
 
 
 def _verdict(cell, diagnostic):
-    """(ok, message) for one statistic of ``sea_ice.era5_extent_test`` at one model and season."""
+    """(ok, message) for one statistic of ERA5's extent test (notebook 09, section 4.4) at one model and season."""
     if not bool(np.isfinite(cell["era5"])) or not bool(cell["members"].notnull().any()):
         return None, "no data"
     call = int(cell["verdict"])
@@ -486,7 +486,8 @@ def era5_strips(result, statistic, diagnostics=sea_ice.ERA5_DIAGNOSTICS, title=N
     few members for the test to flag anything.
 
     Args:
-        result (xr.Dataset): ``sea_ice.era5_extent_test`` for every model, on (model, statistic, season, member).
+        result (xr.Dataset): ``era5_evaluation.locate`` results for every model, on (model, statistic, season,
+            member), as notebook 09 (section 4.4) makes them.
         statistic (str): Which statistic.
         diagnostics (dict): ``sea_ice.ERA5_DIAGNOSTICS``.
         title (str | None): Figure title.

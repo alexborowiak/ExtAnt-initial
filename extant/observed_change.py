@@ -7,21 +7,20 @@ influence (hist-nat)? And how much of it does each forcing explain?
 Sections
 --------
 1. Regions              area-weighted regional means (more signal, less noise than a grid point)
-2. Consistency          ERA5's trend (or any other statistic) among each experiment's members
-3. Detection maps       ERA5 outside hist-nat's range (detected) and inside historical's (consistent)
-4. Record rates         how many record highs and lows ERA5 sets, against chance and the members
-5. Scaling factors      regression of ERA5 on the models' forced responses ("fingerprinting"),
+2. Detection classes    ERA5 outside hist-nat's range (detected) and inside historical's (consistent)
+3. Record rates         how many record highs and lows ERA5 sets, against chance and the members
+4. Scaling factors      regression of ERA5 on the models' forced responses ("fingerprinting"),
                         with the uncertainty from a perfect-model test
 
-Everything reuses era5_evaluation: ``ev.align`` for common samples,
-``ev.statistic_test`` and ``ev.locate`` for where ERA5 falls among members.
+ERA5's trend among each experiment's members (consistency and detection) is
+worked out in notebook 02 with era5_evaluation: ``ev.align`` for common
+samples, ``ev.locate`` for where ERA5 falls among the members.
 """
 
 import numpy as np
 import xarray as xr
 
 from . import era5_evaluation as ev
-from .datatree import reduce_to_dataset
 
 #(t): The observed period that ERA5 and LESFMIP historical share
 YEARS = slice(1979, 2014)
@@ -71,56 +70,7 @@ def regional_means(obj, regions=REGIONS):
 
 
 # ---------------------------------------------------------------------------
-# 2. Consistency with each experiment
-# ---------------------------------------------------------------------------
-
-def experiment_consistency(ensembles, obs, statistics=("trend",), years=YEARS, alpha=ev.ALPHA):
-    """Where ERA5 falls among each experiment's members, for one or more statistics.
-
-    ERA5 inside hist-nat's range means the observed change could be natural;
-    outside hist-nat but inside historical is the classic detected-and-
-    consistent result; inside a single-forcing experiment's range means that
-    forcing alone could produce it.
-
-    Args:
-        ensembles (dict[str, xr.DataArray]): Experiment -> members on (member, year, season, ...).
-        obs (xr.DataArray): ERA5 on (year, season, ...).
-        statistics (Sequence[str]): Keys of ``ev.MOMENTS`` or ``ev.STATISTICS``.
-        years (slice): The shared period.
-        alpha (float): Two-sided significance level.
-
-    Returns:
-        dict[str, xr.Dataset]: Experiment -> ``ev.statistic_test`` output.
-    """
-    return {experiment: ev.statistic_test(*ev.align(ensemble, obs, years=years), statistics=statistics, alpha=alpha)
-            for experiment, ensemble in ensembles.items()}
-
-
-def consistency_table(results, statistic="trend"):
-    """Stack ``experiment_consistency`` outputs for many models into a scorecard table.
-
-    Args:
-        results (dict[str, dict[str, xr.Dataset]]): Model -> experiment -> ``ev.statistic_test`` output.
-        statistic (str): The statistic to tabulate.
-
-    Returns:
-        xr.Dataset: ``ev.RESULT_VARIABLES`` (without members) on (model, statistic, season),
-        where ``statistic`` holds the experiments, ready for ``evp.scorecard``.
-    """
-    tables = []
-    for model, by_experiment in results.items():
-        rows = [result.sel(statistic=[statistic]).drop_dims("member").assign_coords(
-                    statistic=[experiment], label=("statistic", [experiment]))
-                for experiment, result in by_experiment.items()]
-        tables.append(xr.concat(rows, "statistic", coords="minimal", compat="override").expand_dims(model=[model]))
-    table = xr.concat(tables, "model", coords="minimal", compat="override", join="outer")
-    table.attrs = {"alpha": next(iter(next(iter(results.values())).values())).attrs["alpha"],
-                   "statistic": statistic}
-    return table
-
-
-# ---------------------------------------------------------------------------
-# 3. Detection maps
+# 2. Detection classes
 # ---------------------------------------------------------------------------
 
 #(t): Detection classes: is ERA5 outside hist-nat's range (detected) and inside historical's (consistent)?
@@ -136,7 +86,7 @@ def detection_class(historical, hist_nat):
     """Classify each point from ERA5's tests against historical and against hist-nat.
 
     Args:
-        historical, hist_nat (xr.Dataset): ``ev.locate`` (or one ``ev.statistic_test`` statistic) outputs.
+        historical, hist_nat (xr.Dataset): ``ev.locate`` outputs, e.g. of the trend at every grid point.
 
     Returns:
         xr.DataArray: Codes of ``DETECTION_CLASSES``; NaN where either test has no
@@ -152,34 +102,8 @@ def detection_class(historical, hist_nat):
     return classes.where(usable)
 
 
-def detection_maps(tree, obs, statistic="trend", experiment="historical", years=YEARS,
-                   alpha=ev.ALPHA, variable="tas"):
-    """Detection classes on the whole grid for every model that has both experiments.
-
-    Loads one experiment of one model at a time (1979-2014 only).
-
-    Returns:
-        xr.Dataset: ``detection_class`` and ERA5's percentile among each
-        experiment's members, on (model, season, lat, lon).
-    """
-    def test(ds):
-        ensemble, era5 = ev.align(ds[variable].sel(year=years).load(), obs, years=years)
-        return ev.statistic_test(ensemble, era5, (statistic,), alpha=alpha).sel(statistic=statistic).drop_dims("member")
-
-    pair = tree.filter(lambda node: node.name in (experiment, "hist-nat")
-                       and {experiment, "hist-nat"} <= set(node.parent.children))
-    tests = reduce_to_dataset(pair, test, coords="minimal", compat="override").drop_vars(
-        ["statistic", "label", "units", "treatment"], errors="ignore")
-    tested, natural = tests.sel(experiment=experiment, drop=True), tests.sel(experiment="hist-nat", drop=True)
-    return xr.Dataset({
-        "detection_class": detection_class(tested, natural),
-        f"{experiment}_percentile": tested["percentile"],
-        "hist-nat_percentile": natural["percentile"],
-    })
-
-
 # ---------------------------------------------------------------------------
-# 4. Record rates
+# 3. Record rates
 # ---------------------------------------------------------------------------
 
 def record_curves(ensembles, obs, years=YEARS, pool_seasons=True):
@@ -222,7 +146,7 @@ def record_curves(ensembles, obs, years=YEARS, pool_seasons=True):
 
 
 # ---------------------------------------------------------------------------
-# 5. Scaling factors (fingerprinting)
+# 4. Scaling factors (fingerprinting)
 # ---------------------------------------------------------------------------
 
 #(t): Signal sets: name -> (experiment, experiment subtracted or None)

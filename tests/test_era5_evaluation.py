@@ -70,7 +70,6 @@ def test_moments_match_scipy():
     da = xr.DataArray(RNG.gamma(2.0, size=(3, 40)), dims=("member", "year"))
     np.testing.assert_allclose(ev.skewness(da), scipy.stats.skew(da.values, axis=1))
     np.testing.assert_allclose(ev.excess_kurtosis(da), scipy.stats.kurtosis(da.values, axis=1))
-    np.testing.assert_allclose(ev.std(da), da.values.std(axis=1, ddof=1))
     x = da.values[0]
     np.testing.assert_allclose(ev.lag1_autocorrelation(da.isel(member=0)), np.corrcoef(x[1:], x[:-1])[0, 1])
 
@@ -146,10 +145,42 @@ def test_locate():
 # 5. Moment test and field test
 # ---------------------------------------------------------------------------
 
-def test_moment_test_is_the_four_moments():
-    ens, obs = ev.align(*ev.simulate_ensemble(n_members=20))
-    assert list(ev.moment_test(ens, obs).statistic.values) == ["mean", "std", "skewness", "kurtosis"]
-    assert not set(ev.statistic_test(ens, obs).statistic.values) & set(ev.MOMENTS)
+def _moment_tests(ens, obs):
+    """The moment test as notebook 02 runs it: each moment of the members and ERA5, then ``locate``."""
+    ds = xr.Dataset({"members": ens, "era5": obs})
+    detrended = ds.map(ev.detrend)
+    moments = [ds.mean("year"), detrended.std("year", ddof=1), detrended.map(ev.skewness),
+               detrended.map(ev.excess_kurtosis)]
+    return xr.concat([ev.locate(moment["members"], moment["era5"]) for moment in moments],
+                     dim=xr.Variable("statistic", ["mean", "std", "skewness", "kurtosis"]))
+
+
+def _statistic_tests(ens, obs):
+    """The other statistics as notebook 02 runs them."""
+    ds = xr.Dataset({"members": ens, "era5": obs})
+    detrended = ds.map(ev.detrend)
+    statistics = {
+        "trend": ds.map(ev.trend),
+        "emergence": ds.map(ev.self_signal_to_noise),
+        "width": detrended.map(ev.quantile_width),
+        "lower_tail": detrended.map(ev.lower_tail_width),
+        "upper_tail": detrended.map(ev.upper_tail_width),
+        "records_high": ds.map(ev.record_highs),
+        "records_low": ds.map(ev.record_lows),
+        "lag1": detrended.map(ev.lag1_autocorrelation),
+    }
+    return xr.concat([ev.locate(values["members"], values["era5"]) for values in statistics.values()],
+                     dim=xr.Variable("statistic", list(statistics)))
+
+
+def test_locate_counts_only_members_with_values():
+    #(c): Models padded with NaN to a shared member dim (as tree_to_dataset leaves them) are tested against their own N
+    ens, obs = ev.align(*ev.simulate_ensemble(n_members=24, seed=2))
+    statistic = ens.std("year", ddof=1)
+    padded = statistic.reindex(member=np.arange(40))
+    alone, side_by_side = ev.locate(statistic, obs.std("year", ddof=1)), ev.locate(padded, obs.std("year", ddof=1))
+    for name in ("percentile", "pvalue", "verdict", "testable", "lower", "upper"):
+        xr.testing.assert_allclose(alone[name], side_by_side[name])
 
 
 def _map_world(n_members=25, noise=1.0, seed=0):
@@ -166,7 +197,7 @@ def _map_world(n_members=25, noise=1.0, seed=0):
 
 def test_field_test_areas_equal_explicit_leave_one_out():
     ens, obs = _map_world(n_members=23)
-    result = ev.moment_test(ens, obs)
+    result = _moment_tests(ens, obs)
     field = ev.field_test(result)
     weights = np.cos(np.deg2rad(result.lat))
     n = result.sizes["member"]
@@ -184,14 +215,14 @@ def test_field_test_areas_equal_explicit_leave_one_out():
 
 def test_field_test_calibration():
     # A perfect model fails the field test about alpha of the time; one with too much noise fails for std.
-    perfect = [ev.field_test(ev.moment_test(*_map_world(seed=seed))).field_verdict for seed in range(60)]
+    perfect = [ev.field_test(_moment_tests(*_map_world(seed=seed))).field_verdict for seed in range(60)]
     assert float(xr.concat(perfect, "world").mean()) < 2 * ev.ALPHA
-    noisy = ev.field_test(ev.moment_test(*_map_world(noise=1.6)))
+    noisy = ev.field_test(_moment_tests(*_map_world(noise=1.6)))
     assert bool((noisy.field_verdict.sel(statistic="std") == 1).all())
 
 
 def test_field_test_untestable_is_nan():
-    field = ev.field_test(ev.moment_test(*_map_world(n_members=15)))
+    field = ev.field_test(_moment_tests(*_map_world(n_members=15)))
     assert bool(field.field_verdict.isnull().all()) and bool(field.flagged_area.isnull().all())
 
 
@@ -283,16 +314,6 @@ def test_plume_outside_frequency():
     assert float(plume["expected_outside"]) == 20.0
 
 
-def test_evaluate_and_summary_table():
-    results = {name: ev.evaluate(*ev.align(*ev.simulate_ensemble(n_members=n, seed=n)))
-               for name, n in (("a", 20), ("b", 25))}
-    table = ev.summary_table(results)
-    assert set(table.dims) == {"model", "statistic", "season"}
-    assert "dispersion (anomaly)" in table.statistic and "rank_trend" in table.statistic
-    assert set(ev.MOMENTS) | set(ev.STATISTICS) <= set(table.statistic.values)
-    assert table.attrs["alpha"] == ev.ALPHA
-
-
 # ---------------------------------------------------------------------------
 # Calibration (run this file directly)
 # ---------------------------------------------------------------------------
@@ -372,7 +393,7 @@ def calibration(n_worlds=100, n_members=40):
         flags = []
         for seed in range(n_worlds):
             ens, obs = ev.align(*ev.simulate_ensemble(n_members=n_members, seed=seed, **kwargs))
-            tests = ev.combine_tests(ev.moment_test(ens, obs), ev.statistic_test(ens, obs))
+            tests = xr.concat([_moment_tests(ens, obs), _statistic_tests(ens, obs)], dim="statistic")
             ranks_a = ev.rank_histogram_test(ens, obs, "anomaly", ("year", "season"), keep_histograms=False)
             ranks_d = ev.rank_histogram_test(ens, obs, "detrended", ("year", "season"), keep_histograms=False)
             row = {f"{s} (per season)": float((tests.verdict.sel(statistic=s) != 0).mean())
@@ -387,7 +408,7 @@ def calibration(n_worlds=100, n_members=40):
     return pd.DataFrame(table)
 
 
-def test_rank_histogram_summary_and_summary_of():
+def test_rank_histogram_summary():
     #(c): Member-free, on 10 bins whatever the ensemble size, so models of different sizes stack
     ensemble, obs = ev.align(*ev.simulate_ensemble(n_members=30, seed=1))
     summary = ev.rank_histogram_summary(ensemble, obs, "anomaly", n_bins=10)
@@ -395,12 +416,6 @@ def test_rank_histogram_summary_and_summary_of():
     assert summary.sizes["rank"] == 10
     np.testing.assert_allclose(summary["obs_frequency"].sum("rank"), 100)
     assert bool((summary["pseudo_lower"] <= summary["pseudo_upper"]).all())
-    #(c): summary_of aligns a tree node with ERA5 first, and drops the members
-    node = ensemble.rename("tas").to_dataset()
-    from_node = ev.summary_of(node, obs, ev.rank_histogram_summary, treatment="anomaly", n_bins=10)
-    xr.testing.assert_allclose(from_node["obs_frequency"], summary["obs_frequency"])
-    trend = ev.summary_of(node, obs, ev.statistic_test, statistics=("trend",))
-    assert "member" not in trend.dims and "percentile" in trend
 
 
 if __name__ == "__main__":

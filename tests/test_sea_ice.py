@@ -14,7 +14,8 @@ import pandas as pd  # noqa: E402
 import pytest  # noqa: E402
 import xarray as xr  # noqa: E402
 
-from extant import sea_ice  # noqa: E402
+from extant import config, preprocessing as pp, sea_ice  # noqa: E402
+from extant.datatree import skip_empty  # noqa: E402
 
 LAT = np.arange(-88.75, -40, 2.5)
 LON = np.arange(-180.0, 180.0, 2.5)
@@ -56,16 +57,23 @@ def test_extent_and_edge_of_one_field():
     assert float(sea_ice.edge_example(island).continent_area) == pytest.approx(float(example.continent_area))
 
 
+@skip_empty
+def _seasonal_extent(ds):
+    """Notebook 09's steps for one node: the monthly extent, up to config.LAST_MONTH, averaged into seasons."""
+    monthly = sea_ice.monthly_extent(ds).sel(time=slice(None, config.LAST_MONTH))
+    return pp.seasonal_means(monthly[["extent"]]).assign(continent_area=monthly["continent_area"])
+
+
 @pytest.fixture(scope="module")
 def extents():
     time = xr.date_range("1850-01-01", periods=12 * 6, freq="MS", calendar="360_day", use_cftime=True)
     fields = xr.concat([_field(EDGE.get(month, OTHER_EDGE)) for month in time.month], dim="time")
     siconc = fields.assign_coords(time=time).expand_dims(member=[0, 1]).rename("siconc")
     monthly = xr.DataTree.from_dict({f"M/{experiment}": siconc.to_dataset() for experiment in ("hist-nat", "hist-GHG")})
-    return sea_ice.seasonal_extent(monthly)
+    return monthly.map_over_datasets(_seasonal_extent)
 
 
-def test_seasonal_extent(extents):
+def test_seasonal_extent_and_edge(extents):
     node = extents["M/hist-GHG"].to_dataset()
     #(c): Complete seasons in whole years only: the Jan-Feb stub and the last December are dropped
     assert list(node.year.values) == list(range(1850, 1855)) and node.extent.dims == ("member", "year", "season")
@@ -210,24 +218,6 @@ def test_open_on_grid(tmp_path):
 # ---------------------------------------------------------------------------
 # Against ERA5, and where the ice changed
 # ---------------------------------------------------------------------------
-
-def test_era5_extent_test():
-    rng = np.random.default_rng(3)
-    years = np.arange(1979, 2014)
-    members = xr.DataArray(10e6 + 0.5e6 * rng.standard_normal((30, years.size, 2)), dims=("member", "year", "season"),
-                           coords={"year": years, "season": ["DJF", "JJA"]})
-    #(c): ERA5 like a member in DJF, 3 million km² less ice in JJA
-    era5 = members.isel(member=0, drop=True) + xr.DataArray([0.0, -3e6], dims="season")
-    result = sea_ice.era5_extent_test(xr.Dataset({"extent": members}), era5, years=slice(1979, 2013))
-    assert set(result.statistic.values) == set(sea_ice.ERA5_DIAGNOSTICS)
-    assert int(result["verdict"].sel(statistic="mean", season="JJA")) == -1
-    assert int(result["verdict"].sel(statistic="mean", season="DJF")) == 0
-    assert bool(result["testable"].sel(statistic="mean", season="DJF"))
-    assert str(result["units"].sel(statistic="trend").values) == "million km² per decade"
-    #(c): With five members nothing can be flagged
-    few = sea_ice.era5_extent_test(xr.Dataset({"extent": members.isel(member=slice(0, 5))}), era5)
-    assert not few["testable"].any()
-
 
 def test_zones():
     lat = xr.DataArray(sea_ice.GRID_LAT, dims="lat", coords={"lat": sea_ice.GRID_LAT})

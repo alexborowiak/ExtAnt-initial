@@ -30,8 +30,8 @@ Sections
 0. Onto the 2.5° grid      which cell each point falls in, area-weighted cell means, one model's members
 1. Areas on the sphere     cell areas, the area of a polar cap, and its inverse
 2. Extent and edge         sea-ice extent, the land mask, the equivalent latitude
-3. Every model             seasonal extent per member, the edge in the final years, the mean concentration
-4. Against ERA5            the extent's mean, variability and trend, ERA5 among the members
+3. Every model             the edge in the final years, the mean concentration, the seasonal cycle
+4. Against ERA5            how the figures label the extent's mean, variability and trend
 5. Where the ice changed   zones of ice kept, lost and gained, and the mean of any field in each
 """
 
@@ -42,8 +42,8 @@ import xarray as xr
 from . import config
 from . import era5_evaluation as ev
 from .config import WINDOW
-from .datatree import reduce_to_dataset, skip_empty
-from .preprocessing import seasonal_means, to_analysis_units
+from .datatree import reduce_to_dataset
+from .preprocessing import to_analysis_units
 
 #(t): Mean radius of the Earth (km); areas are in km²
 EARTH_RADIUS = 6371.0
@@ -370,34 +370,6 @@ def edge_example(siconc, land=None, threshold=THRESHOLD, ocean_area=None):
 # 3. Every model
 # ---------------------------------------------------------------------------
 
-def seasonal_extent(monthly, variable="siconc", threshold=THRESHOLD, last_month=config.LAST_MONTH):
-    """Each member's sea-ice extent, month by month, averaged into seasons; and each model's continent.
-
-    The extent is worked out every month and then averaged, rather than taken
-    from the seasonal-mean concentration, as in the paper. The record is cut
-    at ``last_month`` and only complete seasons in whole years are kept, as
-    for the other variables (``preprocessing.seasonal_tree``), so "the final
-    years" are the same years.
-
-    Args:
-        monthly (xr.DataTree): /<model>/<experiment> concentration (%) on (member, time, lat, lon),
-            as opened by ``loading.open_lesfmip_monthly``.
-        variable (str): Name of the concentration.
-        threshold (float): Concentration (%) counted as ice.
-        last_month (str): Last month kept.
-
-    Returns:
-        xr.DataTree: The same nodes, with ``extent`` (km²) on (member, year, season) and
-        ``continent_area`` (km²).
-    """
-    def node_extent(ds):
-        monthly_ds = monthly_extent(ds, variable, threshold)
-        seasonal = seasonal_means(monthly_ds[["extent"]].sel(time=slice(None, last_month)))
-        return seasonal.assign(continent_area=monthly_ds["continent_area"])
-
-    return monthly.map_over_datasets(skip_empty(node_extent))
-
-
 def monthly_extent(ds, variable="siconc", threshold=THRESHOLD):
     """Each month's sea-ice extent of one dataset (a model's members, or ERA5), and the area of its continent.
 
@@ -431,7 +403,8 @@ def edge_latitude(extents, years=WINDOW):
     paper), not the average of each year's latitude.
 
     Args:
-        extents (xr.DataTree): Output of ``seasonal_extent``.
+        extents (xr.DataTree): Each member's seasonal ``extent`` and its model's ``continent_area`` (km²),
+            /<model>/<experiment>, as notebook 09 makes them.
         years (int): Final years.
 
     Returns:
@@ -483,7 +456,7 @@ def final_mean(extents, years=WINDOW):
     """Each model's ensemble-mean extent over each experiment's final ``years``, and its continent.
 
     Args:
-        extents (xr.DataTree): Output of ``seasonal_extent``.
+        extents (xr.DataTree): Each member's seasonal ``extent`` and its model's ``continent_area`` (km²).
         years (int): Final years.
 
     Returns:
@@ -491,20 +464,6 @@ def final_mean(extents, years=WINDOW):
     """
     final = reduce_to_dataset(extents.isel(year=slice(-years, None)), lambda ds: ds.mean(("member", "year")))
     return final.transpose("model", "experiment", ...).assign_attrs(years=years)
-
-
-def member_means(extents, years):
-    """Each member's mean extent over ``years``, and its model's continent.
-
-    Args:
-        extents (xr.DataTree): Output of ``seasonal_extent``.
-        years (slice): The years averaged, e.g. ``slice(1979, 2013)``.
-
-    Returns:
-        xr.Dataset: ``extent`` (km²) on (model, experiment, member, season) and ``continent_area`` (km²);
-        members are NaN where a model has fewer.
-    """
-    return reduce_to_dataset(extents.sel(year=years), lambda ds: ds.mean("year"))
 
 
 def monthly_cycle(ds, years=None):
@@ -525,41 +484,17 @@ def monthly_cycle(ds, years=None):
 # 4. Against ERA5
 # ---------------------------------------------------------------------------
 
-#(t): What ERA5's extent is tested on (each as in era5_evaluation.statistic_test), and what it means for the model
-#(t): when ERA5 falls below (low) or above (high) its members: the mean of the raw extent, the year-to-year spread
-#(t): of the detrended extent, and the linear trend
+#(t): How the figures label ERA5's tests of the extent (notebook 09, section 4.4), and what each means for the model
+#(t): when ERA5 falls below (low) or above (high) its members: the mean of the extent, the year-to-year spread of
+#(t): the detrended extent, and the linear trend
 ERA5_DIAGNOSTICS = {
     "mean": ev.Diagnostic("Mean extent", "million km²", "model has too much ice", "model has too little ice",
-                          treatment="raw", func=ev.mean),
+                          treatment="raw"),
     "std": ev.Diagnostic("Year-to-year std", "million km²", "model too variable", "model not variable enough",
-                         treatment="detrended", func=ev.std),
+                         treatment="detrended"),
     "trend": ev.Diagnostic("Trend", "million km² per decade", "model's trend too positive",
-                           "model's trend too negative", treatment="raw", func=ev.trend),
+                           "model's trend too negative", treatment="raw"),
 }
-
-
-def era5_extent_test(ds, era5, years=None, alpha=ev.ALPHA, diagnostics=ERA5_DIAGNOSTICS):
-    """Where ERA5's extent falls among one model's members, for each statistic of ``diagnostics``.
-
-    The test of notebook 02 (``era5_evaluation.statistic_test``): if the model
-    were right, ERA5 would behave like one more member, so its percentile
-    among the members' values of a statistic would be anywhere from 0 to 100
-    with equal chance, and outside the members' central 1 − ``alpha`` only
-    ``alpha`` of the time. A model needs 2 / (N + 1) < ``alpha``, i.e. at
-    least 20 members at ``alpha`` = 0.1, for the test to flag anything.
-
-    Args:
-        ds (xr.Dataset): One model's ``extent`` (km²) on (member, year, season), from ``seasonal_extent``.
-        era5 (xr.DataArray): ERA5's extent (km²) on (year, season).
-        years (slice | None): The years compared; every year both have if None.
-        alpha (float): Two-sided significance level.
-        diagnostics (dict): Name -> ``era5_evaluation.Diagnostic``.
-
-    Returns:
-        xr.Dataset: ``era5_evaluation.locate`` output on (statistic, season), in million km².
-    """
-    ensemble, obs = ev.align(ds["extent"] / 1e6, era5 / 1e6, years=years)
-    return ev.statistic_test(ensemble, obs, statistics=tuple(diagnostics), registry=diagnostics, alpha=alpha)
 
 
 # ---------------------------------------------------------------------------

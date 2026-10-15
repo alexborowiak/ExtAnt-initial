@@ -13,6 +13,7 @@ Sections
 
 import matplotlib.pyplot as plt
 import numpy as np
+import xarray as xr
 from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
@@ -49,7 +50,7 @@ def draw_experiment_strips(ax, results, statistic="trend"):
 
     Args:
         ax (matplotlib.axes.Axes): Axes to draw on.
-        results (dict[str, xr.Dataset]): Experiment -> ``ev.statistic_test`` output reduced to one season.
+        results (dict[str, xr.Dataset]): Experiment -> ``ev.locate`` results on a ``statistic`` dim, one season.
         statistic (str): The statistic shown.
     """
     experiments = _ordered(list(results))
@@ -93,13 +94,17 @@ def experiment_strips(results, statistic="trend", title=None):
     observed change is unlikely to be natural.
 
     Args:
-        results (dict[str, xr.Dataset]): ``oc.experiment_consistency`` output for one model (at a point or region).
+        results (xr.Dataset | dict[str, xr.Dataset]): One model's ``ev.locate`` results on (statistic, season),
+            on an ``experiment`` dim (experiments without data are left out), or a dict by experiment.
         statistic (str): The statistic shown.
         title (str | None): Figure title.
 
     Returns:
         core.Panels
     """
+    if isinstance(results, xr.Dataset):
+        results = {str(experiment): results.sel(experiment=experiment) for experiment in results["experiment"].values
+                   if bool(results["era5"].sel(experiment=experiment).notnull().any())}
     first = order_seasons(next(iter(results.values())))
     seasons = list(first["season"].values)
     diagnostic = ev.DIAGNOSTICS[statistic]
@@ -181,7 +186,8 @@ def detection_maps(detections, title=None):
     """Detection classes for every model and season: is ERA5's trend outside hist-nat and inside historical?
 
     Args:
-        detections (xr.Dataset): ``oc.detection_maps`` output.
+        detections (xr.Dataset): ``detection_class`` (``oc.detection_class``) and each experiment's percentile
+            on (model, season, lat, lon), as notebook 02 makes them.
         title (str | None): Figure title.
 
     Returns:

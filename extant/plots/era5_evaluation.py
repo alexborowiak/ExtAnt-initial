@@ -298,17 +298,17 @@ def distribution_grid(summaries, season=None, columns=DISTRIBUTION_COLUMNS, mome
 
     Rows are seasons for one model, or models for one season:
 
-        distribution_grid(result["distributions"], moments=result["moments"])
-        distribution_grid({m: r["distributions"] for m, r in results.items()}, season="DJF",
-                          moments={m: r["moments"] for m, r in results.items()})
+        distribution_grid(distributions, moments=moment_test_ds.sel(model=model))
+        distribution_grid({model: distributions, ...}, season="DJF", moments=moment_test_ds)
 
     Args:
         summaries (dict): ``{treatment: Dataset}`` (one model), or
             ``{model: {treatment: Dataset}}`` (several), from ``ev.distribution_summary``.
         season (str | None): The season shown when rows are models.
         columns (Sequence[tuple[str, str]]): ``(kind, treatment)`` per column, kind "kde" or "qq".
-        moments (xr.Dataset | dict | None): ``ev.moment_test`` output, nested like
-            ``summaries``; adds the mean (raw) or std (anomalies) verdict to each KDE panel.
+        moments (xr.Dataset | dict | None): The moment test (``ev.locate`` results on a ``statistic`` dim
+            with "mean" and "std"): one model's, or every model's on a ``model`` dim (or a dict by model)
+            when rows are models; adds the mean (raw) or std (anomalies) verdict to each KDE panel.
         units (str): Units of the variable.
         title (str | None): Figure title.
 
@@ -319,6 +319,8 @@ def distribution_grid(summaries, season=None, columns=DISTRIBUTION_COLUMNS, mome
     if one_model:
         seasons = [s for s in SEASONS if s in next(iter(summaries.values()))["season"].values]
         rows = [(s, summaries, {"season": s}, moments) for s in seasons]
+    elif isinstance(moments, xr.Dataset):
+        rows = [(model, summary, {"season": season}, moments.sel(model=model)) for model, summary in summaries.items()]
     else:
         rows = [(model, summary, {"season": season}, (moments or {}).get(model))
                 for model, summary in summaries.items()]
@@ -518,7 +520,8 @@ def statistic_grid(result, row_dim="season", statistics=None, title=None):
     5-95%) only 10% of the time.
 
     Args:
-        result (xr.Dataset): ``ev.moment_test`` or ``ev.statistic_test`` output at one point, with ``row_dim``.
+        result (xr.Dataset): ``ev.locate`` results along a ``statistic`` dim (e.g. notebook 02's moment test)
+            at one point, with ``row_dim``; a ``treatment`` coordinate along ``statistic`` labels each column.
         row_dim (str): Dimension mapped to rows.
         statistics (Sequence[str] | None): Subset and order of the columns.
         title (str | None): Figure title.
@@ -544,7 +547,10 @@ def statistic_grid(result, row_dim="season", statistics=None, title=None):
             if i == 0:
                 diagnostic = ev.DIAGNOSTICS[statistic]
                 ax.set_title(diagnostic.label, loc="left", pad=13)
-                ax.annotate(f"of {ev.TREATMENTS[diagnostic.treatment].lower()}", (0, 1), xycoords="axes fraction",
+                #(c): The treatment the notebook used, from the result's own coordinate when it has one
+                treatment = (str(cell["treatment"].values) if "treatment" in cell.coords
+                             else diagnostic.treatment)
+                ax.annotate(f"of {ev.TREATMENTS[treatment].lower()}", (0, 1), xycoords="axes fraction",
                             xytext=(0, 3), textcoords="offset points", fontsize=7.5, color=INK_2, va="bottom")
             if i == len(rows) - 1:
                 units = ev.DIAGNOSTICS[statistic].units
@@ -799,14 +805,20 @@ def rank_histogram_grid(results, n_bins=10, title=None):
     """Compact rank histograms, rows x columns, e.g. models x (raw, anomaly, detrended).
 
     Args:
-        results (dict[str, dict[str, xr.Dataset]]): Row label -> column label ->
-            ``ev.rank_histogram_test`` output at one point (with histograms).
+        results (dict): Column label -> a DataTree of ``ev.rank_histogram_test`` outputs at one point,
+            /<model>/<experiment>, one row per model; or row label -> column label -> one output.
         n_bins (int): Bins of rank / N.
         title (str | None): Figure title.
 
     Returns:
         core.Panels
     """
+    first = next(iter(results.values()))
+    if isinstance(first, xr.DataTree):
+        #(c): Columns of trees to rows of models, each a dict of its columns' results
+        results = {node.parent.name: {column: tree[node.relative_to(first)].to_dataset()
+                                      for column, tree in results.items()}
+                   for node in first.leaves if node.data_vars}
     row_labels = list(results)
     col_labels = list(next(iter(results.values())))
     fig, axes = plt.subplots(len(row_labels), len(col_labels), figsize=(3.3 * len(col_labels), 1.75 * len(row_labels) + 0.8),
@@ -835,6 +847,21 @@ def rank_histogram_grid(results, n_bins=10, title=None):
 # 6. Multi-model summaries: scorecard, signal-noise diagram, maps
 # ---------------------------------------------------------------------------
 
+def statistic_label(table, statistic):
+    """The label of one statistic: the table's ``label`` coordinate if it has one, else ``ev.DIAGNOSTICS``'.
+
+    A name with its treatment in brackets, e.g. "dispersion (anomaly)", keeps the brackets; a name
+    ``ev.DIAGNOSTICS`` does not know (an experiment, say) is its own label.
+    """
+    if "label" in table.coords:
+        return str(table["label"].sel(statistic=statistic).values)
+    name, _, treatment = str(statistic).partition(" (")
+    if name not in ev.DIAGNOSTICS:
+        return str(statistic)
+    label = ev.DIAGNOSTICS[name].label
+    return f"{label} ({treatment}" if treatment else label
+
+
 def _wrap(text, width=16):
     """Break a column label onto lines: before a parenthesis if it has one, else at ``width`` characters."""
     if " (" in str(text):
@@ -860,7 +887,8 @@ def scorecard(table, statistics=None, title=None):
     range, and outlined cells are significant at the test's alpha.
 
     Args:
-        table (xr.Dataset): ``ev.summary_table`` output at one point.
+        table (xr.Dataset): ``percentile``, ``verdict`` (and ``testable``) on (model, statistic, season)
+            at one point, e.g. notebook 02's ``eval_table_ds``.
         statistics (Sequence[str] | None): Subset and order of the column groups.
         title (str | None): Figure title.
 
@@ -902,7 +930,7 @@ def scorecard(table, statistics=None, title=None):
     ax.spines[:].set_visible(False)
     top = ax.secondary_xaxis("top")
     top.set_xticks([g * n_seasons + (n_seasons - 1) / 2 for g in range(n_groups)],
-                   [_wrap(label) for label in table["label"].values], fontsize=8, fontweight="bold")
+                   [_wrap(statistic_label(table, s)) for s in statistics], fontsize=8, fontweight="bold")
     top.tick_params(length=0)
     top.spines["top"].set_visible(False)
 
@@ -929,7 +957,8 @@ def signal_noise_diagram(table, x="trend", y="std", title=None):
     model is too variable, above it not variable enough.
 
     Args:
-        table (xr.Dataset): ``ev.summary_table`` output at one point.
+        table (xr.Dataset): ``percentile``, ``verdict`` (and ``testable``) on (model, statistic, season)
+            at one point, e.g. notebook 02's ``eval_table_ds``.
         x, y (str): Statistics on each axis.
         title (str | None): Figure title.
 
@@ -1002,12 +1031,12 @@ def percentile_maps(table, statistic, row_dim="model", col_dim="season", title=N
     from plotting_modules import maps  # needs cartopy
 
     cmap, norm = percentile_colormap()
+    label = statistic_label(table, statistic)
     table = order_seasons(table.sel(statistic=statistic))
     field = table["percentile"].drop_vars(["statistic", "label", "units", "treatment"], errors="ignore")
     #(c): Where too few members can flag nothing, a dark class would mean nothing: leave it blank
     if "testable" in table:
         field = field.where(table["testable"] == 1)
-    label = str(table["label"].values)
     cbar_label = "ERA5 percentile among the members (blue: ERA5 below; red: above; darkest: outside 5–95%)"
     if "field_verdict" in table:
         alpha = table.attrs.get("alpha", ev.ALPHA)
@@ -1044,62 +1073,61 @@ def percentile_maps(table, statistic, row_dim="model", col_dim="season", title=N
 # 7. Method demonstration on synthetic ensembles
 # ---------------------------------------------------------------------------
 
-DEMO_STATISTICS = ("mean", "trend", "std", "width")
-
-
 @plot("figure")
 @_styled
-def scenario_grid(demo, season="DJF", descriptions=None, n_bins=10, title=None):
+def scenario_grid(plume, anomaly_ranks, detrended_ranks, tests, season="DJF", descriptions=None, n_bins=10,
+                  alpha=ev.ALPHA, title=None):
     """The tests on toy ensembles where the right answer is known, one scenario per row.
 
     Columns: the raw time series with the ensemble plume; the rank histogram
-    of anomalies and of detrended anomalies; and ERA5's percentile for the
-    mean, trend, std and width and the two rank dispersions.
+    of anomalies and of detrended anomalies; and ERA5's percentile for each
+    statistic of ``tests`` and the two rank dispersions and the rank trend.
 
     Args:
-        demo (dict[str, dict]): Scenario name -> ``ev.evaluate`` output.
+        plume (xr.Dataset): ``ev.ensemble_plume`` of the raw values, on a ``scenario`` dim.
+        anomaly_ranks, detrended_ranks (xr.Dataset): ``ev.rank_histogram_test`` of the anomalies and of the
+            detrended anomalies (with histograms), seasons pooled, on a ``scenario`` dim.
+        tests (xr.Dataset): ``ev.locate`` results on (scenario, statistic, season).
         season (str): Season shown in the time series and the percentile column.
         descriptions (dict[str, str] | None): One line per scenario saying what is wrong;
             ``ev.SCENARIO_DESCRIPTIONS`` by default.
         n_bins (int): Bins in the compact rank histograms.
+        alpha (float): The tests' two-sided significance level, for the grey band.
         title (str | None): Figure title.
 
     Returns:
         core.Panels
     """
     descriptions = ev.SCENARIO_DESCRIPTIONS if descriptions is None else descriptions
-    names = list(demo)
+    names = list(plume["scenario"].values)
     fig, axes = plt.subplots(len(names), 4, figsize=(15.5, 2.3 * len(names) + 0.8), layout="constrained",
                              squeeze=False, gridspec_kw={"width_ratios": (1.6, 1, 1, 1.25)})
-    #(t): The ladder: (label, where to find the result) for each statistic shown
-    ladder = [(ev.DIAGNOSTICS[s].label, "moments" if s in ev.MOMENTS else "statistics", s)
-              for s in DEMO_STATISTICS] + [
+    #(t): The ladder: (label, which result, statistic) for each percentile shown
+    ladder = [(ev.DIAGNOSTICS[s].label, "tests", s) for s in tests["statistic"].values] + [
         ("Rank dispersion (anomalies)", "anomaly", "dispersion"),
         ("Rank dispersion (detrended)", "detrended", "dispersion"),
         ("Rank trend (anomalies)", "anomaly", "rank_trend"),
     ]
     for i, name in enumerate(names):
-        result = demo[name]
         ax_series, ax_anomaly, ax_detrended, ax_ladder = axes[i]
 
-        draw_plume_panel(ax_series, result["plumes"].sel(treatment="raw", season=season))
+        draw_plume_panel(ax_series, plume.sel(scenario=name, season=season))
         _panel_label(ax_series, name)
         if name in descriptions:
             ax_series.text(0.02, 0.8, descriptions[name], transform=ax_series.transAxes, fontsize=7.5,
                            color=INK_2, va="top", zorder=20,
                            bbox=dict(facecolor="white", edgecolor="none", alpha=0.8, pad=1))
-        draw_grouped_rank_histogram(ax_anomaly, result["ranks"]["anomaly"], n_bins, statistics=("dispersion",))
-        draw_grouped_rank_histogram(ax_detrended, result["ranks"]["detrended"], n_bins, statistics=("dispersion",))
+        draw_grouped_rank_histogram(ax_anomaly, anomaly_ranks.sel(scenario=name), n_bins, statistics=("dispersion",))
+        draw_grouped_rank_histogram(ax_detrended, detrended_ranks.sel(scenario=name), n_bins,
+                                    statistics=("dispersion",))
 
         #(t): Ladder of ERA5 percentiles: dots in the grey band are consistent
-        alpha = result["moments"].attrs["alpha"]
         ax_ladder.axvspan(100 * alpha / 2, 100 - 100 * alpha / 2, color="#f0efec", lw=0, zorder=0)
         ax_ladder.axvline(50, color="#dcdbd7", lw=0.8, zorder=0)
+        results = {"tests": tests.sel(scenario=name, season=season), "anomaly": anomaly_ranks.sel(scenario=name),
+                   "detrended": detrended_ranks.sel(scenario=name)}
         for k, (_, source, statistic) in enumerate(ladder):
-            if source in ("moments", "statistics"):
-                row = result[source].sel(statistic=statistic, season=season)
-            else:
-                row = result["ranks"][source].sel(statistic=statistic)
+            row = results[source].sel(statistic=statistic)
             flagged = int(row["verdict"]) != 0
             ax_ladder.plot(float(row["percentile"]), k, marker="X" if flagged else "o", ms=8 if flagged else 6.5,
                            color=STATUS_FLAG if flagged else STATUS_OK, mec="white", mew=0.8, zorder=3)
