@@ -9,7 +9,8 @@ The data are on JASMIN. A small sample (a 3×3 block of grid cells from two mode
 ```
 notebooks/
     01_process_data.ipynb                     raw files -> monthly stores -> seasonal means (once per variable); the SAM index (once)
-    02_era5_evaluation.ipynb                  are the models consistent with ERA5? is the observed change detectable? (and the regional evaluation the paper uses)
+    02a_era5_evaluation_calculations.ipynb    are the models consistent with ERA5? is the observed change detectable? every test, saved
+    02b_era5_evaluation_figures.ipynb         ... its figures, from the saved results
     03_forced_response.ipynb                  the calculations, each method explained; saves every result (probability ratios, SAM, additivity of the variance)
     04a_mean_and_signal_to_noise.ipynb        figures, from the saved results (four for every result, from what goes in to how many models agree): the mean change and S/N
     04b_quantiles_and_width.ipynb             ... the quantile response, and the change in width and which tail
@@ -19,7 +20,9 @@ notebooks/
     06_paper_figures.ipynb                    the paper's main and supplementary figures, in print style (PDF and PNG)
     07_figure_candidates.ipynb                every candidate figure of the planning notes (A-F), the verification against ERA5, and the layouts L1-L5
     08_optimal_fingerprinting.ipynb           are the observed regional seasonal trends explained by the forcings, and is each forcing's size right?
-    09_sea_ice.ipynb                          the sea ice from CEDA onto the 2.5° grid, against ERA5, and with the mean and width changes
+    09a_sea_ice_calculations.ipynb            the sea ice from CEDA onto the 2.5° grid, extent and edge, against ERA5, with the temperature changes
+    09b_sea_ice_figures.ipynb                 ... its figures, from the saved results
+    10_ensemble_size.ipynb                    how many members are needed (after Milinski et al.)
 extant/                                       the code the notebooks use
 plotting_modules/                             the general plotting package: panel grids, polar maps, colour bars
 tests/                                        pytest suite, the sample data, and a script that runs every notebook

@@ -94,14 +94,17 @@ def experiment_strips(results, statistic="trend", title=None):
     observed change is unlikely to be natural.
 
     Args:
-        results (xr.Dataset | dict[str, xr.Dataset]): One model's ``ev.locate`` results on (statistic, season),
-            on an ``experiment`` dim (experiments without data are left out), or a dict by experiment.
+        results (xr.DataTree | xr.Dataset | dict[str, xr.Dataset]): One model's ``ev.locate`` results on
+            (statistic, season): its subtree /<experiment>, a Dataset on an ``experiment`` dim (experiments
+            without data are left out), or a dict by experiment.
         statistic (str): The statistic shown.
         title (str | None): Figure title.
 
     Returns:
         core.Panels
     """
+    if isinstance(results, xr.DataTree):
+        results = {node.name: node.to_dataset() for node in results.leaves if node.data_vars}
     if isinstance(results, xr.Dataset):
         results = {str(experiment): results.sel(experiment=experiment) for experiment in results["experiment"].values
                    if bool(results["era5"].sel(experiment=experiment).notnull().any())}
@@ -239,6 +242,14 @@ def detection_count_maps(detections, detection_code=1, title=None):
 # 4. Scaling factors and attributable trends
 # ---------------------------------------------------------------------------
 
+def _by_region_and_model(results):
+    """Region -> model -> one result, from a Dataset on (region, model, signal) or such a dict already."""
+    if isinstance(results, xr.Dataset):
+        return {str(region): {str(model): results.sel(region=region, model=model) for model in results["model"].values}
+                for region in results["region"].values}
+    return results
+
+
 @plot("figure")
 def scaling_factor_plot(results, title=None):
     """Scaling factors β with their 5-95% intervals, one panel per region, every model and signal.
@@ -248,12 +259,14 @@ def scaling_factor_plot(results, title=None):
     clear of 0 is a detection; one that includes 1 is consistent.
 
     Args:
-        results (dict[str, dict[str, xr.Dataset]]): Region -> model -> ``oc.scaling_factors`` output.
+        results (xr.Dataset | dict[str, dict[str, xr.Dataset]]): ``oc.scaling_factors`` output for every
+            region and model, on (region, model, signal), or as a dict region -> model -> output.
         title (str | None): Figure title.
 
     Returns:
         core.Panels
     """
+    results = _by_region_and_model(results)
     regions = list(results)
     models = list(next(iter(results.values())))
     signals = list(next(iter(next(iter(results.values())).values()))["signal"].values)
@@ -292,13 +305,15 @@ def attributable_trend_plot(results, title=None, units="°C/decade"):
     """The observed trend and the part each signal explains (β x fingerprint trend), per model and region.
 
     Args:
-        results (dict[str, dict[str, xr.Dataset]]): Region -> model -> ``oc.scaling_factors`` output.
+        results (xr.Dataset | dict[str, dict[str, xr.Dataset]]): ``oc.scaling_factors`` output for every
+            region and model, on (region, model, signal), or as a dict region -> model -> output.
         title (str | None): Figure title.
         units (str): Trend units.
 
     Returns:
         core.Panels
     """
+    results = _by_region_and_model(results)
     regions = list(results)
     models = list(next(iter(results.values())))
     signals = list(next(iter(next(iter(results.values())).values()))["signal"].values)

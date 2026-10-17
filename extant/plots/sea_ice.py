@@ -379,26 +379,34 @@ def regrid_schematic(native, lat, lon, on_grid, region=((-72.5, -52.5), (0.0, 40
 MONTH_LETTERS = "JFMAMJJASOND"
 
 
+def _by_model(data, variable=None):
+    """{model: its data}, from a DataTree /<model>/<experiment> holding one experiment (each model's own members).
+
+    ``variable`` picks one variable of each node; without it each node's Dataset.
+    """
+    return {node.parent.name: node[variable] if variable else node.to_dataset()
+            for node in data.leaves if node.data_vars}
+
+
 @plot("figure")
 def seasonal_cycle(cycle, era5, title=None):
     """Each model's seasonal cycle of extent against ERA5's: one panel per model, every member a line.
 
     Args:
-        cycle (xr.DataArray): Extent (million km²) on (model, member, month), e.g. the historical
-            members' mean over the same years as ERA5.
+        cycle (xr.DataTree): /<model>/historical, ``extent`` (million km²) on (member, month): each
+            member's mean in each calendar month over the same years as ERA5.
         era5 (xr.DataArray): ERA5's, on (month).
         title (str | None): Figure title.
 
     Returns:
         core.Panels
     """
-    models = [str(m) for m in cycle["model"].values]
-    months = cycle["month"].values
+    by_model = _by_model(cycle, "extent")
+    months = era5["month"].values
     with plt.rc_context(EVAL_RC):
-        fig, axes = plt.subplots(1, len(models), figsize=(2.6 * len(models) + 0.6, 3.4), sharey=True,
+        fig, axes = plt.subplots(1, len(by_model), figsize=(2.6 * len(by_model) + 0.6, 3.4), sharey=True,
                                  layout="constrained", squeeze=False)
-        for ax, model in zip(axes[0], models):
-            members = cycle.sel(model=model).dropna("member", how="all")
+        for ax, (model, members) in zip(axes[0], by_model.items()):
             for member in members["member"].values:
                 ax.plot(months, members.sel(member=member), color=ENSEMBLE["member"], lw=0.6, alpha=0.6)
             if members.sizes["member"]:
@@ -425,14 +433,16 @@ def edge_latitudes(members, era5, title=None):
     """The equivalent latitude of each model's ice edge, every member, against ERA5's, season by season.
 
     Args:
-        members (xr.DataArray): Degrees on (model, member, season): each member's edge over the years compared.
+        members (xr.DataTree): /<model>/historical, ``edge_latitude`` (degrees) on (member, season): each
+            member's edge over the years compared.
         era5 (xr.DataArray): ERA5's, on (season).
         title (str | None): Figure title.
 
     Returns:
         core.Panels
     """
-    models = [str(m) for m in members["model"].values]
+    by_model = _by_model(members, "edge_latitude")
+    models = list(by_model)
     seasons = [str(s) for s in era5["season"].values]
     offsets = np.linspace(-0.3, 0.3, len(models)) if len(models) > 1 else np.zeros(1)
     with plt.rc_context(EVAL_RC):
@@ -441,7 +451,7 @@ def edge_latitudes(members, era5, title=None):
             ax.plot([x - 0.42, x + 0.42], [float(era5.sel(season=season))] * 2, color=ERA5_EDGE_COLOR, lw=2.2,
                     zorder=1)
             for k, model in enumerate(models):
-                values = members.sel(model=model, season=season).dropna("member").values
+                values = by_model[model].sel(season=season).dropna("member").values
                 if not values.size:
                     continue
                 position = x + offsets[k]
@@ -486,8 +496,8 @@ def era5_strips(result, statistic, diagnostics=sea_ice.ERA5_DIAGNOSTICS, title=N
     few members for the test to flag anything.
 
     Args:
-        result (xr.Dataset): ``era5_evaluation.locate`` results for every model, on (model, statistic, season,
-            member), as notebook 09 (section 4.4) makes them.
+        result (xr.DataTree): /<model>/historical, ``era5_evaluation.locate`` results on (statistic, season,
+            member), as notebook 09a (section 6) makes them.
         statistic (str): Which statistic.
         diagnostics (dict): ``sea_ice.ERA5_DIAGNOSTICS``.
         title (str | None): Figure title.
@@ -498,8 +508,9 @@ def era5_strips(result, statistic, diagnostics=sea_ice.ERA5_DIAGNOSTICS, title=N
     from .era5_evaluation import _status_line
 
     diagnostic = diagnostics[statistic]
-    models = [str(m) for m in result["model"].values]
-    seasons = [str(s) for s in result["season"].values]
+    by_model = _by_model(result)
+    models = list(by_model)
+    seasons = [s for s in ("DJF", "MAM", "JJA", "SON") if s in next(iter(by_model.values()))["season"].values]
     with plt.rc_context(EVAL_RC):
         fig, axes = plt.subplots(len(models), len(seasons),
                                  figsize=(2.5 * len(seasons) + 1.2, 1.15 * len(models) + 1.0),
@@ -507,7 +518,7 @@ def era5_strips(result, statistic, diagnostics=sea_ice.ERA5_DIAGNOSTICS, title=N
         for i, model in enumerate(models):
             for j, season in enumerate(seasons):
                 ax = axes[i, j]
-                cell = result.sel(model=model, season=season, statistic=statistic)
+                cell = by_model[model].sel(season=season, statistic=statistic)
                 ok, message = _verdict(cell, diagnostic)
                 if message == "no data":
                     ax.set_axis_off()

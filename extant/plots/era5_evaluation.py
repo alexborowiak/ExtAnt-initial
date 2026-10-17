@@ -306,9 +306,10 @@ def distribution_grid(summaries, season=None, columns=DISTRIBUTION_COLUMNS, mome
             ``{model: {treatment: Dataset}}`` (several), from ``ev.distribution_summary``.
         season (str | None): The season shown when rows are models.
         columns (Sequence[tuple[str, str]]): ``(kind, treatment)`` per column, kind "kde" or "qq".
-        moments (xr.Dataset | dict | None): The moment test (``ev.locate`` results on a ``statistic`` dim
-            with "mean" and "std"): one model's, or every model's on a ``model`` dim (or a dict by model)
-            when rows are models; adds the mean (raw) or std (anomalies) verdict to each KDE panel.
+        moments (xr.Dataset | xr.DataTree | dict | None): The moment test (``ev.locate`` results on a
+            ``statistic`` dim with "mean" and "std"): one model's, or, when rows are models, every model's as a
+            DataTree /<model>/<experiment>, on a ``model`` dim, or a dict by model; adds the mean (raw) or std
+            (anomalies) verdict to each KDE panel.
         units (str): Units of the variable.
         title (str | None): Figure title.
 
@@ -316,6 +317,8 @@ def distribution_grid(summaries, season=None, columns=DISTRIBUTION_COLUMNS, mome
         core.Panels
     """
     one_model = isinstance(next(iter(summaries.values())), xr.Dataset)
+    if isinstance(moments, xr.DataTree):
+        moments = {node.parent.name: node.to_dataset() for node in moments.leaves if node.data_vars}
     if one_model:
         seasons = [s for s in SEASONS if s in next(iter(summaries.values()))["season"].values]
         rows = [(s, summaries, {"season": s}, moments) for s in seasons]

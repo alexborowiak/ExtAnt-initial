@@ -101,8 +101,12 @@ def run(path, trials):
             exec(compile(prepare(source, trials), f"<{path.stem} cell {index}>", "exec"), namespace)
             status = "ok"
         except Exception as error:  # noqa: BLE001  (report every failing cell, then carry on)
-            status = f"FAILED {type(error).__name__}: {str(error)[:200]}"
-            failures.append((path.stem, index, source, traceback.format_exc()))
+            if isinstance(error, ImportError) and "nc-time-axis" in str(error):
+                #(c): Plots against cftime dates need nc-time-axis, which JASMIN has and this environment does not
+                status = "skipped: plotting cftime dates needs nc-time-axis (on JASMIN)"
+            else:
+                status = f"FAILED {type(error).__name__}: {str(error)[:200]}"
+                failures.append((path.stem, index, source, traceback.format_exc()))
         plt.close("all")
         print(f"  [{index:3d}] {(headings[-1] if headings else '')[:40]:40s} {time.time() - start:6.1f}s  {status}",
               flush=True)
