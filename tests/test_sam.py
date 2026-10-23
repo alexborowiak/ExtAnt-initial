@@ -15,7 +15,8 @@ def test_open_index(tmp_path):
                          "P": ("level", [1000.0, 850.0, 500.0])},
                         coords={"time_mm": times, "level": [1000.0, 850.0, 500.0]})
         ds.to_netcdf(folder / f"SAM_zonal_mon_hist-nat_MODEL_{member}_interp.nc")
-    files = sam.index_files("hist-nat", "MODEL", root=tmp_path)
+    #(c): Listed as notebook 01 lists them: /<experiment>/<model>/*.nc
+    files = sorted((tmp_path / "hist-nat" / "MODEL").glob("*.nc"))
     assert [sam.member_of(f) for f in files] == ["r1i1p1f1", "r2i1p1f1"]
     index = sam.open_index(files, level=1).load()
     assert index["sam"].dims == ("member", "time")
@@ -89,9 +90,10 @@ def test_notebook_01_chain(tmp_path):
             ds = xr.Dataset({"SAM": (("time_mm", "level"), np.random.default_rng(0).normal(size=(times.size, 2)))},
                             coords={"time_mm": times, "level": [1000.0, 500.0]})
             ds.to_netcdf(folder / f"SAM_zonal_mon_{experiment}_MODEL_{member}_interp.nc")
-    monthly = xr.DataTree.from_dict({f"MODEL/{experiment}": sam.open_index(sam.index_files(experiment, "MODEL",
-                                                                                          root=tmp_path))
-                                     for experiment in ("historical", "hist-nat")})
+    monthly = xr.DataTree.from_dict({
+        f"MODEL/{experiment}": sam.open_index(sorted((tmp_path / experiment / "MODEL").glob("*.nc")))
+        for experiment in ("historical", "hist-nat")
+    })
     cut = monthly.sel(time=slice(None, config.LAST_MONTH))
     seasonal = cut.map_over_datasets(pp.seasonal_mean)
     seasons = seasonal.map_over_datasets(datatree.skip_empty(pp.split_time),

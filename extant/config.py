@@ -1,7 +1,7 @@
 """Settings shared by every notebook: experiments, windows, the example point, and the variables.
 
 Change a setting here and every notebook picks it up. Settings that only matter
-to one figure stay in that figure's notebook. File locations are in ``paths``.
+to one figure stay in that figure's notebook. File locations are in each notebook's Settings.
 """
 
 from dataclasses import dataclass
@@ -75,7 +75,7 @@ class Variable:
         scale, offset: analysis value = raw value * scale + offset.
         era5_code: Code in the hourly ERA5 file names (``*.2t.nc``); None if there is no ERA5 recipe yet.
         era5_name: Name of the variable inside those files.
-        table: CMIP table, the folder of ``paths.LESFMIP_RAW`` the raw files are in.
+        table: CMIP table, the folder the raw files are in (notebook 01's ``RAW_DIR``).
     """
 
     name: str
@@ -105,9 +105,9 @@ class Variable:
 #(c): precipitation is a forecast accumulation (fc_sfc, not an_sfc) and wind speed has to be built from 10u
 #(c): and 10v, so neither has an ERA5 recipe in convert.py yet.
 #(c): siconc (sea-ice concentration, %) is not in the LEADER-EPESC folders: notebook 09 takes it from CEDA's copy of
-#(c): CMIP6 (``paths.CEDA_CMIP6``, table SImon), each model on its own grid, and puts it on the 2.5° grid. ERA5's
+#(c): CMIP6 (09a's ``CEDA_DIRS``, table SImon), each model on its own grid, and puts it on the 2.5° grid. ERA5's
 #(c): sea-ice cover (code ci) is a fraction from 0 to 1; notebook 09 stores it in % like the models.
-#(c): sam is the Southern Annular Mode index, already standardised, from ``paths.SAM_RAW`` rather than the
+#(c): sam is the Southern Annular Mode index, already standardised, from notebook 01's ``SAM_RAW_DIR`` rather than the
 #(c): LESFMIP files (``sam.open_index``); it sorts the seasons into SAM phases (notebook 03, *SAM Phases*).
 VARIABLES = {
     "tas": Variable("tas", "Near-surface air temperature", "°C", offset=-273.15, era5_code="2t", era5_name="t2m"),

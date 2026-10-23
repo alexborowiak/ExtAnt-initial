@@ -1,6 +1,7 @@
 """The pre-processing (monthly to seasonal means, ERA5 onto the model grid), on synthetic data and on the sample."""
 
 from functools import partial
+from pathlib import Path
 
 import cftime
 import numpy as np
@@ -10,13 +11,24 @@ import xarray as xr
 
 from extant import datatree
 from extant import era5_evaluation as ev
-from extant import loading
 from extant import preprocessing as pp
 from extant import quantiles as qc
 from extant import significance as sig
 from extant.config import WINDOW
 
 RNG = np.random.default_rng(42)
+
+#(t): The sample in this repository: <model>_<experiment>_sample.nc (monthly tas in K) and era5_sample.nc
+SAMPLE_DIR = Path(__file__).resolve().parent / "data"
+
+
+def open_sample_tree(experiments=None):
+    """The sample's model files as a /<model>/<experiment> DataTree, loaded, as the notebooks open them."""
+    files = sorted(SAMPLE_DIR.glob("*_*_sample.nc"))
+    names = [file.stem.removesuffix("_sample").rsplit("_", 1) for file in files]
+    return xr.DataTree.from_dict({f"{model}/{experiment}": xr.open_dataset(file).load()
+                                  for file, (model, experiment) in zip(files, names)
+                                  if experiments is None or experiment in experiments})
 
 
 # ---------------------------------------------------------------------------
@@ -103,24 +115,24 @@ def test_match_grid_interpolates_other_points():
 @pytest.fixture(scope="module")
 def season_tree():
     """lesfmip_season_tree as the notebooks build it: °C, cut at 2014, seasonal means on (year, season)."""
-    tree = loading.open_lesfmip_sample(experiments=["hist-nat", "hist-GHG", "historical"])
+    tree = open_sample_tree(experiments=["hist-nat", "hist-GHG", "historical"])
     return pp.seasonal_tree(tree, "tas").compute()
 
 
 @pytest.fixture(scope="module")
 def era5_seasonal(season_tree):
-    return pp.seasonal_era5(loading.open_era5_sample(), "tas", like=season_tree)
+    return pp.seasonal_era5(xr.open_dataarray(SAMPLE_DIR / "era5_sample.nc").load(), "tas", like=season_tree)
 
 
 def test_era5_sample_is_like_the_monthly_store():
-    era5 = loading.open_era5_sample()
+    era5 = xr.open_dataarray(SAMPLE_DIR / "era5_sample.nc").load()
     assert 200 < float(era5.mean()) < 280                                   # K
     assert list(era5.time.dt.month.values[:12]) == list(range(1, 13))       # one value per month
     assert str(era5.time.values[0])[:10] == "1979-01-01"
 
 
 def test_sample_tree_layout():
-    tree = loading.open_lesfmip_sample()
+    tree = open_sample_tree()
     assert set(tree.children) == {"CanESM5", "HadGEM3-GC31-LL"}
     assert {"hist-nat", "historical"} <= set(tree["CanESM5"].children)
     assert float(tree["CanESM5/historical"].tas.mean()) > 200   # K

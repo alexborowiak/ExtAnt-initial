@@ -1,28 +1,22 @@
 """Raw files to monthly zarr stores: LESFMIP (one netCDF file per member) and ERA5 (hourly files).
 
-Used by notebook 01 on JASMIN, once per variable, and by notebook 09 for the
+Used by notebook 01 on JASMIN, once per variable, and by notebook 09a for the
 sea ice, which is in CEDA's copy of the CMIP6 archive rather than the
-LEADER-EPESC folders (the last section finds its files). Only the pieces are here
-(finding the files, opening one model's members together, a month of ERA5,
-joining the ERA5 years); the loops, what is left to do and the checks are in
-the notebook. Everything is written under ``paths.SCRATCH``; move it to
-``paths.DATA_DIR`` afterwards (see ``paths``). Runs on the Dask cluster, so
-send the package to the workers first (``jasmin.upload_package(client)``).
+LEADER-EPESC folders (the last section lists its folders). Only the pieces are
+here (opening one model's member files together, a month of ERA5, the CEDA
+inventory); the notebooks list the files, run the loops, save and check. Runs on
+the Dask cluster, so send the package to the workers first
+(``jasmin.upload_package(client)``).
 """
 
-import logging
 import re
-import shutil
 from functools import partial
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import xarray as xr
 
-from . import config, paths, storage
-
-logger = logging.getLogger(__name__)
+from . import config
 
 # ---------------------------------------------------------------------------
 # LESFMIP
@@ -46,9 +40,6 @@ MEMBER_PATTERNS = (
     re.compile(r"(?:^|[_/])(\d{2,3})(?=[_.]|$)"),                 # SFLE: 009
 )
 
-#(t): Folders of raw files (``paths.lesfmip_raw``) that are not experiments
-NOT_EXPERIMENTS = ("nhsum", "reanalysis")
-
 
 def member_from_path(source):
     """The member label in a file's name, or failing that in the folders above it."""
@@ -70,30 +61,6 @@ def preprocess_member(ds, variable):
     if "lon_2" in ds.coords:
         ds = ds.rename({"lon_2": "lon"})
     return ds.sel(lat=slice(-90, config.LAT_MAX))
-
-
-def availability(variable, experiments=None):
-    """Which models have raw files for which experiment: a True/False table, the best-covered models first.
-
-    Args:
-        variable (str): Key of ``config.VARIABLES``.
-        experiments (Sequence[str] | None): Experiments to check; every folder if None.
-
-    Returns:
-        pd.DataFrame: models x experiments.
-    """
-    raw = paths.lesfmip_raw(variable)
-    if experiments is None:
-        experiments = sorted(p.name for p in raw.iterdir() if p.is_dir() and p.name not in NOT_EXPERIMENTS)
-    models = {experiment: [p.name for p in (raw / experiment).iterdir() if p.is_dir()] for experiment in experiments}
-    table = (pd.Series(models).explode().rename_axis("experiment").reset_index(name="model")
-             .pipe(lambda d: pd.crosstab(d["model"], d["experiment"])).astype(bool))
-    return table.loc[table.sum(axis=1).sort_values(ascending=False, kind="stable").index]
-
-
-def raw_files(variable, experiment, model):
-    """One model's raw files for one experiment (the ``config.GROUP`` ones), one per member, sorted."""
-    return sorted((paths.lesfmip_raw(variable) / experiment / model).rglob(f"*_{config.GROUP}.nc"))
 
 
 def open_members(files, variable, open_kwargs=None):
@@ -125,16 +92,6 @@ def era5_south(ds):
     return ds.sortby("latitude").sel(latitude=slice(-90.0, ERA5_LAT_MAX))
 
 
-def era5_files(variable, year, month=None, hour=None):
-    """The hourly ERA5 files of one year (or month), sorted; with ``hour``, only that hour (UTC) of each day."""
-    code = config.VARIABLES[variable].era5_code
-    if code is None:
-        raise ValueError(f"no ERA5 recipe for {variable} yet: see config.VARIABLES")
-    months = f"{month:02d}" if month else "*"
-    hours = "" if hour is None else f"{hour:02d}00"
-    return sorted(Path(paths.ERA5_RAW).glob(f"{year}/{months}/*/*{hours}.{code}.nc"))
-
-
 def era5_month_mean(files, name):
     """Mean of hourly ERA5 files (one month), south of 38°S, as a float32 array (lat, lon).
 
@@ -148,28 +105,6 @@ def era5_month_mean(files, name):
         total = subtotal if total is None else total + subtotal
         n += values.shape[0]
     return (total / n).astype("float32")
-
-
-def combine_era5_years(variable):
-    """Join the year stores (and any existing combined store) into ``paths.era5_monthly``, check it, delete them."""
-    years_dir = paths.era5_years_dir(variable)
-    year_stores = paths.find_all(years_dir, "*.zarr")
-    parts = [xr.open_zarr(p)[variable] for p in year_stores]
-    if storage.exists(paths.era5_monthly(variable)):
-        parts.insert(0, storage.open_dataarray(paths.era5_monthly(variable)))
-    monthly = xr.concat(parts, dim="time").sortby("time").load()
-
-    #(c): Reopened from where it was just written: paths.find would prefer an older copy in DATA_DIR
-    store = storage.save(monthly.rename(variable), paths.era5_monthly(variable))
-    saved = xr.open_zarr(store)[variable].load()
-    assert saved.indexes["time"].is_unique, "a month appears twice"
-    assert saved.indexes["time"].is_monotonic_increasing, "months out of order"
-    assert np.allclose(saved.values, monthly.values, equal_nan=True), "the saved store differs from the data"
-
-    for year_store in year_stores:
-        shutil.rmtree(year_store)
-    logger.info(f"ERA5 {variable}: {dict(saved.sizes)} saved, {len(year_stores)} year stores removed")
-    return saved
 
 
 # ---------------------------------------------------------------------------
@@ -209,18 +144,17 @@ def ceda_folder_row(folder):
             "folder": str(folder)}
 
 
-def ceda_inventory(models, experiments, roots=None):
+def ceda_inventory(models, experiments, roots):
     """Every folder of the sea ice and the cell areas for ``models`` and ``experiments`` in CEDA's archive.
 
     Args:
         models, experiments (Sequence[str]): What to look for (the cell areas also in piControl).
-        roots (Sequence[Path] | None): The trees searched; every one of ``paths.CEDA_CMIP6`` if None.
+        roots (Sequence[Path]): The trees searched, e.g. CEDA's CMIP6/DAMIP, CMIP6/CMIP and CMIP6Plus/LESFMIP.
 
     Returns:
         pd.DataFrame: One row per member and variable: project, activity, institution, model, experiment,
         member, table, variable, grid, the number of files, the first and last year, and the folder.
     """
-    roots = list(paths.CEDA_CMIP6.values()) if roots is None else roots
     wanted = [(table, variable, list(experiments)) for table, variable in CEDA_SEA_ICE]
     wanted += [(table, variable, [*experiments, "piControl"]) for table, variable in CEDA_AREAS]
     rows = []
@@ -237,17 +171,3 @@ def ceda_inventory(models, experiments, roots=None):
     order = table_df["member"].map(member_number) if len(table_df) else table_df["member"]
     return table_df.assign(number=order).sort_values(["model", "experiment", "variable", "number"]).drop(
         columns="number").reset_index(drop=True)
-
-
-def ceda_member_files(rows):
-    """Member label -> its files, for inventory rows of one model, experiment and variable (``ceda_inventory``)."""
-    return {row.member: sorted(Path(row.folder).glob("*.nc")) for row in rows.itertuples()}
-
-
-def ceda_area_file(inventory, model, variable, grid):
-    """The cell-area file (``areacello`` or ``areacella``) of one model's grid, from any run that has it."""
-    rows = inventory[(inventory["model"] == model) & (inventory["variable"] == variable)
-                     & (inventory["grid"] == grid)]
-    if rows.empty:
-        raise FileNotFoundError(f"no {variable} on grid {grid} for {model} in the inventory")
-    return sorted(Path(rows["folder"].iloc[0]).glob("*.nc"))[0]

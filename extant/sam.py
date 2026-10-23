@@ -1,7 +1,7 @@
 """The Southern Annular Mode (SAM): which phase each season is in, so every result can be split by it.
 
 The index is not computed here. LEADER-EPESC working group 1 made a monthly
-SAM index for every LESFMIP member (``paths.SAM_RAW``, the files
+SAM index for every LESFMIP member (notebook 01's ``SAM_RAW_DIR``, the files
 archive/draft_current_DAILY.ipynb opened): the zonal-mean index of Gong & Wang
 (1999), the difference between standardised zonal means at 40°S and 65°S, one
 file per member with ``SAM`` on (time_mm, level). Notebook 01 (section 6) turns
@@ -31,7 +31,6 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-from . import paths
 from .datatree import skip_empty
 
 # ---------------------------------------------------------------------------
@@ -40,11 +39,6 @@ from .datatree import skip_empty
 
 #(t): The member ID in a file name, e.g. SAM_zonal_mon_hist-nat_HadGEM3-GC31-LL_r10i1p1f3_interp.nc -> r10i1p1f3
 MEMBER_PATTERN = r"_(r\d+i\d+p\d+f\d+)_"
-
-
-def index_files(experiment, model, root=paths.SAM_RAW):
-    """Every member's SAM file for one model and experiment, sorted by name (empty if there are none)."""
-    return sorted((Path(root) / experiment / model).glob("*.nc"))
 
 
 def member_of(path, pattern=MEMBER_PATTERN):
@@ -69,7 +63,7 @@ def open_index(files, level=0):
     in a file so the right one can be chosen.
 
     Args:
-        files (Sequence[Path]): One file per member, from ``index_files``.
+        files (Sequence[Path]): One file per member (notebook 01 lists them).
         level (int): Position along the files' ``level`` dim.
 
     Returns:

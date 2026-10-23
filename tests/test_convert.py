@@ -1,47 +1,41 @@
-"""The JASMIN-only path, on fake raw files: member files -> monthly stores -> seasonal means -> saved and reopened.
+"""The JASMIN-only path of notebook 01, on fake raw files: member files -> monthly stores -> seasonal means -> saved.
 
 Built from the sample, laid out as on JASMIN (one netCDF file per member under
-LESFMIP_RAW/<table>/<variable>/<experiment>/<model>/), so everything but the Dask
-Gateway cluster and the xesmf regridding runs as it does there.
+<raw>/<experiment>/<model>/), and run as notebook 01 writes it out: the files
+listed, opened together (convert.open_members), saved with to_zarr, the stores
+listed and opened into a DataTree. Everything but the Dask Gateway cluster and
+the xesmf regridding runs as it does there.
 """
 
+from pathlib import Path
+
 import numpy as np
-import pandas as pd
 import pytest
 import xarray as xr
 
-from extant import config, convert, loading, paths, preprocessing as pp, storage
+from extant import config, convert, preprocessing as pp
 
 pytest.importorskip("zarr")
 
+#(t): The sample in this repository: <model>_<experiment>_sample.nc (monthly tas in K) and era5_sample.nc
+SAMPLE_DIR = Path(__file__).resolve().parent / "data"
 MODELS = ["CanESM5", "HadGEM3-GC31-LL"]
 EXPERIMENTS = ["hist-nat", "historical", "hist-GHG"]
 
 
 @pytest.fixture(scope="module")
-def jasmin(tmp_path_factory):
-    """Fake raw files and separate scratch and data roots."""
-    root = tmp_path_factory.mktemp("jasmin")
-    sample = loading.open_lesfmip_sample(models=MODELS, experiments=EXPERIMENTS)
-    for node in sample.leaves:
-        folder = root / "raw" / "Amon" / "tas" / node.name / node.parent.name
-        folder.mkdir(parents=True)
-        ds = node.to_dataset()
-        for k, member in enumerate(ds.member.values[:12]):
-            label = f"r{k + 1}i1p1f1"
-            one = ds.sel(member=member).drop_vars("member")
-            one.to_netcdf(folder / f"tas_mon_{node.name}_{node.parent.name}_{label}_interp.nc")
-    (root / "raw" / "Amon" / "tas" / "reanalysis").mkdir()
-    return root
-
-
-@pytest.fixture
-def roots(jasmin, monkeypatch):
-    monkeypatch.setattr(paths, "LESFMIP_RAW", jasmin / "raw")
-    monkeypatch.setattr(paths, "LESFMIP_MONTHLY", None)
-    monkeypatch.setattr(paths, "SCRATCH", jasmin / "scratch")
-    monkeypatch.setattr(paths, "DATA_DIR", jasmin / "data")
-    return jasmin
+def raw_dir(tmp_path_factory):
+    """Fake raw files, 12 members of each model and experiment: <raw>/<experiment>/<model>/*_interp.nc."""
+    raw = tmp_path_factory.mktemp("jasmin") / "raw"
+    for model in MODELS:
+        for experiment in EXPERIMENTS:
+            ds = xr.open_dataset(SAMPLE_DIR / f"{model}_{experiment}_sample.nc").load()
+            folder = raw / experiment / model
+            folder.mkdir(parents=True)
+            for k, member in enumerate(ds.member.values[:12]):
+                one = ds.sel(member=member).drop_vars("member")
+                one.to_netcdf(folder / f"tas_mon_{experiment}_{model}_r{k + 1}i1p1f1_interp.nc")
+    return raw
 
 
 def test_member_labels():
@@ -50,44 +44,43 @@ def test_member_labels():
     assert convert.member_from_path("/a/009/tas_interp.nc") == "009"
 
 
-def test_raw_files_to_seasonal_means(roots):
-    table = convert.availability("tas")
-    assert set(table.columns) == set(EXPERIMENTS) and table.all().all()   # 'reanalysis' is not an experiment
+def test_raw_files_to_seasonal_means(raw_dir, tmp_path):
+    monthly_dir, scratch_dir = tmp_path / "monthly", tmp_path / "scratch"
 
-    #(c): As notebook 01, section 1 does it: each model's members for each experiment, opened together and saved
+    #(c): Notebook 01, section 1: each model's member files for each experiment, opened together and saved
     for model in MODELS:
         for experiment in EXPERIMENTS:
-            files = convert.raw_files("tas", experiment, model)
-            assert len(files) == 12
-            storage.save(convert.open_members(files, "tas"), paths.lesfmip_monthly(model, "tas", experiment, "interp"),
-                         consolidated=True)
-    assert convert.raw_files("tas", "historical", "no-such-model") == []
-    store = paths.find(paths.lesfmip_monthly("CanESM5", "tas", "historical", "interp"))
-    assert store.parent.parent.parent.parent == roots / "scratch"
-    monthly = xr.open_zarr(store)
-    assert monthly.sizes["member"] == 12 and set(monthly.member.values) == {f"r{k}i1p1f1" for k in range(1, 13)}
-    assert float(monthly.lat.max()) <= config.LAT_MAX
+            member_paths = sorted((raw_dir / experiment / model).rglob(f"*_{config.GROUP}.nc"))
+            assert len(member_paths) == 12
+            store_path = monthly_dir / f"{model}_tas_{experiment}_{config.GROUP}_monthly.zarr"
+            convert.open_members(member_paths, "tas").drop_encoding().to_zarr(store_path, mode="w", consolidated=True)
+    monthly_ds = xr.open_zarr(monthly_dir / f"CanESM5_tas_historical_{config.GROUP}_monthly.zarr")
+    assert monthly_ds.sizes["member"] == 12 and set(monthly_ds.member.values) == {f"r{k}i1p1f1" for k in range(1, 13)}
+    assert float(monthly_ds.lat.max()) <= config.LAT_MAX
 
-    stores = loading.store_table("tas")
-    assert stores.loc["CanESM5"].sum() == len(EXPERIMENTS)
-    models = loading.models_with_most_experiments(stores, 1)
-    tree = loading.open_lesfmip_monthly("tas", models=models, experiments=EXPERIMENTS, groups=["interp"])
-    assert set(tree.children) == set(models) and set(tree[models[0]].children) == set(EXPERIMENTS)
+    #(c): Section 3: the stores listed, the model and experiment read from each name, opened into a DataTree
+    store_paths = sorted(monthly_dir.glob(f"*_tas_*_{config.GROUP}_monthly.zarr"))
+    names = [path.name.removesuffix("_monthly.zarr").rsplit("_", 3) for path in store_paths]
+    assert sorted({model for model, _, _, _ in names}) == MODELS
+    lesfmip_tree = xr.DataTree.from_dict({f"{model}/{experiment}": xr.open_zarr(path, consolidated=True)
+                                          for path, (model, _, experiment, _) in zip(store_paths, names)})
+    assert set(lesfmip_tree.children) == set(MODELS) and set(lesfmip_tree["CanESM5"].children) == set(EXPERIMENTS)
 
-    seasons = pp.seasonal_tree(tree, "tas")
-    era5 = pp.seasonal_era5(loading.open_era5_sample(), "tas", like=seasons)
-    storage.save(seasons, paths.seasonal("lesfmip", "tas"))
-    storage.save(era5, paths.seasonal("era5", "tas"))
+    #(c): The seasonal means, saved with to_zarr and opened again
+    season_tree = pp.seasonal_tree(lesfmip_tree, "tas")
+    era5_da = pp.seasonal_era5(xr.open_dataarray(SAMPLE_DIR / "era5_sample.nc").load(), "tas", like=season_tree)
+    season_tree.to_zarr(scratch_dir / "lesfmip_tas.zarr", mode="w")
+    era5_da.to_dataset(name="tas").to_zarr(scratch_dir / "era5_tas.zarr", mode="w")
 
-    reopened = loading.open_seasonal("tas", experiments=["historical"])
-    assert [node.name for node in reopened.leaves] == ["historical"]
-    node = reopened[f"{models[0]}/historical"].tas
-    assert set(node.dims) == {"member", "year", "season", "lat", "lon"}
-    assert int(node.year.max()) == 2013 and -80 < float(node.mean()) < 0
-    xr.testing.assert_allclose(loading.open_era5_seasonal("tas").load(), era5.load())
+    reopened_tree = xr.open_datatree(scratch_dir / "lesfmip_tas.zarr", engine="zarr")
+    node_da = reopened_tree["CanESM5/historical"].tas
+    assert set(node_da.dims) == {"member", "year", "season", "lat", "lon"}
+    assert int(node_da.year.max()) == 2013 and -80 < float(node_da.mean()) < 0
+    xr.testing.assert_allclose(node_da.load(), season_tree["CanESM5/historical"].tas.load())
+    xr.testing.assert_allclose(xr.open_zarr(scratch_dir / "era5_tas.zarr")["tas"].load(), era5_da.load())
 
 
-def test_era5_month_mean_and_combining_years(roots, tmp_path):
+def test_era5_month_mean(tmp_path):
     lat, lon = np.linspace(-90, -30, 25), np.arange(0, 360, 30.0)
     files = []
     for hour in range(3):
@@ -100,14 +93,3 @@ def test_era5_month_mean_and_combining_years(roots, tmp_path):
     mean = convert.era5_month_mean(files, "t2m")
     assert mean.dtype == np.float32 and mean.shape == ((lat <= -38).sum(), lon.size)
     np.testing.assert_allclose(mean, 251.0)
-
-    #(c): Two year stores, as notebook 01 leaves them, combined into one checked store
-    for year in (2001, 2000):
-        months = xr.DataArray(np.full((12, 2, 2), float(year)), dims=("time", "lat", "lon"),
-                              coords={"time": pd.date_range(f"{year}-01-01", periods=12, freq="MS"),
-                                      "lat": [-80.0, -77.5], "lon": [0.0, 2.5]}, name="tas")
-        storage.save(months, paths.era5_years_dir("tas") / f"{year}.zarr")
-    combined = convert.combine_era5_years("tas")
-    assert combined.sizes["time"] == 24 and combined.indexes["time"].is_monotonic_increasing
-    assert paths.find_all(paths.era5_years_dir("tas"), "*.zarr") == []
-    assert loading.open_era5_monthly("tas").sizes["time"] == 24

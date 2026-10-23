@@ -37,10 +37,7 @@ What is in `extant/`:
 | Module | |
 |---|---|
 | `config` | experiments, window length, example point, thresholds, and the variables with their units |
-| `paths` | every input and output location (the notebooks write their folders out as `Path`s in Settings instead) |
-| `storage` | saving to zarr and opening again (the notebooks write `to_zarr` and `xr.open_zarr` out instead) |
-| `convert` | raw LESFMIP files to monthly zarr stores, and the pieces of the ERA5 step (its loop and regridding are in notebook 01) |
-| `loading` | opening the monthly stores, the seasonal means and the sample (the notebooks list the files and open them instead) |
+| `convert` | opening one model's raw member files together, a month of ERA5, and the inventory of CEDA's sea ice (the file lists, loops, saves and regridding are in notebooks 01 and 09a) |
 | `preprocessing` | monthly to seasonal means, and ERA5 onto the model grid |
 | `quantiles` | rolling quantiles and LOWESS (numba) |
 | `significance` | the hist-nat bootstrap (10 hist-nat members over the same final years) of the width and of the mean, Welch t-test, multi-model agreement |
@@ -79,7 +76,7 @@ The notebook test runner (`tests/run_notebooks.py`) points `SCRATCH_DIR` and the
 
 **Another variable.** Set `VARIABLE` at the top of each notebook. The variable needs an entry in `config.VARIABLES`, which says how to convert its units; `pr` and `sfcWind` are there but have not been run yet. Two things are not done for them yet. There is no ERA5 recipe: precipitation is a forecast accumulation, and wind speed has to be built from its u and v components. And some figure labels in `extant/plots` still talk about warming and cold or warm tails.
 
-**Sea ice.** The sea ice is not in the LEADER-EPESC folders but in CEDA's copy of the CMIP6 archive (`paths.CEDA_CMIP6`: DAMIP for the single forcings, CMIP for historical), each model on its own ocean grid, with far fewer members than the temperature. Notebook 09 puts it on the 2.5° grid (each cell the area-weighted mean of the points in it, and its ocean area, so the extent counts only the ocean of coastal cells), saves it as monthly stores next to the temperature's, checks it against ERA5's sea-ice cover, and compares the change in sea ice with the mean and width changes. Its `extent` and `climatology` give the sea-ice edge on the maps of notebook 04 (sections 1, 4, 5 and 7: hist-nat's dashed, the experiment's solid) and notebook 07's D panels, as Bracegirdle et al. (2024, *npj Clim. Atmos. Sci.* 7, 276) mark it. `scripts/sea_ice_sample.py` lists what CEDA has and makes the sample. Without the sea ice, everything else runs and the figures leave the edge out.
+**Sea ice.** The sea ice is not in the LEADER-EPESC folders but in CEDA's copy of the CMIP6 archive (09a's `CEDA_DIRS`: DAMIP for the single forcings, CMIP for historical), each model on its own ocean grid, with far fewer members than the temperature. Notebook 09 puts it on the 2.5° grid (each cell the area-weighted mean of the points in it, and its ocean area, so the extent counts only the ocean of coastal cells), saves it as monthly stores next to the temperature's, checks it against ERA5's sea-ice cover, and compares the change in sea ice with the mean and width changes. Its `extent` and `climatology` give the sea-ice edge on the maps of notebook 04 (sections 1, 4, 5 and 7: hist-nat's dashed, the experiment's solid) and notebook 07's D panels, as Bracegirdle et al. (2024, *npj Clim. Atmos. Sci.* 7, 276) mark it. `scripts/sea_ice_sample.py` lists what CEDA has and makes the sample. Without the sea ice, everything else runs and the figures leave the edge out.
 
 ## Tests
 

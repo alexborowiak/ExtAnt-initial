@@ -175,7 +175,7 @@ def match_grid(obs, like, tolerance=0.01, lat="lat", lon="lon"):
 # ---------------------------------------------------------------------------
 
 def seasonal_tree(tree, variable, last_month=config.LAST_MONTH, chunks=SEASONAL_CHUNKS):
-    """Monthly LESFMIP (as opened by ``loading.open_lesfmip_monthly``) to seasonal means in analysis units.
+    """Monthly LESFMIP (the monthly stores, as notebook 01 opens them) to seasonal means in analysis units.
 
     Lazy: nothing is computed until the result is saved, persisted or loaded.
 
@@ -200,7 +200,7 @@ def seasonal_tree(tree, variable, last_month=config.LAST_MONTH, chunks=SEASONAL_
 
 
 def seasonal_era5(monthly, variable, like, start_year=config.ERA5_START_YEAR):
-    """Monthly ERA5 (as opened by ``loading.open_era5_monthly``) to seasonal means on the LESFMIP grid.
+    """Monthly ERA5 (as notebook 01 opens it) to seasonal means on the LESFMIP grid.
 
     Args:
         monthly (xr.DataArray): Monthly means on (time, lat, lon), raw units, on its own calendar.

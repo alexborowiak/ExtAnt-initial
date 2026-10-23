@@ -9,10 +9,10 @@ sample in tests/data instead; notebook 10, which has no sample section, is
 skipped whole (``JASMIN_NOTEBOOKS``). IPython magics, shell lines and help lines
 (``pr.thresholds?``) are dropped. Everything the notebooks save goes to a
 temporary folder: the scratch folder they write out as a plain path is replaced
-by EXTANT_SCRATCH, and this repository's figures folder (``Path('../figures')``)
-by EXTANT_FIGURES (EXTANT_DATA is set too, for code that still goes through
-``extant.paths``). So notebooks 04a-08b read what 02a, 03 and 09a saved, just as
-they do on JASMIN; 09a runs straight after 03 for that. Cells run in order in one namespace per notebook, as in
+by a temporary scratch folder, and this repository's figures folder
+(``Path('../figures')``) by a temporary figures folder. So notebooks 04a-08b
+read what 02a, 03 and 09a saved, just as they do on JASMIN; 09a runs straight
+after 03 for that. Cells run in order in one namespace per notebook, as in
 Jupyter, from the notebooks folder; a failing cell is reported and the run
 carries on. Resampling cells use at most ``--trials`` trials (default 500),
 and figures are drawn and closed. The whole run takes a few minutes.
@@ -201,7 +201,7 @@ def main():
     args = parser.parse_args()
 
     output = Path(tempfile.mkdtemp(prefix="extant_notebooks_"))
-    for variable in ("EXTANT_SCRATCH", "EXTANT_DATA", "EXTANT_FIGURES"):
+    for variable in ("EXTANT_SCRATCH", "EXTANT_FIGURES"):
         os.environ[variable] = str(output / variable.split("_")[1].lower())
     sys.path[:0] = [str(REPO)]
     stand_in_modules()
