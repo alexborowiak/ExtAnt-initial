@@ -8,12 +8,9 @@ The house pattern: create the axes with `panel_grid`, draw into each axes,
 then add labels and colorbars.
 """
 
-import numpy as np
 import matplotlib.pyplot as plt
 
-import cartopy.crs as ccrs
-
-from . import core, maps, timeseries
+from . import core, timeseries
 from .constants import (
     FORCING_COLORS,
     FORCING_LEGEND_LABELS,
@@ -24,135 +21,9 @@ from .constants import (
 from .utils import plot, save_frame, shared_ylim
 
 
-def _row_keys(ds, dim):
-    """Panel keys for `dim`: its coordinate values, a scalar, or [None]."""
-    if dim in ds.dims:
-        return list(np.atleast_1d(ds[dim].values))
-    if dim in ds.coords:
-        return [ds[dim].values.item()]
-    return [None]
-
-
 # --------------------------------------------------------------------------
 # Quantile matrix: low, median, high quantile and their difference
 # --------------------------------------------------------------------------
-
-@plot("figure")
-def quantile_matrix(ds, row_dim="season", quant_dim="quantile", q_low=0.1, q_high=0.9,
-                    raw_levels=np.linspace(-3, 3, 13),
-                    diff_levels=np.linspace(-2, 2, 9), cmap="RdBu_r",
-                    lat_name="lat", lon_name="lon", title=None,
-                    raw_label=None, diff_label=None,
-                    fig=None, spec=None, layout=None, ax=None, axes=None,
-                    caxes=None, cbar_height=None, cbar_gap=None,
-                    **layout_kwargs):
-    """Polar panels: low, median and high quantile, and their difference.
-
-    Parameters
-    ----------
-    ds : xarray.DataArray
-        Field with a quantile dimension and optionally a row dimension.
-    row_dim, quant_dim : str
-        Dimensions mapped to rows, and holding the quantiles.
-    q_low, q_high : float
-        Quantiles drawn in the first and third columns.
-    raw_levels, diff_levels : array_like
-        Contour levels for the quantile columns and the difference column.
-    cmap : str
-        Colormap name.
-    lat_name, lon_name : str
-        Names of the latitude and longitude coordinates.
-    title : str or None
-        Figure title, added only when this function owns the figure.
-    raw_label, diff_label : str or None
-        Labels under the two colorbars.
-    ax, axes : matplotlib.axes.Axes or array-like, optional
-        Caller-owned panel axes. Use `axes` for this complete grid; `ax` is
-        the one-panel shorthand in figure functions that produce one panel.
-    caxes : pair of matplotlib.axes.Axes or None
-        Caller-owned targets for the raw and difference colorbars. With
-        caller-owned panel axes, colorbars are added only when this is
-        supplied; create them with ``fig.add_subplot(grid[...])`` when
-        composing a GridSpec.
-    cbar_height, cbar_gap : float or None
-        Thickness and gap above automatic colorbars, in inches. They apply to
-        a new `GridLayout`; nested layouts use relative `cbar_frac`.
-    fig, spec, layout, **layout_kwargs
-        Standard figure-function arguments; see core.open_layout.
-
-    Returns
-    -------
-    core.Panels
-    """
-    row_keys = _row_keys(ds, row_dim)
-    columns = [("q", q_low), ("q", 0.5), ("q", q_high), ("diff", None)]
-    col_titles = [f"p{int(q_low * 100)}", "p50", f"p{int(q_high * 100)}",
-                  f"p{int(q_high * 100)} - p{int(q_low * 100)}"]
-
-    layout_kwargs.setdefault("row_labels", any(key is not None for key in row_keys))
-    layout_kwargs.setdefault("has_title", title is not None)
-    layout_kwargs.setdefault(
-        "has_cbar_label", caxes is None and (raw_label is not None or diff_label is not None)
-    )
-    caller_axes = ax is not None or axes is not None
-    if cbar_height is not None or cbar_gap is not None:
-        if caller_axes or caxes is not None:
-            raise ValueError("cbar_height/cbar_gap do not resize caller-owned caxes")
-        if spec is not None or layout is not None:
-            raise ValueError(
-                "cbar_height/cbar_gap need a new GridLayout; use cbar_frac for a "
-                "nested layout or configure a supplied layout directly"
-            )
-        if cbar_height is not None:
-            layout_kwargs["cbar_height"] = cbar_height
-        if cbar_gap is not None:
-            layout_kwargs["cbar_gap"] = cbar_gap
-
-    panels = core.panel_grid(
-        len(row_keys), len(columns), fig=fig, spec=spec, layout=layout,
-        ax=ax, axes=axes, projection=ccrs.SouthPolarStereo(),
-        colorbar=caxes is None and not caller_axes, **layout_kwargs,
-    )
-    for row, row_key in enumerate(row_keys):
-        ds_row = ds.sel({row_dim: row_key}) if row_dim in ds.dims else ds
-        for col, (kind, q) in enumerate(columns):
-            if kind == "diff":
-                field = (ds_row.sel({quant_dim: q_high}, method="nearest")
-                         - ds_row.sel({quant_dim: q_low}, method="nearest"))
-                levels = diff_levels
-            else:
-                field = ds_row.sel({quant_dim: q}, method="nearest")
-                levels = raw_levels
-            panels.artists[row, col] = maps.draw_polar_contour(
-                panels.axes[row, col], field, levels, cmap,
-                lat_name=lat_name, lon_name=lon_name,
-            )
-
-    core.label_cols(panels.axes, col_titles)
-    core.label_rows(panels.axes, row_keys)
-    core.tag_panels(panels.axes)
-
-    if caxes is None and not caller_axes:
-        caxes = (
-            panels.colorbar_ax(0, 2),
-            panels.colorbar_ax(3, 3),
-        )
-    if caxes is not None:
-        caxes = np.asarray(caxes, dtype=object).ravel()
-        if caxes.size != 2:
-            raise ValueError("caxes must contain the raw and difference colorbar axes")
-        if any(cax is None for cax in caxes):
-            raise ValueError("caxes cannot contain None")
-    panels.extras["cbars"] = [] if caxes is None else [
-        core.add_colorbar(panels.fig, panels.artists[0, 0], caxes[0], raw_levels, raw_label),
-        core.add_colorbar(panels.fig, panels.artists[0, 3], caxes[1],
-                          np.round(diff_levels, 1), diff_label),
-    ]
-    if title and not caller_axes and panels.layout.owns_figure:
-        core.add_suptitle(panels.fig, panels.layout, title)
-
-    return panels
-
 
 # --------------------------------------------------------------------------
 # Seasonal quantile summary: spread on top, plume below, one column per season

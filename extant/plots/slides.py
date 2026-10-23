@@ -3,8 +3,9 @@
 Sections
 --------
 1. Labels: names at the end of lines, quantile levels at the edge of a plume
-2. How the figures are made: a count of models from its tests (``count_schematic``), the joint key drawn
-   with sketched distributions (``joint_key_explainer``), and maps revealed row by row (``reveal_frames``)
+2. How the figures are made: one model's test at a point (``plot_point_test``, which notebook 05 draws for
+   every model before counting them), and the joint key drawn with sketched distributions
+   (``joint_key_explainer``)
 """
 
 import matplotlib.pyplot as plt
@@ -57,105 +58,55 @@ def _density(values, x):
     return np.exp(-0.5 * z ** 2).sum(1) / (values.size * bandwidth * np.sqrt(2 * np.pi))
 
 
-@plot("figure")
-def count_schematic(hist_nat, experiment_values, changes, pvalues, counts, point, experiment, alpha=0.05, units="°C",
-                    title=None):
-    """How a "how many models" map is made: one test per model at one grid point, counted, then mapped.
+#(t): The verdict of a test at a point, by the sign of a significant change (0: not significant): its words and colour
+VERDICTS = {1: ("significant increase", "#b2182b"), -1: ("significant decrease", "#2166ac"), 0: ("not significant", MUTED)}
 
-    Left, one panel per model: hist-nat's values and the experiment's at the
-    point (members and years pooled; notebook 05 gives both over the final
-    years, as the hist-nat bootstrap of the mean compares them), their means,
-    the change and its p-value, and the verdict. Right:
-    the count map of the experiment, with the point starred: the number there
-    is the number of red (or blue) verdicts on the left.
+
+def plot_point_test(hist_nat_da, experiment_da, change, pvalue, experiment, ax=None, alpha=0.05, units="°C"):
+    """One model's test at one grid point: hist-nat's values and the experiment's, the change, its p-value, the verdict.
+
+    Each set of values is drawn as its density (members and years pooled), its mean as a dashed line; the change,
+    its p-value and the verdict (a significant increase or decrease, or not significant) go in the top-left corner.
+    Notebook 05 draws one per model, then counts the verdicts.
 
     Args:
-        hist_nat, experiment_values (dict[str, xr.DataArray]): Model -> its values at the point.
-        changes, pvalues (xr.DataArray): The change and its p-value at the point, on ``model``.
-        counts (xr.DataArray): ``significance.significant_counts`` output for the experiment, on
-            (direction, lat, lon).
-        point (dict): ``{"lat": ..., "lon": ...}``.
-        experiment (str): Its name, and its colour (FORCING_COLORS).
-        alpha (float): Significance level.
-        units (str): Units of the values.
-        title (str | None): Figure title.
+        hist_nat_da, experiment_da (xr.DataArray): The values at the point, on any dims (e.g. member, year).
+        change, pvalue (float): The test's change in the mean, and its p-value.
+        experiment (str): The experiment's name, which also picks its colour (FORCING_COLORS).
+        ax (matplotlib.axes.Axes | None): Where to draw; a new figure if None.
+        alpha (float): The significance level.
+        units (str): The values' units.
 
     Returns:
-        core.Panels
+        matplotlib.axes.Axes: The axis.
+
+    Example::
+
+        plot_point_test(hist_nat_da, historical_da, change=0.8, pvalue=0.01, experiment='historical')
     """
-    import cartopy.crs as ccrs
-    from matplotlib.gridspec import GridSpec
-    from plotting_modules import maps  # needs cartopy
-
-    from .forced_response import SLIDES, count_scale
-
-    models = list(hist_nat)
-    n_cols = int(np.ceil(len(models) / 2)) if len(models) > 2 else len(models)
-    n_rows = int(np.ceil(len(models) / n_cols))
-    colour = FORCING_COLORS.get(experiment, INK)
-    verdicts = {1: ("significant increase", "#b2182b"), -1: ("significant decrease", "#2166ac"),
-                0: ("not significant", MUTED)}
-    n_models = len(models)
-    scale = count_scale(n_models)
-    signed = counts.sel(direction="increase") - counts.sel(direction="decrease")
-
-    with plt.rc_context(SLIDES.rc):
-        fig = plt.figure(figsize=(3.0 * n_cols + 6.0, 2.6 * n_rows + 1.2))
-        grid = GridSpec(n_rows, n_cols + 2, figure=fig, width_ratios=[3.0] * n_cols + [1.4, 4.2], wspace=0.35,
-                        hspace=0.55, left=0.04, right=0.97, top=0.82 if title else 0.9, bottom=0.12)
-        pooled = np.concatenate([np.ravel(v.values) for v in [*hist_nat.values(), *experiment_values.values()]])
-        pooled = pooled[np.isfinite(pooled)]
-        x = np.linspace(pooled.min() - 0.1 * np.ptp(pooled), pooled.max() + 0.1 * np.ptp(pooled), 300)
-        for k, model in enumerate(models):
-            ax = fig.add_subplot(grid[k // n_cols, k % n_cols])
-            for values, color, label in ((hist_nat[model], FORCING_COLORS["hist-nat"], "hist-nat"),
-                                         (experiment_values[model], colour, experiment)):
-                density = _density(values.values, x)
-                ax.fill_between(x, density, color=color, alpha=0.25, lw=0)
-                ax.plot(x, density, color=color, lw=1.6, label=label)
-                ax.axvline(float(values.mean()), color=color, lw=1.2, ls=(0, (3, 2)))
-            change, pvalue = float(changes.sel(model=model)), float(pvalues.sel(model=model))
-            sign = int(np.sign(change)) if pvalue < alpha else 0
-            verdict, verdict_colour = verdicts[sign]
-            #(c): The model above the panel; the change, p-value and verdict in room left above the curves
-            ax.set_title(model, loc="left", fontsize=11)
-            ax.text(0.02, 0.98, f"Δ = {change:+.2f} {units}, p = {pvalue:.2g}", transform=ax.transAxes, va="top",
-                    fontsize=9, color=INK_2)
-            ax.text(0.02, 0.84, verdict, transform=ax.transAxes, va="top", fontsize=9.5, fontweight="bold",
-                    color=verdict_colour)
-            ax.set_yticks([])
-            ax.set_xlabel(units, fontsize=9)
-            ax.spines[["top", "right", "left"]].set_visible(False)
-            ax.set_ylim(0, 1.5 * ax.get_ylim()[1])
-            if k == 0:
-                ax.legend(loc="lower left", bbox_to_anchor=(0, 1.18), ncols=2, frameon=False, fontsize=9.5)
-
-        #(c): The step between: an arrow and what it does
-        ax_arrow = fig.add_subplot(grid[:, n_cols])
-        ax_arrow.axis("off")
-        ax_arrow.annotate("", xy=(0.95, 0.5), xytext=(0.05, 0.5), xycoords="axes fraction",
-                          arrowprops=dict(arrowstyle="-|>", lw=2.5, color=INK_2, mutation_scale=25))
-        n_up = int((np.sign(changes) * (pvalues < alpha) > 0).sum())
-        n_down = int((np.sign(changes) * (pvalues < alpha) < 0).sum())
-        ax_arrow.text(0.5, 0.58, "count the\nverdicts", ha="center", va="bottom", fontsize=11, color=INK_2,
-                      transform=ax_arrow.transAxes)
-        ax_arrow.text(0.5, 0.42, f"{n_up} up\n{n_down} down\nof {n_models}", ha="center", va="top", fontsize=12,
-                      fontweight="bold", color=INK, transform=ax_arrow.transAxes)
-
-        #(c): The count map, with the point starred
-        ax_map = fig.add_subplot(grid[:, n_cols + 1], projection=ccrs.SouthPolarStereo())
-        mesh = maps.draw_polar_contour(ax_map, signed, scale.levels, scale.cmap, discrete=True)
-        ax_map.plot(point["lon"], point["lat"], marker="*", ms=18, color="gold", mec=INK, mew=1.2,
-                    transform=ccrs.PlateCarree(), zorder=5)
-        ax_map.set_title(f"{experiment}: models with a\nsignificant change", fontsize=11)
-        cbar = fig.colorbar(mesh, ax=ax_map, orientation="horizontal", fraction=0.06, pad=0.06,
-                            boundaries=scale.levels, ticks=(scale.levels[:-1] + scale.levels[1:]) / 2)
-        cbar.set_ticklabels(scale.ticklabels)
-        cbar.ax.tick_params(length=0, labelsize=9)
-        cbar.set_label("decrease (blue) or increase (red)", fontsize=9.5)
-        if title:
-            fig.suptitle(title, fontsize=14, fontweight="bold", color=INK, x=0.04, ha="left")
-    return core.Panels(fig=fig, axes=np.array([ax_map]))
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(3.0, 2.6))
+    #(c): Both densities over the range of both sets of values, a tenth more each side
+    pooled_arr = np.concatenate([np.ravel(hist_nat_da.values), np.ravel(experiment_da.values)])
+    pooled_arr = pooled_arr[np.isfinite(pooled_arr)]
+    x_arr = np.linspace(pooled_arr.min() - 0.1 * np.ptp(pooled_arr), pooled_arr.max() + 0.1 * np.ptp(pooled_arr), 300)
+    for values_da, color, label in ((hist_nat_da, FORCING_COLORS["hist-nat"], "hist-nat"),
+                                    (experiment_da, FORCING_COLORS.get(experiment, INK), experiment)):
+        density_arr = _density(values_da.values, x_arr)
+        ax.fill_between(x_arr, density_arr, color=color, alpha=0.25, lw=0)
+        ax.plot(x_arr, density_arr, color=color, lw=1.6, label=label)
+        ax.axvline(float(values_da.mean()), color=color, lw=1.2, ls=(0, (3, 2)))
+    #(c): The change, its p-value and the verdict, in the room left above the curves
+    verdict, verdict_colour = VERDICTS[int(np.sign(change)) if pvalue < alpha else 0]
+    ax.text(0.02, 0.98, f"Δ = {change:+.2f} {units}, p = {pvalue:.2g}", transform=ax.transAxes, va="top",
+            fontsize=9, color=INK_2)
+    ax.text(0.02, 0.84, verdict, transform=ax.transAxes, va="top", fontsize=9.5, fontweight="bold",
+            color=verdict_colour)
+    ax.set_yticks([])
+    ax.set_xlabel(units, fontsize=9)
+    ax.spines[["top", "right", "left"]].set_visible(False)
+    ax.set_ylim(0, 1.5 * ax.get_ylim()[1])
+    return ax
 
 
 @plot("figure")
@@ -212,42 +163,3 @@ def joint_key_explainer(scale, title="Reading the colours: how the distribution 
                    loc="upper right", bbox_to_anchor=(0.97, 0.95), ncols=2, frameon=False, fontsize=12)
         fig.suptitle(title, fontsize=15, fontweight="bold", color=INK, x=0.2, ha="left", y=0.97)
     return core.Panels(fig=fig, axes=axes)
-
-
-def reveal_frames(da, scale, directory, row_dim="experiment", col_dim="season", not_significant=None, title=None,
-                  panel_size=2.4, not_significant_label="Not significant"):
-    """Frames for a talk: a grid of maps with its rows revealed one at a time; returns the saved paths.
-
-    Every frame is drawn on the same canvas (the rows not yet revealed are
-    empty circles, and the colour bar and legend are there from the start),
-    so flipping through them only adds maps. Saved with
-    ``plotting_modules.utils.save_frame`` as ``<step>_<row>.png``.
-
-    Args:
-        da (xr.DataArray): On (row_dim, col_dim, lat, lon).
-        scale (forced_response.Scale): Its colour scale.
-        directory (pathlib.Path): Folder for the frames.
-        row_dim, col_dim (str): Dims mapped to rows (revealed in order) and columns.
-        not_significant (xr.DataArray | None): Boolean, the same dims: dotted where True.
-        title (str | None): Title of every frame.
-        panel_size (float): Width and height of each panel, in inches.
-        not_significant_label (str): Legend entry for the dots.
-    """
-    from plotting_modules.utils import save_frame
-
-    from .forced_response import SLIDES, Block, block_grid
-
-    rows, columns = list(da[row_dim].values), list(da[col_dim].values)
-
-    def shown(source, step):
-        return {str(row): [source.sel({row_dim: row, col_dim: column}) if k < step else None for column in columns]
-                for k, row in enumerate(rows)}
-
-    paths = []
-    for step in range(1, len(rows) + 1):
-        block = Block(shown(da, step), [scale] * len(columns),
-                      None if not_significant is None else shown(not_significant, step))
-        panels = block_grid([block], title=title, column_titles=[str(c) for c in columns], panel_size=panel_size,
-                            style=SLIDES, not_significant_label=not_significant_label)
-        paths.append(save_frame(panels.fig, directory, step, str(rows[step - 1])))
-    return paths

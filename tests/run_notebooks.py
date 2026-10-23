@@ -3,11 +3,16 @@
     python tests/run_notebooks.py [notebook ...] [--trials N] [--keep]
 
 Sections whose heading says (JASMIN) are skipped (the cluster, the raw-data
-conversion, the full-data opening sections, saving to the group workspace),
-so the notebooks run on the sample in tests/data instead. Everything the
+conversion, the full-data opening sections, saving to the group workspace), as
+are those of 09a, 09b and 04c in ``JASMIN_SECTIONS``, whose headings don't say
+so, so the notebooks run on the sample in tests/data instead; notebook 10,
+which has no sample section, is skipped whole (``JASMIN_NOTEBOOKS``). IPython
+magics, shell lines and help lines (``pr.thresholds?``) are dropped. Everything the
 notebooks save goes to a temporary folder (EXTANT_SCRATCH, EXTANT_DATA and
-EXTANT_FIGURES point there), so notebooks 04a-04d read what notebook 03 saved, just
-as it does on JASMIN. Cells run in order in one namespace per notebook, as in
+EXTANT_FIGURES point there, and the scratch folder that 04a-04c, 09a and 09b
+write out as a plain path is replaced by EXTANT_SCRATCH), so notebooks 04a-04d
+read what notebooks 03 and 09a saved, just as they do on JASMIN; 09a runs
+straight after 03 for that. Cells run in order in one namespace per notebook, as in
 Jupyter, from the notebooks folder; a failing cell is reported and the run
 carries on. Resampling cells use at most ``--trials`` trials (default 500),
 and figures are drawn and closed. The whole run takes a few minutes.
@@ -20,6 +25,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -40,6 +46,29 @@ NOTEBOOKS = REPO / "notebooks"
 #(t): A heading with this in it marks a section that needs the data or the cluster on JASMIN
 JASMIN = "(JASMIN)"
 
+#(t): The sections that need JASMIN although their headings don't say so, by notebook: 09a's cluster, raw data and
+#(t): full-data opening, and the year-to-year correlation (which needs the full seasonal temperature) where it is
+#(t): made (09a) and drawn (09b, 04c)
+JASMIN_SECTIONS = {
+    "09a_sea_ice_calculations": {"Dask cluster", "Daily values to monthly means", "What is on CEDA", "Example processing",
+                                 "Processing full data and saving", "Opening Data", "Year-to-year correlation"},
+    "09b_sea_ice_figures": {"Full data", "Year-to-year correlation"},
+    "04c_distribution_additivity_zonal": {"7.8 Year-to-year correlation"},
+}
+
+#(t): A section inside one of those that runs on the sample too: 09a's look at what was opened, either way
+SAMPLE_TOO = {"What was opened"}
+
+#(t): Notebooks that need JASMIN throughout: 10 opens the full seasonal store from its first cells, with no sample
+#(t): section
+JASMIN_NOTEBOOKS = {"10_ensemble_size"}
+
+#(t): IPython's help on a name, e.g. ``pr.thresholds?`` (or ``??`` for its source): a line of its own
+HELP_LINE = re.compile(r"\s*[\w.]+\?{1,2}\s*")
+
+#(t): The scratch folder on JASMIN as notebooks 04a-04c, 09a and 09b write it out; here it is EXTANT_SCRATCH
+JASMIN_SCRATCH = "Path('/work/scratch-pw4/aborow/ExtAnt')"
+
 #(t): Resampling settings in the notebooks, and what they become here
 TRIAL_CAPS = {"n_trials=10_000": "n_trials={}", "N_TRIALS = 1000": "N_TRIALS = {}", "n_permutations=5000": "n_permutations={}",
               "DEMO_TRIALS = 10_000": "DEMO_TRIALS = {}", "N_PERMUTATIONS = 5000": "N_PERMUTATIONS = {}",
@@ -47,7 +76,7 @@ TRIAL_CAPS = {"n_trials=10_000": "n_trials={}", "N_TRIALS = 1000": "N_TRIALS = {
 
 
 def stand_in_modules():
-    """Empty modules for the JASMIN-only imports that are not installed here."""
+    """Empty modules for the JASMIN-only imports that are not installed here, and ipywidgets' sliders (09a)."""
     missing = [name for name in ("nc_time_axis", "zarr", "distributed", "dask_gateway")
                if importlib.util.find_spec(name) is None]
     for name in missing:
@@ -60,6 +89,19 @@ def stand_in_modules():
         stub = types.ModuleType("dask.distributed")
         stub.wait = lambda *args, **kwargs: None
         sys.modules["dask.distributed"] = stub
+    if importlib.util.find_spec("ipywidgets") is None:
+        #(c): A slider is its first value, and ``@interact(i=IntSlider(...))`` draws the figure once, at that value
+        widgets = types.ModuleType("ipywidgets")
+        widgets.IntSlider = lambda value=0, *args, **kwargs: value
+
+        def interact(**sliders):
+            def draw_once(function):
+                function(**sliders)
+                return function
+            return draw_once
+
+        widgets.interact = interact
+        sys.modules["ipywidgets"] = widgets
 
 
 def code_cells(notebook):
@@ -77,10 +119,28 @@ def code_cells(notebook):
             yield index, [headings[k] for k in sorted(headings)], source
 
 
+def needs_jasmin(name, headings):
+    """Whether a cell needs JASMIN: one of its headings says (JASMIN), or is one of ``JASMIN_SECTIONS[name]``.
+
+    Args:
+        name (str): The notebook's name, e.g. '09a_sea_ice_calculations'.
+        headings (list[str]): The headings the cell sits under, outermost first.
+
+    Example: under 09a's "Opening Data", a cell in "ERA5" needs JASMIN, one in "What was opened" does not.
+    """
+    if headings and headings[-1] in SAMPLE_TOO:
+        return False
+    sections = JASMIN_SECTIONS.get(name, set())
+    return any(JASMIN in heading or heading in sections for heading in headings)
+
+
 def prepare(source, trials):
-    """Drop IPython magics and shell lines, and cap the number of resampling trials."""
-    lines = [line for line in source.splitlines() if not line.lstrip().startswith(("%", "!"))]
+    """Drop IPython magics, shell lines and help lines, point the JASMIN scratch folder at EXTANT_SCRATCH, and cap the
+    number of resampling trials."""
+    lines = [line for line in source.splitlines()
+             if not line.lstrip().startswith(("%", "!")) and not HELP_LINE.fullmatch(line)]
     source = "\n".join(lines)
+    source = source.replace(JASMIN_SCRATCH, f"Path(r'{os.environ['EXTANT_SCRATCH']}')")
     if importlib.util.find_spec("IPython") is None:
         source = source.replace("from IPython.display import display", "display = print")
     for big, small in TRIAL_CAPS.items():
@@ -90,11 +150,14 @@ def prepare(source, trials):
 
 def run(path, trials):
     """Run one notebook's cells; return the failures."""
+    if path.stem in JASMIN_NOTEBOOKS:
+        print("  skipped: needs the data on JASMIN throughout (no sample section)", flush=True)
+        return []
     notebook = json.loads(path.read_text(encoding="utf-8"))
     namespace = {"__name__": "__main__"}
     failures = []
     for index, headings, source in code_cells(notebook):
-        if any(JASMIN in heading for heading in headings):
+        if needs_jasmin(path.stem, headings):
             continue
         start = time.time()
         try:
@@ -126,7 +189,14 @@ def main():
     sys.path[:0] = [str(REPO)]
     stand_in_modules()
 
-    notebooks = [p.resolve() for p in args.notebooks] or sorted(NOTEBOOKS.glob("[0-9]*.ipynb"))
+    if args.notebooks:
+        notebooks = [p.resolve() for p in args.notebooks]
+    else:
+        #(c): In order, but 09a straight after 03: it reads notebook 03's results, and 04a-04c read its sea ice
+        notebooks = sorted(NOTEBOOKS.glob("[0-9]*.ipynb"))
+        sea_ice = NOTEBOOKS / "09a_sea_ice_calculations.ipynb"
+        notebooks.remove(sea_ice)
+        notebooks.insert(notebooks.index(NOTEBOOKS / "03_forced_response.ipynb") + 1, sea_ice)
     #(c): The notebooks put '..' on the path, relative to the notebooks folder
     os.chdir(NOTEBOOKS)
     failures = []

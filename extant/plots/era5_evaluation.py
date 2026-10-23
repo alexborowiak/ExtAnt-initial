@@ -24,8 +24,9 @@ Sections
 3. Time series: the ensemble plume, with ERA5 inside or outside it
 4. Moment test (and the other statistics): ERA5 among the members' values
 5. Rank histograms (Suarez-Gutierrez et al., 2021)
-6. Multi-model summaries: scorecard, signal-noise diagram, maps
+6. Multi-model summaries: scorecard and signal-noise diagram
 7. Method demonstration on synthetic ensembles
+8. Spatial evaluation: the classes and colours of its maps (drawn in notebook 02b)
 """
 
 import functools
@@ -847,7 +848,7 @@ def rank_histogram_grid(results, n_bins=10, title=None):
 
 
 # ---------------------------------------------------------------------------
-# 6. Multi-model summaries: scorecard, signal-noise diagram, maps
+# 6. Multi-model summaries: scorecard and signal-noise diagram
 # ---------------------------------------------------------------------------
 
 def statistic_label(table, statistic):
@@ -1010,68 +1011,6 @@ def signal_noise_diagram(table, x="trend", y="std", title=None):
     return core.Panels(fig=fig, axes=axes)
 
 
-@plot("figure")
-def percentile_maps(table, statistic, row_dim="model", col_dim="season", title=None, **grid_kwargs):
-    """Maps of ERA5's percentile among the members for one statistic (e.g. models x seasons).
-
-    Where ``table`` carries ``ev.field_test`` output, each panel also says
-    whether the model is acceptable over the whole map: ✓ if ERA5 is flagged
-    over no more area than a perfect model's pseudo-observations would be, ✗
-    if over more (p < alpha). Models with too few members to flag anything
-    are left blank and labelled.
-
-    Args:
-        table (xr.Dataset): Test output on a lat/lon grid with ``row_dim`` and ``col_dim``,
-            optionally merged with ``ev.field_test`` output.
-        statistic (str): Which statistic to map.
-        row_dim, col_dim (str): Dimensions mapped to rows and columns.
-        title (str | None): Figure title.
-        **grid_kwargs: Passed to ``maps.polar_grid``.
-
-    Returns:
-        core.Panels
-    """
-    from plotting_modules import maps  # needs cartopy
-
-    cmap, norm = percentile_colormap()
-    label = statistic_label(table, statistic)
-    table = order_seasons(table.sel(statistic=statistic))
-    field = table["percentile"].drop_vars(["statistic", "label", "units", "treatment"], errors="ignore")
-    #(c): Where too few members can flag nothing, a dark class would mean nothing: leave it blank
-    if "testable" in table:
-        field = field.where(table["testable"] == 1)
-    cbar_label = "ERA5 percentile among the members (blue: ERA5 below; red: above; darkest: outside 5–95%)"
-    if "field_verdict" in table:
-        alpha = table.attrs.get("alpha", ev.ALPHA)
-        cbar_label += (f"\nField test, top left: % of the map where ERA5 is flagged, and the most a perfect model "
-                       f"gives ({100 - 100 * alpha:g}% of the time). ✗: more than that (p < {alpha:g})")
-    #(c): Room for model names as row labels
-    grid_kwargs.setdefault("left", 2.0)
-    with plt.rc_context(EVAL_RC):
-        panels = maps.polar_grid(
-            field, row_dim=row_dim, col_dim=col_dim, levels=np.array(PERCENTILE_EDGES), cmap=cmap, norm=norm,
-            title=title or f"ERA5 percentile of the {label.lower()} among each model's members",
-            cbar_label=cbar_label,
-            tag=False, **grid_kwargs,
-        )
-        panels.extras["cbar"].set_ticks(PERCENTILE_BOUNDS)
-
-        rows, cols = field[row_dim].values, field[col_dim].values
-        axes = np.asarray(panels.axes, dtype=object).reshape(len(rows), len(cols))
-        for i, row in enumerate(rows):
-            for j, col in enumerate(cols):
-                cell = table.sel({row_dim: row, col_dim: col})
-                if bool(field.sel({row_dim: row, col_dim: col}).isnull().all()) and "testable" in table:
-                    axes[i, j].text(0.5, 0.5, "too few members\nto test (N < 20)", transform=axes[i, j].transAxes,
-                                    ha="center", va="center", fontsize=8, color=INK_2, zorder=20,
-                                    bbox=dict(facecolor="white", edgecolor="none", alpha=0.9, pad=3))
-                elif "field_verdict" in cell and bool(cell["field_verdict"].notnull()):
-                    _status_line(axes[i, j], 0.0, 1.0, int(cell["field_verdict"]) == 0,
-                                 f"{float(cell['flagged_area']):.1f}% (perfect ≤ {float(cell['perfect_area']):.1f}%)",
-                                 fontsize=7)
-    return panels
-
-
 # ---------------------------------------------------------------------------
 # 7. Method demonstration on synthetic ensembles
 # ---------------------------------------------------------------------------
@@ -1176,10 +1115,6 @@ EDGE_COLORS = ("#ffffff", "#f7aba4", "#a6272a", "#9ec5f4", "#1c5cab", "#8a5fbf")
 DIAGNOSIS_COLORS = ("#ffffff", "#d03b3b", "#2a78d6", "#eda100", "#8a8985", "#1baf7a")
 PERIOD_COLORS = ("#ffffff", "#eda100", "#d03b3b")
 
-#(t): Hatching where ERA5 sits in the members' central 75% too often: > 80% and > 90% of years
-CENTRAL_HATCHES = ((ev.CENTRAL_THRESHOLD, "////"), (90, "xxxx"))
-
-
 def edge_class(table):
     """The paper's colour class at each point: index into ``EDGE_CLASSES``; NaN where untested."""
     above, below = table["above"], table["below"]
@@ -1193,117 +1128,3 @@ def edge_class(table):
     return out.where(table["adequate"].notnull())
 
 
-def _class_maps(field, table, labels, colors, row_dim, col_dim, title, cbar_label, hatch=False, **grid_kwargs):
-    """Categorical polar maps, one panel per (row, col), with the adequate area in each panel's corner."""
-    from plotting_modules import maps  # needs cartopy
-
-    cmap = ListedColormap(colors).with_extremes(bad="white")
-    levels = np.arange(-0.5, len(labels))
-    grid_kwargs.setdefault("left", 2.0)
-    panels = maps.polar_grid(field, row_dim=row_dim, col_dim=col_dim, levels=levels, cmap=cmap,
-                             norm=BoundaryNorm(levels, cmap.N), discrete=True, ticklabels=list(labels),
-                             title=title, cbar_label=cbar_label, tag=False, **grid_kwargs)
-    rows = field[row_dim].values if row_dim in field.dims else [None]
-    cols = field[col_dim].values if col_dim in field.dims else [None]
-    axes = np.asarray(panels.axes, dtype=object).reshape(len(rows), len(cols))
-    for i, row in enumerate(rows):
-        for j, col in enumerate(cols):
-            cell = table.sel({d: v for d, v in ((row_dim, row), (col_dim, col)) if v is not None})
-            ax = axes[i, j]
-            if bool(cell["adequate"].isnull().all()):
-                ax.text(0.5, 0.5, f"not tested\n(N < {ev.MIN_MEMBERS} or < {ev.MIN_YEARS} years)",
-                        transform=ax.transAxes, ha="center", va="center", fontsize=8, color=INK_2, zorder=20,
-                        bbox=dict(facecolor="white", edgecolor="none", alpha=0.9, pad=3))
-                continue
-            if hatch:
-                for threshold, pattern in CENTRAL_HATCHES:
-                    maps.plot_hatch(ax, cell["central"] > threshold, hatch=pattern, color=(0, 0, 0, 0.45),
-                                    linewidth=0.4)
-            ax.text(0.0, 1.0, f"adequate {float(ev.adequate_area(cell)):.0f}%", transform=ax.transAxes,
-                    ha="left", va="top", fontsize=7.5, color=INK_2, zorder=20)
-    return panels
-
-
-@plot("figure")
-@_styled
-def spatial_maps(table, row_dim="model", col_dim="season", title=None, **grid_kwargs):
-    """Fig. 5 of Suarez-Gutierrez et al. (2021): where ERA5 is beyond the members, or too often in their middle.
-
-    Colour: ERA5 above every member (red) or below every member (blue) in at
-    least 10% (light) or 20% (dark) of the years; purple, both. Hatching: ERA5
-    inside the members' central 75% in more than 80% (////) or 90% (xxxx) of
-    the years, i.e. the model's spread is too wide. White without hatching is
-    adequate; each panel's corner gives the adequate share of the area.
-
-    Args:
-        table (xr.Dataset): ``ev.spatial_evaluation`` output with ``row_dim`` and ``col_dim``.
-        row_dim, col_dim (str): Dimensions mapped to rows and columns.
-        title (str | None): Figure title.
-        **grid_kwargs: Passed to ``maps.polar_grid``.
-
-    Returns:
-        core.Panels
-    """
-    table = order_seasons(table)
-    return _class_maps(
-        edge_class(table), table, EDGE_CLASSES, EDGE_COLORS, row_dim, col_dim,
-        title or "Where ERA5 is beyond the ensemble, or too often in its middle",
-        "ERA5 above (red) / below (blue) every member in ≥ 10% or ≥ 20% of years.  "
-        "Hatched: ERA5 in the members' central 75% in > 80% (////) or > 90% (xxxx) of years",
-        hatch=True, **grid_kwargs,
-    )
-
-
-@plot("figure")
-@_styled
-def diagnosis_maps(table, row_dim="model", col_dim="season", variable="diagnosis", title=None, **grid_kwargs):
-    """Step 7 (or step 8, with ``variable="period_diagnosis"``): what is wrong at each grid point.
-
-    Args:
-        table (xr.Dataset): ``ev.spatial_evaluation`` output (with ``period_diagnosis`` for step 8).
-        row_dim, col_dim (str): Dimensions mapped to rows and columns.
-        variable (str): "diagnosis" (``ev.DIAGNOSES``) or "period_diagnosis" (``ev.PERIOD_DIAGNOSES``).
-        title (str | None): Figure title.
-        **grid_kwargs: Passed to ``maps.polar_grid``.
-
-    Returns:
-        core.Panels
-    """
-    table = order_seasons(table)
-    if variable == "period_diagnosis":
-        labels, colors = ev.PERIOD_DIAGNOSES.values(), PERIOD_COLORS
-        title = title or "Each problem early vs late: the same (variability) or changing (forced response)?"
-    else:
-        labels, colors = ev.DIAGNOSES.values(), DIAGNOSIS_COLORS
-        title = title or "What is wrong at each grid point"
-    return _class_maps(table[variable], table, tuple(labels), colors, row_dim, col_dim, title, None,
-                       **grid_kwargs)
-
-
-@plot("figure")
-@_styled
-def adequate_count_maps(counts, row_dim=None, col_dim="season", title=None, **grid_kwargs):
-    """Fig. 8 of Suarez-Gutierrez et al. (2021): how many models are adequate at each grid point.
-
-    Args:
-        counts (xr.Dataset): ``ev.adequate_count`` output.
-        row_dim, col_dim (str | None): Dimensions mapped to rows and columns.
-        title (str | None): Figure title.
-        **grid_kwargs: Passed to ``maps.polar_grid``.
-
-    Returns:
-        core.Panels
-    """
-    from plotting_modules import maps  # needs cartopy
-
-    counts = order_seasons(counts)
-    n_models = int(counts["n_tested"].max())
-    cmap = ListedColormap(["#ffffff", *plt.get_cmap("Blues")(np.linspace(0.3, 1, max(n_models, 1)))])
-    levels = np.arange(-0.5, n_models + 1)
-    return maps.polar_grid(
-        counts["n_adequate"].where(counts["n_tested"] > 0), row_dim=row_dim, col_dim=col_dim, levels=levels,
-        cmap=cmap, norm=BoundaryNorm(levels, cmap.N), discrete=True,
-        ticklabels=[str(n) for n in range(n_models + 1)],
-        title=title or "Number of models that adequately capture ERA5",
-        cbar_label=f"Models with no problem (of the {n_models} tested)", tag=False, **grid_kwargs,
-    )

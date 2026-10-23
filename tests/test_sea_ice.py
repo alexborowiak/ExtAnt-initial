@@ -10,7 +10,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
 import pytest  # noqa: E402
 import xarray as xr  # noqa: E402
 
@@ -243,28 +242,15 @@ def test_zones():
     assert sea_ice.ice_zones(hist_nat * np.nan, experiment).isnull().all()
 
 
-def test_edges_on_map_grids():
-    pytest.importorskip("cartopy")
-    from extant.plots import forced_response as fr, sea_ice as sip
+def test_regridding_close_ups():
+    """The close-ups of how a field goes onto the 2.5° grid: its points, then the cells with their counts."""
+    from extant.plots import sea_ice as sip
 
-    lat = xr.DataArray(sea_ice.GRID_LAT, dims="lat", coords={"lat": sea_ice.GRID_LAT})
-    lon = xr.DataArray(sea_ice.GRID_LON, dims="lon", coords={"lon": sea_ice.GRID_LON})
-    field = xr.where(lat < -60, 90.0, 0.0).broadcast_like(lon).where(lat > -75)
-    ice = xr.concat([field, field.shift(lat=-2)], dim=pd.Index(["hist-nat", "hist-GHG"], name="experiment"))
-    ice = ice.expand_dims(model=["A", "B"], season=["DJF", "JJA"])
-
-    one = sip.edge_pair(ice, "hist-GHG")
-    assert list(one["edge"].values) == ["hist-nat", "experiment"] and "experiment" not in one.dims
-    several = sip.edge_pair(ice.sel(model="A"), ["hist-GHG", "hist-aer"])
-    assert several.sizes["experiment"] == 2 and several.sel(experiment="hist-aer", edge="experiment").isnull().all()
-    assert sip.edge_pair(None, "hist-GHG") is None
-
-    change = (ice.sel(experiment="hist-GHG") - ice.sel(experiment="hist-nat")).fillna(0)
-    scale = fr.Scale(np.arange(-55, 56, 10), "RdBu", "Change (%)")
-    panels = fr.map_grid(change, scale, row_dim="model", col_dim="season", edges=one)
-    labels = [text.get_text() for legend in panels.fig.legends for text in legend.get_texts()]
-    assert labels == [sip.EDGES["hist-nat"]["label"], sip.EDGES["experiment"]["label"]]
-    fr.count_grid(xr.zeros_like(change.sel(model="A")).expand_dims(direction=["increase", "decrease"]), 2, "t", "n",
-                  above=[fr.Row(change.sel(model="A"), scale, "median", edges=one.sel(model="A"))], col_dim="season",
-                  edges=one.sel(model="A"))
+    fine = _fine_field()
+    on_grid = sea_ice.to_grid(fine, sea_ice.box_index(fine["lat"], fine["lon"]),
+                              sea_ice.cell_area(fine["lat"], fine["lon"]))
+    lat, lon = xr.broadcast(fine["lat"], fine["lon"])
+    dots = sip.plot_native_points(fine, lat, lon, on_grid)
+    assert dots.get_offsets().shape[0] > 0
+    sip.plot_grid_cells(fine, lat, lon, on_grid)
     plt.close("all")

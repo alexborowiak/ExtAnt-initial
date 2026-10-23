@@ -10,7 +10,7 @@ import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 import xarray as xr  # noqa: E402
 
-from extant import fingerprinting as fp, significance as sig  # noqa: E402
+from extant import fingerprinting as fp  # noqa: E402
 from extant.plots import fingerprinting as fpp, forced_response as fr, methods, paper_panels as pp  # noqa: E402
 
 pytest.importorskip("cartopy")
@@ -26,34 +26,14 @@ def close_figures():
     plt.close("all")
 
 
-def _maps(rng):
-    lat, lon = np.arange(-90, -39, 10.0), np.arange(-180, 180, 30.0)
-    values = rng.normal(size=(3, 2, 2, lat.size, lon.size))
-    return xr.DataArray(values, dims=("model", "experiment", "season", "lat", "lon"),
-                        coords=dict(model=MODELS, experiment=EXPERIMENTS, season=SEASONS, lat=lat, lon=lon))
-
-
-def test_map_block_and_compose():
+def test_compose():
+    """Blocks put together: the letters run on from one block to the next."""
     rng = np.random.default_rng(0)
-    change = _maps(rng)
-    agreement = sig.model_agreement(change, np.abs(change) > 0.5)
-    hatches = [pp.Hatch(agreement[name], *pp.AGREEMENT[name]) for name in pp.AGREEMENT]
-    scales = fr.colour_scales("tas")
-    block = partial(pp.map_block, agreement["median"], scales.change, row_dim="experiment", columns=SEASONS,
-                    hatches=hatches, notes=agreement["n_models"].max(["lat", "lon"]),
-                    contours=pp.Contours(change.median("model"), (-1, 1), "lines"))
-    panels = block(tag_start=0)
-    assert panels.axes.shape == (2, 2)
-    assert panels.extras["next_tag"] == 4
-    #(c): A discrete scale, a single row, and a block title
-    classes = (np.abs(change.isel(model=0, experiment=0)) > 1).astype(float)
-    panels = pp.map_block(classes, pp.class_scale(["no", "yes"], ["white", "k"]), columns=SEASONS, title="Classes")
-    assert panels.axes.shape == (1, 2)
-    #(c): Blocks put together: the letters run on
     ratios = xr.Dataset({"pr": (("model", "experiment", "tail", "season"), np.exp(rng.normal(size=(3, 2, 2, 2))))},
                         coords=dict(model=MODELS, experiment=EXPERIMENTS, tail=["warm", "cold"], season=SEASONS))
     ratios = ratios.assign(pr_lower=ratios["pr"] / 2, pr_upper=ratios["pr"] * 2, pr_shift_only=ratios["pr"] * 0.5)
-    layout = pp.compose([[block], [partial(pp.pr_points, ratios, shift_only=True)]], heights=[4, 3])
+    block = partial(pp.pr_points, ratios, shift_only=True)
+    layout = pp.compose([[block], [block]], heights=[3, 3])
     assert [b.extras["next_tag"] for b in layout.extras["blocks"]] == [4, 8]
 
 

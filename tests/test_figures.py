@@ -118,40 +118,6 @@ def test_summaries(point, tests):
                       demo_tests)
 
 
-def test_maps():
-    pytest.importorskip("cartopy")
-    lat, lon = np.arange(-87.5, -39.9, 10.0), np.arange(-180.0, 180.0, 30.0)
-    field = xr.DataArray(np.random.default_rng(0).uniform(0, 100, (2, 4, lat.size, lon.size)),
-                         dims=("model", "season", "lat", "lon"),
-                         coords={"model": ["A", "B"], "season": ["DJF", "JJA", "MAM", "SON"], "lat": lat, "lon": lon})
-    table = xr.Dataset({"percentile": field.expand_dims(statistic=["std"])}).assign_coords(
-        label=("statistic", ["Std. deviation"]))
-    evp.percentile_maps(table, "std")
-    #(c): With the field test, and model B too small to test
-    cell = xr.DataArray([[[10.0, 30.0, 12.0, 8.0]], [[np.nan] * 4]], dims=("model", "statistic", "season"),
-                        coords={"model": ["A", "B"], "statistic": ["std"], "season": ["DJF", "JJA", "MAM", "SON"]})
-    table = table.assign(
-        testable=xr.DataArray([1.0, 0.0], dims="model", coords={"model": ["A", "B"]}),
-        flagged_area=cell, perfect_area=cell * 0 + 15, field_verdict=(cell > 15).where(cell.notnull()),
-    )
-    evp.percentile_maps(table, "std")
-
-    shape = ("model", "experiment", "season", "lat", "lon")
-    rng = np.random.default_rng(1)
-    coords = {"model": ["A", "B"], "experiment": ["hist-GHG", "historical"], "season": ["DJF", "JJA", "MAM", "SON"],
-              "lat": lat, "lon": lon}
-    random = lambda: xr.DataArray(rng.standard_normal((2, 2, 4, lat.size, lon.size)), dims=shape, coords=coords)
-    summary = xr.Dataset({
-        "mean_change": random() + 2,
-        "width_change": random(),
-        "mean_robust": random() > 0,
-        "width_significant": random() > 0.5,
-    })
-    rcp.joint_change_maps(summary, "A")
-    counts = rc.joint_change_counts(summary)
-    rcp.joint_change_count_maps(counts, "DJF", n_models=2)
-
-
 def test_shift_and_widen_and_scatter():
     rng = np.random.default_rng(2)
     samples = {e: xr.DataArray(shift + scale * rng.standard_normal((20, 11)), dims=("member", "year"))
@@ -187,13 +153,11 @@ def spatial_table():
     return xr.concat(tables, "model")
 
 
-def test_spatial_evaluation_figures(spatial_table):
-    pytest.importorskip("cartopy")
-    evp.spatial_maps(spatial_table)
-    evp.diagnosis_maps(spatial_table)
-    evp.diagnosis_maps(spatial_table, variable="period_diagnosis")
-    evp.adequate_count_maps(ev.adequate_count(spatial_table))
-
+def test_edge_classes_of_the_spatial_evaluation(spatial_table):
+    """Every tested point has one of the classes of the paper's Fig. 5; an untested point has none."""
+    classes = evp.edge_class(spatial_table)
+    assert bool((classes.notnull() == spatial_table["adequate"].notnull()).all())
+    assert set(np.unique(classes.values[np.isfinite(classes.values)])) <= set(range(len(evp.EDGE_CLASSES)))
 
 
 def test_method_figures():
@@ -302,10 +266,9 @@ def test_sea_ice_figures(zonal_inputs):
     from extant import sea_ice
     from extant.plots import sea_ice as sip
 
-    summary, _, ice, _ = zonal_inputs
-    rcp.extreme_change_maps(summary, "A", "historical", ice=ice)
-    rcp.joint_change_maps(summary, "B", ice=ice)
-    sip.edge_schematic(sea_ice.edge_example(ice.sel(model="A", experiment="hist-nat", season="JJA")))
+    _, _, ice, _ = zonal_inputs
+    example = sea_ice.edge_example(ice.sel(model="A", experiment="hist-nat", season="JJA"))
+    sip.plot_cap_area(float(example["extent"]), float(example["continent_area"]), float(example["edge_latitude"]))
 
     years = np.arange(1950, 1960)
     extent = xr.DataArray(np.random.default_rng(8).uniform(2e6, 4e6, (5, years.size, 2)),
@@ -315,61 +278,10 @@ def test_sea_ice_figures(zonal_inputs):
     sip.extent_timeseries(sea_ice.extent_summary(extents))
 
 
-def test_forced_response_figures():
-    pytest.importorskip("cartopy")
-    from extant import significance as sig
+def test_quantile_curves():
     from extant.plots import forced_response as fr
 
-    lat, lon = np.arange(-87.5, -39.9, 10.0), np.arange(-180.0, 180.0, 30.0)
     rng = np.random.default_rng(2)
-    coords = {"model": ["A", "B", "C"], "experiment": ["hist-GHG", "historical"], "lat": lat, "lon": lon}
-    change = xr.DataArray(rng.standard_normal((3, 2, lat.size, lon.size)), dims=tuple(coords), coords=coords)
-    significant = np.abs(change) > 1
-    change_scale = fr.Scale(np.linspace(-3, 3, 25), "RdBu_r", "Change")
-
-    #(c): Columns that share a Scale share one colour bar: two scales, two bars, plus the dots' legend
-    panels = fr.field_grid(
-        [fr.Column(change.sel(model="A"), change_scale, "Change", not_significant=~significant.sel(model="A")),
-         fr.Column(change.sel(model="B"), change_scale, "Another\nchange"),
-         fr.Column(np.abs(change.sel(model="A")) / 4, fr.pvalue_scale(), "p-value")],
-        title="A title long enough to need wrapping onto a second line in a narrow figure of three columns",
-        row_dim="experiment",
-    )
-    assert panels.axes.shape == (2, 3)
-    assert len(panels.fig.axes) == 6 + 2
-
-    #(c): A model without one experiment leaves its panels empty
-    fr.map_grid(np.abs(change.where(change["model"] != "C")), fr.separation_scale(), title="Every model",
-                not_significant=~significant)
-
-    #(c): Rows that share a Scale share one colour bar: the two experiments' changes, then a p-value per experiment
-    panels = fr.row_grid(
-        [fr.Row(change, change_scale, "Change", not_significant=~significant),
-         fr.Row(np.abs(change) / 4, fr.pvalue_scale(), "p-value")],
-        title="Rows", row_dim="experiment", col_dim="model",
-    )
-    assert panels.axes.shape == (4, 3)
-    assert len(panels.extras["cbars"]) == 2
-
-    #(c): The counts under the median: three rows, two colour bars
-    counts = sig.significant_counts(change, significant)
-    panels = fr.count_grid(counts, 3, title="How many", label="Models",
-                           above=[fr.Row(change.median("model"), change_scale, "Median")])
-    assert panels.axes.shape == (3, 2)
-    assert len(panels.extras["cbars"]) == 2
-    #(c): An increase and a decrease row for each experiment, seasons across: four rows, one colour bar
-    panels = fr.count_grid(counts.expand_dims(season=["DJF", "JJA"]), 3, title="How many, every experiment",
-                           label="Models", group_dim="experiment", col_dim="season")
-    assert panels.axes.shape == (4, 2)
-    assert len(panels.extras["cbars"]) == 1
-    thresholds = xr.DataArray([0.5, 1, 2], dims="threshold", coords={"threshold": [0.5, 1, 2]})
-    panels = fr.count_grid((np.abs(change) > thresholds).sum("model"), 3, title="How many apart", label="Models",
-                           row_dim="threshold", signed=False)
-    assert panels.axes.shape == (3, 2)
-    classes = fr.class_scale(["neither", "mean only", "width only", "both"], ["white", "orange", "violet", "purple"])
-    fr.map_grid(xr.DataArray(rng.integers(0, 4, change.shape), dims=change.dims, coords=change.coords), classes,
-                title="Classes")
-
     quantiles = np.round(np.arange(0.05, 1.0, 0.05), 2)
     curves = xr.DataArray(rng.standard_normal((3, 2, quantiles.size)), dims=("model", "experiment", "quantile"),
                           coords={"model": ["A", "B", "C"], "experiment": ["hist-GHG", "historical"],
@@ -378,51 +290,28 @@ def test_forced_response_figures():
     fr.quantile_curves(curves.expand_dims(season=["DJF", "JJA"]), col_dim="season", row_dim="experiment")
 
 
-def test_colour_bar_ticks_include_the_ends_and_zero():
+def test_scale_colours_are_the_settings_of_a_heatmap():
     from extant.plots import forced_response as fr
 
-    np.testing.assert_allclose(fr._ticks(fr.Scale(np.linspace(-3, 3, 25)), 1), [-3, -1.5, 0, 1.5, 3])
-    np.testing.assert_allclose(fr._ticks(fr.Scale(np.linspace(0, 4, 17)), 1), [0, 1, 2, 3, 4])
-    np.testing.assert_allclose(fr._ticks(fr.Scale([0, 1, 5], ticks=[0, 5]), 1), [0, 5])
+    colours = fr.Scale(np.linspace(-3, 3, 25), "RdBu_r", "Change").colours()
+    assert colours["extend"] == "both" and colours["ticks"] is None and colours["label"] == "Change"
+    #(c): A discrete scale: no arrows, and a tick in the middle of each class's colour, named
+    colours = fr.class_scale(["no", "yes"], ["white", "k"]).colours()
+    assert colours["extend"] == "neither" and colours["ticklabels"] == ["no", "yes"]
+    np.testing.assert_allclose(colours["ticks"], [0, 1])
 
 
-def test_block_grid_paper_figures_and_the_talk_figures(tmp_path):
-    pytest.importorskip("cartopy")
-    from extant import significance as sig
+def test_saving_and_the_dots_and_talk_figures(tmp_path):
     from extant.plots import forced_response as fr, slides
 
     scales = fr.colour_scales("tas")
-    lat, lon = np.arange(-87.5, -39.9, 10.0), np.arange(-180.0, 180.0, 30.0)
     rng = np.random.default_rng(3)
-    coords = {"model": ["A", "B", "C"], "experiment": ["hist-GHG", "historical"], "lat": lat, "lon": lon}
 
-    def field(offset=0.0, spread=1.0):
-        return xr.DataArray(offset + spread * rng.standard_normal((3, 2, lat.size, lon.size)), dims=tuple(coords),
-                            coords=coords)
-
-    values = xr.Dataset({"Q05": field(-20, 3), "Mean": field(-15, 3), "Q95": field(-10, 3), "Q95 − Q05": field(6)})
-    change = xr.Dataset({"Q05": field(), "Mean": field(), "Q95": field(), "Q95 − Q05": field(0, 0.5)})
-    not_significant = xr.Dataset({"Mean": field() > 0, "Q95 − Q05": field() > 0})
-
-    #(c): Bracegirdle's layout: two blocks, each with a colour bar for three columns and one for the width
-    panels = fr.block_grid(
-        [fr.Block({"hist-nat": values.isel(model=0, experiment=0), "historical": values.isel(model=0, experiment=1)},
-                  [scales.temperature] * 3 + [scales.spread]),
-         fr.Block({"Change": change.isel(model=0, experiment=1)}, [scales.change] * 3 + [scales.spread_change],
-                  not_significant={"Change": not_significant.isel(model=0, experiment=1)})],
-        style=fr.PAPER, tag=True, panel_size=1.4,
-    )
-    assert panels.axes.shape == (3, 4)
-    assert len(panels.extras["cbars"]) == 4
-    paths = fr.save(panels, tmp_path, "figure")
+    #(c): Saved as a PDF and a PNG
+    fig, ax = plt.subplots()
+    ax.plot([0, 1])
+    paths = fr.save(fig, tmp_path, "figure")
     assert all(path.exists() for path in paths)
-
-    #(c): The joint classes on their 3 x 3 key
-    signs = sig.significant_sign(change["Mean"], ~not_significant["Mean"])
-    robust = sig.robust_sign(change["Mean"], ~not_significant["Mean"], threshold=0.66)
-    from extant import response_change as rc
-    fr.map_grid(rc.joint_class(robust, robust), scales.joint, row_dim=None, col_dim="experiment", style=fr.PAPER)
-    fr.map_grid(rc.joint_class(signs, signs), scales.joint)
 
     regional = xr.Dataset({name: xr.DataArray(rng.standard_normal((3, 2, 2)), dims=("model", "experiment", "season"),
                                               coords={"model": ["A", "B", "C"], "experiment": ["hist-GHG", "historical"],
@@ -430,38 +319,40 @@ def test_block_grid_paper_figures_and_the_talk_figures(tmp_path):
                            for name in ("mean_change", "width_change")})
     fr.forcing_dots(regional, {"mean_change": "Mean", "width_change": "Width"}, style=fr.PAPER)
 
-    #(c): The talk figures
-    point = {"lat": -77.5, "lon": 0.0}
-    members = {model: xr.DataArray(rng.standard_normal((5, 21)), dims=("member", "year")) for model in "ABC"}
-    shifted = {model: values + 1 for model, values in members.items()}
-    at_point = change["Mean"].sel(experiment="historical", **point)
-    counts = sig.significant_counts(change["Mean"].sel(experiment="historical"),
-                                    ~not_significant["Mean"].sel(experiment="historical"))
-    slides.count_schematic(members, shifted, at_point, at_point * 0 + 0.01, counts, point, "historical")
+    #(c): The talk figures: one model's test at a point (a significant increase), and the joint key
+    hist_nat_da = xr.DataArray(rng.standard_normal((5, 21)), dims=("member", "year"))
+    ax = slides.plot_point_test(hist_nat_da, hist_nat_da + 1, change=1.0, pvalue=0.01, experiment="historical")
+    assert "significant increase" in [text.get_text() for text in ax.texts]
     slides.joint_key_explainer(scales.joint)
-    frames = slides.reveal_frames(change["Mean"].isel(model=0).expand_dims(season=["DJF", "JJA"]), scales.change,
-                                  tmp_path / "frames", col_dim="season")
-    assert [frame.name for frame in frames] == ["01_hist-GHG.png", "02_historical.png"]
 
 
-def test_paper_figures_fill_the_page_width_and_ranges_are_checked(tmp_path):
+def test_paper_figures_fit_the_page_and_ranges_are_checked(tmp_path):
     pytest.importorskip("cartopy")
     from PIL import Image
 
-    from extant.plots import forced_response as fr
+    from extant.plots import antarctica, forced_response as fr
 
     scales = fr.colour_scales("tas")
     lat, lon = np.arange(-87.5, -39.9, 10.0), np.arange(-180.0, 180.0, 30.0)
+    experiments = ["hist-GHG", "hist-aer", "hist-totalO3", "historical"]
     models = ["CanESM5", "GISS-E2-1-G", "HadGEM3-GC31-LL", "MIROC6", "MPI-ESM1-2-LR", "NorESM2-LM"]
-    field = xr.DataArray(np.random.default_rng(4).normal(0, 2, (6, 4, lat.size, lon.size)),
-                         dims=("model", "experiment", "lat", "lon"),
-                         coords={"model": models, "experiment": ["hist-GHG", "hist-aer", "hist-totalO3", "historical"],
-                                 "lat": lat, "lon": lon})
-    #(c): Long model names and five columns still fit 183 mm, once trimmed of white space as when saved
-    panels = fr.map_grid(field, scales.change, style=fr.PAPER, tag=True, width=fr.PAGE_WIDTH)
-    png, _ = fr.save(panels, tmp_path, "page")[::-1]
+    field = xr.DataArray(np.random.default_rng(4).normal(0, 2, (4, 6, lat.size, lon.size)),
+                         dims=("experiment", "model", "lat", "lon"),
+                         coords={"experiment": experiments, "model": models, "lat": lat, "lon": lon})
+    #(c): As notebook 06 draws them: maps as big as fit 183 mm, long model names across, letters; once trimmed of
+    #(c): white space as when saved, no wider than the page
+    panel_size = antarctica.panel_size_to_fit(4, 6, 1, width=fr.PAGE_WIDTH, height=fr.PAGE_HEIGHT, title_height=0.35)
+    with plt.rc_context(fr.PAPER.rc):
+        fig = plt.figure(figsize=antarctica.map_figure_size(4, 6, 1, panel_size=panel_size, title_height=0.35))
+        axes, cbar_axes = antarctica.map_axes(fig, 4, 6, 1, title_height=0.35)
+        antarctica.heatmaps_of_antarctica(field, "experiment", "model", axes=axes, cax=cbar_axes[0],
+                                          **scales.change.colours())
+        antarctica.label_columns(axes, models, fontsize=fr.PAPER.label_size)
+        antarctica.label_rows(axes, experiments, fontsize=fr.PAPER.label_size)
+        antarctica.tag_panels(axes, fontsize=fr.PAPER.tag_size)
+    png, _ = fr.save(fig, tmp_path, "page")[::-1]
     width_mm = Image.open(png).size[0] / 300 * 25.4
-    assert 170 < width_mm <= 183
+    assert 160 < width_mm <= 183
 
     shares = fr.saturation(field, scales.change)
     assert 0 < shares["above"] < 0.2 and 0 < shares["below"] < 0.2

@@ -337,7 +337,7 @@ def extent(siconc, area, threshold=THRESHOLD):
 
 
 def edge_example(siconc, land=None, threshold=THRESHOLD, ocean_area=None):
-    """One field's extent and equivalent latitude, with the cells behind them, for ``plots.sea_ice.edge_schematic``.
+    """One field's extent and equivalent latitude, with the cells behind them, e.g. for ``plots.sea_ice.plot_cap_area``.
 
     Args:
         siconc (xr.DataArray): Concentration (%) on (lat, lon), e.g. one member's seasonal mean.

@@ -7,25 +7,21 @@ Sections
 --------
 1. Consistency: ERA5's trend among each experiment's member trends
 2. Record rates: cumulative record highs and lows against chance and the members
-3. Detection maps
-4. Scaling factors and attributable trends
+3. Scaling factors and attributable trends
 """
 
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
-from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 from .. import era5_evaluation as ev
-from .. import observed_change as oc
 from .era5_evaluation import (ERA5_COLOR, EVAL_RC, INK, INK_2, MODEL_MARKERS, MUTED, _legend, _suptitle,
                                    is_testable, order_seasons, where_era5)
 from plotting_modules import core
 from plotting_modules.constants import FORCING_COLORS, FORCING_REVEAL_ORDER
 from plotting_modules.utils import plot
-from .response_change import count_colormap
 
 #(t): Signal colours follow the experiment that defines them
 SIGNAL_COLORS = {"ANT": FORCING_COLORS["historical"], "NAT": FORCING_COLORS["hist-nat"],
@@ -181,65 +177,7 @@ def record_rates(curves, experiments=("hist-nat", "historical"), title=None):
 
 
 # ---------------------------------------------------------------------------
-# 3. Detection maps
-# ---------------------------------------------------------------------------
-
-@plot("figure")
-def detection_maps(detections, title=None):
-    """Detection classes for every model and season: is ERA5's trend outside hist-nat and inside historical?
-
-    Args:
-        detections (xr.Dataset): ``detection_class`` (``oc.detection_class``) and each experiment's percentile
-            on (model, season, lat, lon), as notebook 02 makes them.
-        title (str | None): Figure title.
-
-    Returns:
-        core.Panels
-    """
-    from plotting_modules import maps  # needs cartopy
-
-    cmap = ListedColormap(DETECTION_COLORS)
-    levels = np.arange(-0.5, len(DETECTION_COLORS) + 0.5)
-    with plt.rc_context(EVAL_RC):
-        panels = maps.polar_grid(
-            order_seasons(detections["detection_class"]), row_dim="model", col_dim="season", levels=levels,
-            cmap=cmap, norm=BoundaryNorm(levels, cmap.N),
-            title=title or "Is the observed (ERA5) trend detectable, and is historical consistent with it?",
-            cbar_label="Detected: outside hist-nat's 5–95%. Consistent: inside historical's 5–95%.",
-            tag=False, left=2.0, discrete=True,
-            ticklabels=[name.replace(", ", ",\n") for name in oc.DETECTION_CLASSES.values()],
-        )
-    #(c): A panel with no classes at all means an ensemble too small to test; say so rather than leave it blank
-    classes = order_seasons(detections["detection_class"])
-    for i, model in enumerate(classes["model"].values):
-        for j, season in enumerate(classes["season"].values):
-            if bool(classes.sel(model=model, season=season).isnull().all()):
-                panels.axes[i, j].text(0.5, 0.5, "too few members\nto test (N < 20)", transform=panels.axes[i, j].transAxes,
-                                       ha="center", va="center", fontsize=9, color=INK_2, zorder=20,
-                                       bbox=dict(facecolor="white", edgecolor="none", alpha=0.9, pad=3))
-    return panels
-
-
-@plot("figure")
-def detection_count_maps(detections, detection_code=1, title=None):
-    """How many models give each detection class (by default detected and consistent), per season."""
-    from plotting_modules import maps  # needs cartopy
-
-    n_models = detections.sizes["model"]
-    cmap, norm = count_colormap(n_models, "Blues")
-    counts = (detections["detection_class"] == detection_code).sum("model")
-    label = oc.DETECTION_CLASSES[detection_code]
-    with plt.rc_context(EVAL_RC):
-        panels = maps.polar_grid(
-            order_seasons(counts), col_dim="season", levels=np.arange(-0.5, n_models + 1.5), cmap=cmap, norm=norm,
-            title=title or f"Number of models where the observed trend is {label}",
-            cbar_label="Number of models", tag=False, discrete=True,
-        )
-    return panels
-
-
-# ---------------------------------------------------------------------------
-# 4. Scaling factors and attributable trends
+# 3. Scaling factors and attributable trends
 # ---------------------------------------------------------------------------
 
 def _by_region_and_model(results):

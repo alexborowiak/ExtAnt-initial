@@ -160,7 +160,7 @@ def plot_index(*modules, level=None, width=100):
     """
     if not modules:
         modules = []
-        for name in ("maps", "timeseries", "distributions", "figures"):
+        for name in ("timeseries", "distributions", "figures"):
             try:
                 modules.append(importlib.import_module(f".{name}", __package__))
             except ImportError:

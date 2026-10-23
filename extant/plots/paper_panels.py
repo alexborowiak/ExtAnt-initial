@@ -9,9 +9,6 @@ that blocks put together letter their panels a), b), c) ... in order.
 
 The panels, and the candidates of the handover notes they draw:
 
-    map_block          any grid of polar maps on one colour scale, hatched where masks are True, with a
-                       note in each panel (the number of models) and lines on top (the change in sea ice):
-                       A1-A4, B1, B2, C3, E2, E4, F2, and the verification maps
     plumes             A5: each experiment's spread through time in a region, and ERA5
     quantile_curves    B3, D3: the change at every percentile, one line per forcing
     pr_points          C1, C2: probability ratios with their bootstrap ranges, every model, and the
@@ -24,14 +21,13 @@ The panels, and the candidates of the handover notes they draw:
     percentile_tables  verification: ERA5's percentile among each experiment's members
     compose            the layouts: blocks stacked in rows, side by side within a row
 
-Colours and patterns are those of ``forced_response``: red and blue for up and
-down, each forcing's colour from plotting_modules, and the IPCC AR6 hatching of
-the agreement maps (``AGREEMENT``). Nothing here computes a result; the
-notebook makes every array a panel is given.
+Colours are those of ``forced_response``: red and blue for up and down, and
+each forcing's colour from plotting_modules. The maps of the candidates are
+drawn in notebook 07 itself, layer by layer with ``antarctica``. Nothing here
+computes a result; the notebook makes every array a panel is given.
 """
 
 import textwrap
-from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -47,45 +43,14 @@ from plotting_modules.utils import plot
 from . import forced_response as fr
 from .era5_evaluation import INK, MODEL_COLORS, MODEL_MARKERS, PERCENTILE_EDGES, PSEUDO_COLOR, RANK_BAR, \
     percentile_colormap
-from .response_change import HATCH_COLOR, round_ticks
+from .response_change import round_ticks
 
 # ---------------------------------------------------------------------------
-# 1. Scales, hatches and figures
+# 1. Scales and figures
 # ---------------------------------------------------------------------------
-
-#(t): The IPCC AR6 advanced approach: no overlay where the change is robust, diagonal lines where fewer than
-#(t): two-thirds of the models are significant, crossed lines where they are but fewer than 80% agree on the sign
-AGREEMENT = {"no_signal": ("////", "No robust change (fewer than 2/3 of the models significant)"),
-             "conflicting": ("xxxx", "Conflicting (2/3 significant, fewer than 80% agree on the sign)")}
-
-#(t): Dots on a single model's map: not significant
-NOT_SIGNIFICANT = ("....", "Not significant")
 
 #(t): Colours of what is not a forcing (ERA5 is orange here, as historical is already black)
 OTHER_COLORS = {"sum of parts": "#c49a00", "residual": "#c9c8c4", "ERA5": "#d95f02"}
-
-
-@dataclass
-class Hatch:
-    """Where a block of maps is hatched: a boolean mask on the dims of the fields, its pattern, and its legend label."""
-
-    mask: xr.DataArray
-    pattern: str
-    label: str
-
-
-@dataclass
-class Contours:
-    """Lines over a block of maps: a field on the dims of the fields, the levels, and a legend label.
-
-    Negative levels are dashed. For example the multi-model change in sea-ice concentration, at ±5 and ±15 %.
-    """
-
-    field: xr.DataArray
-    levels: tuple
-    label: str
-    color: str = "#333333"
-    linewidth: float = 0.6
 
 
 def ratio_scale(label="Probability ratio", end=3, step=0.5):
@@ -164,109 +129,7 @@ def _legend(fig, handles, style, ncol=None):
 
 
 # ---------------------------------------------------------------------------
-# 2. Maps
-# ---------------------------------------------------------------------------
-
-def _contour_lines(ax, field, contours, style):
-    import cartopy.crs as ccrs
-    from cartopy.util import add_cyclic_point
-
-    field = field.transpose("lat", "lon")
-    if not bool(field.notnull().any()):
-        return
-    values, lons = add_cyclic_point(field.values, coord=field["lon"].values)
-    ax.contour(lons, field["lat"].values, values, levels=list(contours.levels), colors=contours.color,
-               linewidths=contours.linewidth, negative_linestyles="dashed", transform=ccrs.PlateCarree())
-
-
-@plot("figure")
-def map_block(fields, scale, row_dim=None, col_dim="season", rows=None, columns=None, row_labels=None,
-              col_labels=None, hatches=(), notes=None, note_format="n = {:g}", contours=None, title=None, fig=None,
-              style=fr.PAPER, tag_start=None, legend=True, width=fr.PAGE_WIDTH):
-    """A grid of polar maps on one colour scale, with one colour bar under it.
-
-    The maps of every candidate are drawn by this: the multi-model agreement
-    maps (A1, B1, C3: the median, hatched by ``AGREEMENT``), every model's
-    maps (A3, B2: dotted where not significant), the split of the mean (E2),
-    the verification maps, and so on.
-
-    Args:
-        fields (xr.DataArray): On (row_dim, col_dim, lat, lon), or (col_dim, lat, lon) if ``row_dim`` is None.
-        scale (fr.Scale): The colour scale.
-        row_dim, col_dim (str | None): The dims of the rows and the columns.
-        rows, columns (Sequence | None): Their values, in order; all of them by default.
-        row_labels, col_labels (dict | None): The label of each value; the value itself by default.
-        hatches (Sequence[Hatch]): Hatched where each mask is True (a mask may lack dims, which then apply to all).
-        notes (xr.DataArray | None): A number for each panel, on (row_dim, col_dim), written in its corner with
-            ``note_format``, e.g. the number of models.
-        note_format (str): Format of a note.
-        contours (Contours | None): Lines over every map.
-        title (str | None): A title over the block, on the left (for a block among others in a layout).
-        fig (Figure | SubFigure | None): Where to draw; a new figure if None.
-        style (fr.Style): Fonts and line widths.
-        tag_start (int | None): Letter the panels from this letter (0 is a); no letters if None.
-        legend (bool): Explain the hatches and lines under the block.
-        width (float): Width of a new figure, in inches.
-
-    Returns:
-        core.Panels: ``axes`` (rows, columns); ``extras``: ``cbar``, ``next_tag``.
-    """
-    import cartopy.crs as ccrs
-    from plotting_modules import maps
-
-    row_values = [None] if row_dim is None else list(rows if rows is not None else fields[row_dim].values)
-    col_values = list(columns if columns is not None else fields[col_dim].values)
-    n_rows, n_cols = len(row_values), len(col_values)
-    height = n_rows * width / n_cols + 0.9
-
-    with plt.rc_context(style.rc):
-        fig = _target(fig, width, height, style)
-        grid = fig.add_gridspec(n_rows, n_cols)
-        axes = np.empty((n_rows, n_cols), dtype=object)
-        drawn = None
-        for i, row in enumerate(row_values):
-            for j, column in enumerate(col_values):
-                where = {col_dim: column} if row is None else {row_dim: row, col_dim: column}
-                ax = fig.add_subplot(grid[i, j], projection=ccrs.SouthPolarStereo())
-                axes[i, j] = ax
-                field = fields.sel(where)
-                if not bool(field.notnull().any()):
-                    maps.setup_polar_ax(ax)
-                else:
-                    artist = maps.draw_polar_contour(ax, field, scale.levels, scale.cmap, scale.norm,
-                                                     discrete=scale.discrete, extend=scale.extend)
-                    drawn = drawn or artist
-                for hatch in hatches:
-                    mask = hatch.mask.sel({k: v for k, v in where.items() if k in hatch.mask.dims})
-                    if bool(mask.any()):
-                        maps.plot_hatch(ax, mask, hatch=hatch.pattern, color=HATCH_COLOR, linewidth=style.hatch_width)
-                if contours is not None:
-                    _contour_lines(ax, contours.field.sel({k: v for k, v in where.items()
-                                                           if k in contours.field.dims}), contours, style)
-                if notes is not None:
-                    value = notes.sel({k: v for k, v in where.items() if k in notes.dims})
-                    ax.text(1.0, 0.0, note_format.format(float(value)), transform=ax.transAxes, ha="right",
-                            va="bottom", fontsize=style.tick_size, color="0.3")
-                if i == 0:
-                    ax.set_title(str((col_labels or {}).get(column, column)), fontsize=style.label_size, pad=3)
-                if j == 0 and row is not None:
-                    ax.text(-0.07, 0.5, str((row_labels or {}).get(row, row)), transform=ax.transAxes,
-                            rotation=90, ha="right", va="center", fontsize=style.label_size)
-        bar = _colorbar(fig, drawn, axes, scale, style) if drawn is not None else None
-        handles = [Patch(facecolor="white", edgecolor="0.35", hatch=hatch.pattern, label=hatch.label)
-                   for hatch in hatches if bool(hatch.mask.any())]
-        if contours is not None:
-            handles.append(Line2D([], [], color=contours.color, lw=1, label=contours.label))
-        if legend:
-            _legend(fig, handles, style, ncol=min(len(handles), 2))
-        if title:
-            fig.suptitle(title, x=0.01, ha="left", fontsize=style.label_size, fontweight="bold")
-        next_tag = _tag(axes, tag_start, style)
-    return _done(fig, axes, next_tag, cbar=bar)
-
-
-# ---------------------------------------------------------------------------
-# 3. Lines and points
+# 2. Lines and points
 # ---------------------------------------------------------------------------
 
 def _forcing_color(name):
@@ -298,7 +161,10 @@ def plumes(plume_ds, era5=None, experiments=None, bands=("hist-nat", "historical
         pairs (Sequence[tuple]): (lower, upper) quantile pairs of the bands, widest first.
         units (str): Units of the anomalies.
         start_year (int | None): First year shown.
-        fig, style, tag_start, width: As for ``map_block``.
+        fig (Figure | SubFigure | None): Where to draw; a new figure if None.
+        style (fr.Style): Fonts and line widths.
+        tag_start (int | None): Letter the panels from this letter (0 is a); no letters if None.
+        width (float): Width of a new figure, in inches.
 
     Returns:
         core.Panels
@@ -347,7 +213,7 @@ def quantile_curves(curves, experiments=None, rows=None, row_dim="region", colum
         rows, columns (Sequence | None): Values of ``row_dim`` and ``col_dim``, in order (a ``row_dim`` that
             ``curves`` lacks gives one row).
         units (str): Units of the change.
-        fig, style, tag_start, width: As for ``map_block``.
+        fig, style, tag_start, width: As for ``plumes``.
 
     Returns:
         core.Panels
@@ -414,7 +280,7 @@ def pr_points(ratios, experiments=None, rows=("warm", "cold"), row_dim="tail", c
         experiments (Sequence[str] | None): Forcings along x.
         rows, columns (Sequence | None): Values of ``row_dim`` and ``col_dim``.
         shift_only (bool): Also draw the shift-only ratios (C2).
-        fig, style, tag_start, width: As for ``map_block``.
+        fig, style, tag_start, width: As for ``plumes``.
 
     Returns:
         core.Panels
@@ -485,7 +351,7 @@ def scatter_by_season(x, y, xlabel, ylabel, experiments=None, columns=None, col_
         xlabel, ylabel (str): Axis labels.
         experiments (Sequence[str] | None): The forcings drawn.
         columns (Sequence | None): Values of ``col_dim``, in order.
-        fig, style, tag_start, width: As for ``map_block``.
+        fig, style, tag_start, width: As for ``plumes``.
 
     Returns:
         core.Panels
@@ -533,7 +399,7 @@ def forcing_bars(panels, x_dim="experiment", bars=None, columns=None, col_dim="s
         x_dim (str): The dim along x, e.g. "experiment", or "term" for additivity (with "sum of parts").
         bars (Sequence | None): Its values, in order.
         columns (Sequence | None): Values of ``col_dim``, in order.
-        fig, style, tag_start, width: As for ``map_block``.
+        fig, style, tag_start, width: As for ``plumes``.
 
     Returns:
         core.Panels
@@ -605,7 +471,7 @@ def ridgelines(densities, means, ridges=None, ridge_dim="experiment", columns=No
         xlabel (str): Label of the x axis.
         colorbar_label (str | None): Draw a colour bar of the means, with this label.
         overlap (float): How many baselines up the highest density in the figure reaches.
-        fig, style, tag_start, width: As for ``map_block``.
+        fig, style, tag_start, width: As for ``plumes``.
 
     Returns:
         core.Panels
@@ -655,7 +521,7 @@ def ridgelines(densities, means, ridges=None, ridge_dim="experiment", columns=No
 
 
 # ---------------------------------------------------------------------------
-# 4. Verification against ERA5
+# 3. Verification against ERA5
 # ---------------------------------------------------------------------------
 
 @plot("figure")
@@ -677,7 +543,7 @@ def rank_histograms(ranks, rows=None, row_dim="model", columns=None, col_dim="se
             and ``percentile``, ``verdict`` on (row_dim, col_dim, statistic), e.g. one region, experiment and
             treatment of notebook 02's ``regional_ranks``.
         rows, columns (Sequence | None): Values of ``row_dim`` and ``col_dim``.
-        fig, style, tag_start, width: As for ``map_block``.
+        fig, style, tag_start, width: As for ``plumes``.
 
     Returns:
         core.Panels
@@ -733,7 +599,7 @@ def percentile_tables(percentile, verdict, rows=None, row_dim="model", columns=N
         percentile, verdict (xr.DataArray): On (row_dim, col_dim, panel_dim), e.g. one region of notebook 02's
             ``regional_consistency`` (the trend).
         rows, columns, panels (Sequence | None): Values of each dim, in order.
-        fig, style, tag_start, width: As for ``map_block``.
+        fig, style, tag_start, width: As for ``plumes``.
 
     Returns:
         core.Panels
@@ -767,7 +633,7 @@ def percentile_tables(percentile, verdict, rows=None, row_dim="model", columns=N
 
 
 # ---------------------------------------------------------------------------
-# 5. Layouts
+# 4. Layouts
 # ---------------------------------------------------------------------------
 
 def compose(layout, heights, width=fr.PAGE_WIDTH, style=fr.PAPER, tag=True):
