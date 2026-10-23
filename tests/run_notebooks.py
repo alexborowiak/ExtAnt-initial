@@ -2,17 +2,17 @@
 
     python tests/run_notebooks.py [notebook ...] [--trials N] [--keep]
 
-Sections whose heading says (JASMIN) are skipped (the cluster, the raw-data
-conversion, the full-data opening sections, saving to the group workspace), as
-are those of 09a, 09b and 04c in ``JASMIN_SECTIONS``, whose headings don't say
-so, so the notebooks run on the sample in tests/data instead; notebook 10,
-which has no sample section, is skipped whole (``JASMIN_NOTEBOOKS``). IPython
-magics, shell lines and help lines (``pr.thresholds?``) are dropped. Everything the
-notebooks save goes to a temporary folder (EXTANT_SCRATCH, EXTANT_DATA and
-EXTANT_FIGURES point there, and the scratch folder that 04a-04c, 09a and 09b
-write out as a plain path is replaced by EXTANT_SCRATCH), so notebooks 04a-04d
-read what notebooks 03 and 09a saved, just as they do on JASMIN; 09a runs
-straight after 03 for that. Cells run in order in one namespace per notebook, as in
+The sections that need JASMIN (the cluster, the raw-data conversion, the
+full-data opening sections) are skipped: those named in ``JASMIN_SECTIONS``, by
+notebook, and any whose heading still says (JASMIN). So the notebooks run on the
+sample in tests/data instead; notebook 10, which has no sample section, is
+skipped whole (``JASMIN_NOTEBOOKS``). IPython magics, shell lines and help lines
+(``pr.thresholds?``) are dropped. Everything the notebooks save goes to a
+temporary folder: the scratch folder they write out as a plain path is replaced
+by EXTANT_SCRATCH, and this repository's figures folder (``Path('../figures')``)
+by EXTANT_FIGURES (EXTANT_DATA is set too, for code that still goes through
+``extant.paths``). So notebooks 04a-08b read what 02a, 03 and 09a saved, just as
+they do on JASMIN; 09a runs straight after 03 for that. Cells run in order in one namespace per notebook, as in
 Jupyter, from the notebooks folder; a failing cell is reported and the run
 carries on. Resampling cells use at most ``--trials`` trials (default 500),
 and figures are drawn and closed. The whole run takes a few minutes.
@@ -46,14 +46,27 @@ NOTEBOOKS = REPO / "notebooks"
 #(t): A heading with this in it marks a section that needs the data or the cluster on JASMIN
 JASMIN = "(JASMIN)"
 
-#(t): The sections that need JASMIN although their headings don't say so, by notebook: 09a's cluster, raw data and
-#(t): full-data opening, and the year-to-year correlation (which needs the full seasonal temperature) where it is
-#(t): made (09a) and drawn (09b, 04c)
+#(t): The sections that need JASMIN, by notebook (headings no longer say so): the cluster, the raw data and the
+#(t): full-data opening sections, notebook 01's conversion, test sample and SAM index, and the year-to-year correlation
+#(t): (which needs the full seasonal temperature) where it is made (09a) and drawn (09b, 04c)
 JASMIN_SECTIONS = {
+    "01_process_data": {"Dask Cluster", "1. LESFMIP Files to Monthly Stores", "2. ERA5 Hourly Files to Monthly Means",
+                        "Full data", "Save", "4. Test Sample", "6. SAM Index"},
+    "02a_era5_evaluation_calculations": {"Full data"},
+    "02b_era5_evaluation_figures": {"Full data"},
+    "03_forced_response": {"Dask Cluster", "Full data"},
     "09a_sea_ice_calculations": {"Dask cluster", "Daily values to monthly means", "What is on CEDA", "Example processing",
                                  "Processing full data and saving", "Opening Data", "Year-to-year correlation"},
     "09b_sea_ice_figures": {"Full data", "Year-to-year correlation"},
-    "04c_distribution_additivity_zonal": {"7.8 Year-to-year correlation"},
+    "04a_mean_and_signal_to_noise": {"Full data"},
+    "04b_quantiles_and_width": {"Full data"},
+    "04c_distribution_additivity_zonal": {"Full data", "7.6 Sea ice itself", "7.8 Year-to-year correlation"},
+    "04d_probability_ratios": {"Full data"},
+    "05_slide_figures": {"Full data"},
+    "06_paper_figures": {"Full data"},
+    "07_figure_candidates": {"Full data", "D2 and D4", "Layouts with sea ice"},
+    "08a_optimal_fingerprinting_calculations": {"Full data"},
+    "08b_optimal_fingerprinting_figures": {"Full data"},
 }
 
 #(t): A section inside one of those that runs on the sample too: 09a's look at what was opened, either way
@@ -66,8 +79,11 @@ JASMIN_NOTEBOOKS = {"10_ensemble_size"}
 #(t): IPython's help on a name, e.g. ``pr.thresholds?`` (or ``??`` for its source): a line of its own
 HELP_LINE = re.compile(r"\s*[\w.]+\?{1,2}\s*")
 
-#(t): The scratch folder on JASMIN as notebooks 04a-04c, 09a and 09b write it out; here it is EXTANT_SCRATCH
+#(t): The scratch folder on JASMIN as the notebooks write it out; here it is EXTANT_SCRATCH
 JASMIN_SCRATCH = "Path('/work/scratch-pw4/aborow/ExtAnt')"
+#(t): This repository's figures folder, as notebooks 05-07 write it out (from the notebooks folder); here it is
+#(t): EXTANT_FIGURES, so a test run never writes into the repository
+REPO_FIGURES = "Path('../figures')"
 
 #(t): Resampling settings in the notebooks, and what they become here
 TRIAL_CAPS = {"n_trials=10_000": "n_trials={}", "N_TRIALS = 1000": "N_TRIALS = {}", "n_permutations=5000": "n_permutations={}",
@@ -141,6 +157,7 @@ def prepare(source, trials):
              if not line.lstrip().startswith(("%", "!")) and not HELP_LINE.fullmatch(line)]
     source = "\n".join(lines)
     source = source.replace(JASMIN_SCRATCH, f"Path(r'{os.environ['EXTANT_SCRATCH']}')")
+    source = source.replace(REPO_FIGURES, f"Path(r'{os.environ['EXTANT_FIGURES']}')")
     if importlib.util.find_spec("IPython") is None:
         source = source.replace("from IPython.display import display", "display = print")
     for big, small in TRIAL_CAPS.items():

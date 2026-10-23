@@ -1,19 +1,9 @@
 """Domain vocabulary: names, colours and orderings that mean something in the science.
 
-Only things with a stable meaning *outside* any one figure belong here. A number
-that exists because one plot happens to look better with it is a default argument
-on that plot, not a constant. Two examples of what that rules out:
-
-  PLUME_ALPHAS, SPREAD_STYLES and friends were module-level tuples that only
-  quantile_summary ever read. They are now its default arguments, where you can
-  see them next to the thing they style and override them per call.
-
-  BUILDUP_XLIM, BUILDUP_FRAME_DIR and BUILDUP_FRAME_SIZE were parameters of one
-  figure wearing constant names. Same treatment.
-
-The layout defaults (PANEL_W, CBAR_HEIGHT and the rest) deliberately stay in
-core.py, next to the GridLayout parameters they are the defaults for. Moving
-them here would separate a default from its argument.
+Only things with a stable meaning *outside* any one figure belong here; a number that exists because one plot looks
+better with it is a default argument of that plot. Figure sizes and styles are not here either: every chart's layout
+is extant/plots/charts.py's, every map's antarctica.py's, and their text sizes the styles of forced_response
+(NOTEBOOK, PAPER, SLIDES).
 """
 
 # --------------------------------------------------------------------------
@@ -55,18 +45,3 @@ FORCING_LEGEND_LABELS = {
 assert set(FORCING_COLORS) == set(FORCING_REVEAL_ORDER) == set(FORCING_LEGEND_LABELS), (
     "the three forcing mappings have drifted apart"
 )
-
-# --------------------------------------------------------------------------
-# Output styling
-# --------------------------------------------------------------------------
-
-SLIDE_RC = {
-    "font.size": 13,
-    "axes.labelsize": 14,
-    "legend.fontsize": 12,
-    "xtick.labelsize": 12,
-    "ytick.labelsize": 12,
-    "axes.linewidth": 1.0,
-    "lines.solid_capstyle": "round",
-    "savefig.dpi": 200,
-}

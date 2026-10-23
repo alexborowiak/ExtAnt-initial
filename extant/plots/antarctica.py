@@ -153,7 +153,7 @@ def map_axes(fig, n_rows, n_cols, n_colorbars, n_keys=0, subplot_spec=None, titl
     for bar in range(n_colorbars):
         #(c): The bar in the middle 60% of its row, 0.23 in thick at its top; the ticks and label go below it
         bar_grid = grid[n_rows + bar, :].subgridspec(2, 3, height_ratios=[0.23, colorbar_height - 0.23],
-                                                     width_ratios=[1, 3, 1])
+                                                     width_ratios=[1, 3, 1], hspace=0, wspace=0)
         cbar_axes.append(fig.add_subplot(bar_grid[0, 1]))
     for key in range(n_keys):
         #(c): The key in the middle fifth of its row and its top three quarters; the column names go below it
@@ -334,7 +334,7 @@ def ice_edge(siconc_da, ax=None, color='k', linestyle='solid', linewidth=1.2):
         siconc_da (xr.DataArray): Concentration (%) on (lat, lon), empty over land.
         ax (cartopy.mpl.geoaxes.GeoAxes | None): Where to draw, e.g. a map with a field already on it; a new figure
             with one (styled) map if None.
-        color, linestyle, linewidth: How the line is drawn: e.g. hist-nat's dashed, ERA5's orange.
+        color, linestyle, linewidth: How the line is drawn: e.g. hist-nat's dashed, ERA5's dotted.
 
     Returns:
         matplotlib.contour.QuadContourSet | None: The line (``line.axes`` is the axis); None if the field is empty.

@@ -1,4 +1,4 @@
-"""The colour scales and styles of notebooks 04-07, and their figures of lines and dots.
+"""The colour scales and styles of notebooks 04-07, and saving a figure for the paper.
 
 Every map in the notebooks is drawn layer by layer with ``antarctica``; its colours come from here, so that colour
 and pattern mean the same thing in every figure:
@@ -13,11 +13,14 @@ and pattern mean the same thing in every figure:
     3 x 3 key         the mean and the width together (``joint_scale``, drawn by ``antarctica.bivariate_key``)
     black lines       the sea-ice edge (15% contour), solid for the experiment and dashed for hist-nat
 
+The styles set every figure's text: a notebook sets ``plt.rcParams.update(NOTEBOOK.rc)`` once, a paper or slide
+figure is drawn inside ``with plt.rc_context(PAPER.rc):``. The figures of lines and dots are drawn on the axes of
+``charts``.
+
 Sections
 --------
 1. Colour scales
 2. Styles: the notebook, the paper and slides; saving
-3. Lines and dots: the change at every quantile, and area means
 """
 
 import textwrap
@@ -26,13 +29,9 @@ from dataclasses import dataclass
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap
-from matplotlib.lines import Line2D
 
 from .. import config
-from .era5_evaluation import EVAL_RC, INK, MODEL_COLORS, MODEL_MARKERS
-from plotting_modules.constants import FORCING_COLORS
-from plotting_modules import core
-from plotting_modules.utils import plot
+from .era5_evaluation import EVAL_RC
 
 # ---------------------------------------------------------------------------
 # 1. Colour scales
@@ -259,7 +258,8 @@ def colour_scales(variable, alpha=0.05):
 
 @dataclass(frozen=True)
 class Style:
-    """Font sizes and line widths of a figure, so one figure function serves the notebook and the paper.
+    """Font sizes and line widths of a figure: its rcParams, and the sizes of the maps' labels, so a figure looks the same
+    in the notebook, the paper or a talk.
 
     Args:
         rc (dict): matplotlib rcParams used while drawing.
@@ -283,16 +283,16 @@ NOTEBOOK = Style(EVAL_RC)
 
 #(t): In print: 7-8 pt text, for figures 183 mm (7.2 in) wide, a two-column page
 PAPER = Style(
-    {**EVAL_RC, "font.size": 7, "axes.titlesize": 8, "axes.labelsize": 7, "xtick.labelsize": 7, "ytick.labelsize": 7,
-     "legend.fontsize": 7, "axes.linewidth": 0.6, "savefig.dpi": 300, "pdf.fonttype": 42},
+    {**EVAL_RC, "font.size": 7, "axes.titlesize": 8, "figure.titlesize": 9, "axes.labelsize": 7, "xtick.labelsize": 7,
+     "ytick.labelsize": 7, "legend.fontsize": 7, "axes.linewidth": 0.6, "savefig.dpi": 300, "pdf.fonttype": 42},
     label_size=8, title_size=9, tick_size=6.5, cbar_label_size=7.5, tag_size=8,
 )
 
 
 #(t): On a slide: big text, read from the back of a room
 SLIDES = Style(
-    {**EVAL_RC, "font.size": 12, "axes.titlesize": 13, "axes.labelsize": 12, "xtick.labelsize": 11,
-     "ytick.labelsize": 11, "legend.fontsize": 11},
+    {**EVAL_RC, "font.size": 12, "axes.titlesize": 13, "figure.titlesize": 15, "axes.labelsize": 12,
+     "xtick.labelsize": 11, "ytick.labelsize": 11, "legend.fontsize": 11},
     label_size=13, title_size=15, tick_size=11, cbar_label_size=12, tag_size=11,
 )
 
@@ -322,15 +322,14 @@ def saturation(da, scale):
     return {"below": float((da < scale.levels[0]).sum() / valid), "above": float((da > scale.levels[-1]).sum() / valid)}
 
 
-def save(panels, directory, name):
+def save(fig, directory, name):
     """Save a figure as a PDF (vector, for the paper) and a 300 dpi PNG; return the two paths.
 
     Args:
-        panels (core.Panels | matplotlib.figure.Figure): The figure.
+        fig (matplotlib.figure.Figure): The figure.
         directory (pathlib.Path): Folder, made if missing.
         name (str): File name, without extension.
     """
-    fig = getattr(panels, "fig", panels)
     directory.mkdir(parents=True, exist_ok=True)
     paths = [directory / f"{name}.pdf", directory / f"{name}.png"]
     #(c): TrueType (Type 42) fonts in the PDF: matplotlib's default Type 3 fonts are refused by many journals
@@ -338,130 +337,3 @@ def save(panels, directory, name):
         for path in paths:
             fig.savefig(path, dpi=300, bbox_inches="tight", pad_inches=0.02, facecolor="white")
     return paths
-
-
-# ---------------------------------------------------------------------------
-# 3. Lines and dots: the change at every quantile, and area means
-# ---------------------------------------------------------------------------
-
-@plot("figure")
-def quantile_curves(curves, title=None, units="°C", col_dim="experiment", row_dim=None, style=NOTEBOOK,
-                    panel_size=(3.3, 3.0), width=None):
-    """The change at every quantile, one line per model, one panel per experiment (and season).
-
-    A flat line is a pure shift of the distribution; a rising line means the
-    upper quantiles move more than the lower ones. Panels in a row share their
-    y axis.
-
-    Args:
-        curves (xr.DataArray): On (model, col_dim, quantile), or (model, row_dim, col_dim, quantile), e.g.
-            notebook 03's ``quantile_curve`` (Antarctic means).
-        title (str | None): Figure title.
-        units (str): Units of the change.
-        col_dim (str): Dim mapped to columns.
-        row_dim (str | None): Dim mapped to rows; one row if None.
-        style (Style): ``NOTEBOOK`` or ``PAPER``.
-        panel_size (tuple[float, float]): Width and height of each panel, in inches.
-        width (float | None): The figure's width in inches (the legend included), instead of ``panel_size[0]``.
-
-    Returns:
-        core.Panels
-    """
-    models = [str(m) for m in curves["model"].values]
-    column_values = list(curves[col_dim].values)
-    row_values = [None] if row_dim is None else list(curves[row_dim].values)
-    percentile = 100 * curves["quantile"].values
-
-    with plt.rc_context(style.rc):
-        fig, axes = plt.subplots(len(row_values), len(column_values), sharex=True, sharey="row", layout="constrained",
-                                 squeeze=False,
-                                 figsize=(width or panel_size[0] * len(column_values) + 1.6,
-                                          panel_size[1] * len(row_values) + 0.6))
-        for i, row in enumerate(row_values):
-            for j, value in enumerate(column_values):
-                ax = axes[i, j]
-                selection = {col_dim: value} if row is None else {col_dim: value, row_dim: row}
-                ax.axhline(0, color="0.6", lw=0.8, zorder=1)
-                for k, model in enumerate(models):
-                    ax.plot(percentile, curves.sel(model=model, **selection), color=MODEL_COLORS[k % len(MODEL_COLORS)],
-                            marker=MODEL_MARKERS[k % len(MODEL_MARKERS)], ms=0.4 * style.tick_size,
-                            lw=0.15 * style.tick_size, zorder=3)
-                if i == 0:
-                    ax.set_title(str(value), loc="left")
-                if i == len(row_values) - 1:
-                    ax.set_xlabel("Percentile")
-                if j == 0:
-                    ax.set_ylabel(f"Change ({units})" if row is None else f"{row}\nChange ({units})")
-                ax.set_xlim(0, 100)
-                ax.set_xticks([0, 50, 100])
-                ax.set_xticks([25, 75], minor=True)
-                core.style_ax(ax)
-        fig.legend(handles=[Line2D([], [], color=MODEL_COLORS[k % len(MODEL_COLORS)], lw=1.6,
-                                   marker=MODEL_MARKERS[k % len(MODEL_MARKERS)], ms=4, label=model)
-                            for k, model in enumerate(models)],
-                   loc="outside right center", frameon=False, title="Model", alignment="left")
-        if title:
-            fig.suptitle(title, fontsize=style.title_size, fontweight="bold", color=INK, x=0.01, ha="left")
-    return core.Panels(fig=fig, axes=axes)
-
-
-@plot("figure")
-def forcing_dots(regional, variables, title=None, col_dim="season", columns=None, experiments=None, style=NOTEBOOK,
-                 panel_size=(1.6, 1.6), width=None):
-    """Area means of each model's change, forcings along the x axis: one row per variable, one column per season.
-
-    Each model is a marker (its shape) in the forcing's colour, spread a
-    little sideways; the black bar is the multi-model median. The quickest
-    view of how big each forcing's change is and how far the models agree.
-
-    Args:
-        regional (xr.Dataset): Area means on (model, experiment, col_dim), e.g. ``rc.regional_mean`` output.
-        variables (dict): Variable of ``regional`` -> its y-axis label, top to bottom.
-        title (str | None): Figure title.
-        col_dim (str): Dim mapped to columns.
-        columns (Sequence | None): Its values, in order; all by default.
-        experiments (Sequence[str] | None): Forcings along x, in order; all by default.
-        style (Style): ``NOTEBOOK`` or ``PAPER``.
-        panel_size (tuple[float, float]): Width and height of each panel, in inches.
-        width (float | None): The figure's width in inches (the legend included), instead of ``panel_size[0]``.
-
-    Returns:
-        core.Panels
-    """
-    columns = list(columns if columns is not None else regional[col_dim].values)
-    experiments = list(experiments if experiments is not None else regional["experiment"].values)
-    models = [str(m) for m in regional["model"].values]
-    offsets = np.linspace(-0.25, 0.25, len(models)) if len(models) > 1 else [0.0]
-
-    with plt.rc_context(style.rc):
-        fig, axes = plt.subplots(len(variables), len(columns), sharex=True, sharey="row", layout="constrained",
-                                 squeeze=False,
-                                 figsize=(width or panel_size[0] * len(columns) + 1.4,
-                                          panel_size[1] * len(variables) + 0.5))
-        for i, (name, label) in enumerate(variables.items()):
-            for j, column in enumerate(columns):
-                ax = axes[i, j]
-                ax.axhline(0, color="0.6", lw=0.7, zorder=1)
-                for x, experiment in enumerate(experiments):
-                    values = regional[name].sel({col_dim: column, "experiment": experiment})
-                    for k, model in enumerate(models):
-                        ax.scatter(x + offsets[k], float(values.sel(model=model)), s=18,
-                                   marker=MODEL_MARKERS[k % len(MODEL_MARKERS)],
-                                   color=FORCING_COLORS.get(experiment, INK), edgecolor="white", linewidth=0.5,
-                                   zorder=3)
-                    ax.plot([x - 0.32, x + 0.32], [float(values.median("model"))] * 2, color=INK, lw=1.6, zorder=4)
-                if i == 0:
-                    ax.set_title(str(column), loc="left")
-                if j == 0:
-                    ax.set_ylabel(label)
-                ax.set_xticks(range(len(experiments)), experiments, rotation=40, ha="right")
-                ax.set_xlim(-0.6, len(experiments) - 0.4)
-                core.style_ax(ax)
-                ax.grid(axis="x", visible=False)
-        fig.legend(handles=[*[Line2D([], [], ls="none", marker=MODEL_MARKERS[k % len(MODEL_MARKERS)], ms=5,
-                                     color="0.35", label=model) for k, model in enumerate(models)],
-                            Line2D([], [], color=INK, lw=1.6, label="Multi-model median")],
-                   loc="outside right center", frameon=False, title="Model", alignment="left")
-        if title:
-            fig.suptitle(title, fontsize=style.title_size, fontweight="bold", color=INK, x=0.01, ha="left")
-    return core.Panels(fig=fig, axes=axes)

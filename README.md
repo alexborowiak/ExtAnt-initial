@@ -19,12 +19,13 @@ notebooks/
     05_slide_figures.ipynb                    figures for talks, including how the forced-response figures are made
     06_paper_figures.ipynb                    the paper's main and supplementary figures, in print style (PDF and PNG)
     07_figure_candidates.ipynb                every candidate figure of the planning notes (A-F), the verification against ERA5, and the layouts L1-L5
-    08_optimal_fingerprinting.ipynb           are the observed regional seasonal trends explained by the forcings, and is each forcing's size right?
+    08a_optimal_fingerprinting_calculations.ipynb   are the observed regional seasonal trends explained by the forcings, and is each forcing's size right? every step, saved
+    08b_optimal_fingerprinting_figures.ipynb        ... its figures, from the saved results
     09a_sea_ice_calculations.ipynb            the sea ice from CEDA onto the 2.5° grid, extent and edge, against ERA5, with the temperature changes
     09b_sea_ice_figures.ipynb                 ... its figures, from the saved results
     10_ensemble_size.ipynb                    how many members are needed (after Milinski et al.)
 extant/                                       the code the notebooks use
-plotting_modules/                             the general plotting package: panel grids, polar maps, colour bars
+plotting_modules/                             the forcing and season vocabulary (names, colours, orders), and small helpers
 tests/                                        pytest suite, the sample data, and a script that runs every notebook
 scripts/                                      sea_ice_sample.py: what sea ice CEDA has, and the sea-ice sample (run on JASMIN)
 archive/                                      the old draft notebooks
@@ -36,10 +37,10 @@ What is in `extant/`:
 | Module | |
 |---|---|
 | `config` | experiments, window length, example point, thresholds, and the variables with their units |
-| `paths` | every input and output location |
-| `storage` | saving to zarr and opening again |
+| `paths` | every input and output location (the notebooks write their folders out as `Path`s in Settings instead) |
+| `storage` | saving to zarr and opening again (the notebooks write `to_zarr` and `xr.open_zarr` out instead) |
 | `convert` | raw LESFMIP files to monthly zarr stores, and the pieces of the ERA5 step (its loop and regridding are in notebook 01) |
-| `loading` | opening the monthly stores, the seasonal means and the sample |
+| `loading` | opening the monthly stores, the seasonal means and the sample (the notebooks list the files and open them instead) |
 | `preprocessing` | monthly to seasonal means, and ERA5 onto the model grid |
 | `quantiles` | rolling quantiles and LOWESS (numba) |
 | `significance` | the hist-nat bootstrap (10 hist-nat members over the same final years) of the width and of the mean, Welch t-test, multi-model agreement |
@@ -53,16 +54,15 @@ What is in `extant/`:
 | `observed_change` | detection, consistency, records and scaling factors |
 | `datatree`, `stats` | DataTree helpers, fast quantiles and KDEs |
 | `jasmin` | starting the Dask cluster and sending this package to its workers |
-| `plots/` | the figures, one module per analysis module, plus `forced_response` (the map grids of notebooks 04a–04d), `methods` (the step-by-step method figures), `paper_panels` (notebook 07's panels, each drawn into a figure or part of one so they can be put together), `fingerprinting` (notebook 08) and `multimodel` (used only by the archived notebook 04) |
+| `plots/` | the figures. Every figure is made the same way: its axes first, then each layer drawn on them, then its labels. Maps take their axes from `antarctica` (`map_figure_size`, `map_axes`), every other plot from `charts` (`chart_figure_size`, `chart_axes`), which also has the layers shared by many plots (lines, bands, a marker per model, a point per model and forcing). The other modules hold one-axis panels, `plot_...(data, ax=None)`, one module per analysis module, plus `forced_response` (the colour scales and the notebook, paper and slide styles), `methods` (the step-by-step method figures), `paper_panels` (the paper's panels), `slides` and `fingerprinting` (notebook 08b) |
 
 ## Running it
 
-Everything is in this repository: the `extant` package and `plotting_modules`, the general plotting package (moved here from the separate extant-functions repository on 7 October 2026). Run the notebooks from the `notebooks` folder, in order. 01 builds the seasonal means. 02 and 03 use those, and 04, 05 and 06 use what 03 saved. Each notebook opens the data in either a *Sample data* section or a *Full data (JASMIN)* section; run whichever one you want.
+Everything is in this repository: the `extant` package and `plotting_modules` (moved here from the separate extant-functions repository on 7 October 2026). Run the notebooks from the `notebooks` folder, in order. 01 builds the seasonal means. 02 and 03 use those, and 04, 05 and 06 use what 03 saved. Each notebook opens the data in either a *Sample data* section or a *Full data* section (on JASMIN); run whichever one you want. The folders are plain `Path`s in each notebook's Settings: everything is read from and written to JASMIN's scratch (`SCRATCH_DIR`, `/work/scratch-pw4/aborow/ExtAnt`), and the results of a run go to `SCRATCH_DIR/results/<variable>/<sample or full>`. After moving a store to the group workspace, change `SCRATCH_DIR` in the notebooks that read it.
 
-**Where the data go.** Dask writes zarr stores from many workers at once, and the group workspaces do not support parallel writes. So everything is written to scratch (`paths.SCRATCH`) and then moved by hand to the group workspace (`paths.DATA_DIR`). Reading always tries the group workspace first and falls back to scratch, so nothing needs changing after a move. The layout is the same under both:
+**Where the data go.** Dask writes zarr stores from many workers at once, and the group workspaces do not support parallel writes. So everything is written to scratch (`SCRATCH_DIR` in each notebook's Settings; the monthly LESFMIP stores to `MONTHLY_DIR`, notebook 01) and read back from there. A store moved by hand to the group workspace keeps the same layout; point `SCRATCH_DIR` there in the notebooks that read it:
 
 ```
-monthly/lesfmip/<variable>/<model>_<variable>_<experiment>_interp_monthly.zarr
 monthly/era5_<variable>.zarr
 seasonal/lesfmip_<variable>.zarr
 seasonal/era5_<variable>.zarr
@@ -71,11 +71,11 @@ results/<variable>/<full|sample>/<name>.zarr
 results/siconc/<full|sample>/extent.zarr, climatology.zarr, ...     the sea ice (notebook 09)
 ```
 
-Off JASMIN both are `output/` in this repository.
+The notebook test runner (`tests/run_notebooks.py`) points `SCRATCH_DIR` and the figures folder at a temporary folder, so a test run writes nothing on JASMIN or into the repository.
 
-**Following a notebook.** Names end in their type: `_tree` (DataTree), `_ds` (Dataset), `_da` (DataArray), `_arr` (numpy array), `_df` (DataFrame). Each step prints what it made, and each method figure has a *quick look* before it: the arrays it is given, printed and drawn plainly with xarray's `.plot`, with all the code in the notebook. Every file opened or saved through `extant` is logged with its full path, and a store that cannot be found raises an error naming both places it looked and what each folder holds instead.
+**Following a notebook.** Names end in their type: `_tree` (DataTree), `_ds` (Dataset), `_da` (DataArray), `_arr` (numpy array), `_df` (DataFrame). Each step shows what it made, and each method figure has a *quick look* before it: the arrays it is given, shown and drawn plainly with xarray's `.plot`, with all the code in the notebook. Every file is opened and saved in the notebook itself, with its full path written out and shown.
 
-**The SAM index.** Notebook 03's SAM phases use LEADER-EPESC working group 1's monthly SAM index of every member (`paths.SAM_RAW`, the files `archive/draft_current_DAILY.ipynb` opened), not one made here from sea-level pressure. Notebook 01, section 6 turns it into seasonal means; it shows the levels in a file so that `SAM_LEVEL` can be set to the right one (the draft took position 3, a later version of its reader position 0). The sample has no SAM index, so it uses a made-up one (`sam.synthetic_index`) that only lets the code run.
+**The SAM index.** Notebook 03's SAM phases use LEADER-EPESC working group 1's monthly SAM index of every member (`SAM_RAW_DIR` in notebook 01, the files `archive/draft_current_DAILY.ipynb` opened), not one made here from sea-level pressure. Notebook 01, section 6 turns it into seasonal means; it shows the levels in a file so that `SAM_LEVEL` can be set to the right one (the draft took position 3, a later version of its reader position 0). The sample has no SAM index, so it uses a made-up one (`sam.synthetic_index`) that only lets the code run.
 
 **Another variable.** Set `VARIABLE` at the top of each notebook. The variable needs an entry in `config.VARIABLES`, which says how to convert its units; `pr` and `sfcWind` are there but have not been run yet. Two things are not done for them yet. There is no ERA5 recipe: precipitation is a forecast accumulation, and wind speed has to be built from its u and v components. And some figure labels in `extant/plots` still talk about warming and cold or warm tails.
 

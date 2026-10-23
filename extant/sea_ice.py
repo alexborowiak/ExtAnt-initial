@@ -417,7 +417,7 @@ def edge_latitude(extents, years=WINDOW):
 
 
 def extent_summary(extents, quantiles=(0.05, 0.95)):
-    """Ensemble mean and spread of the extent in every year, for ``plots.sea_ice.extent_timeseries``.
+    """Ensemble mean and spread of the extent in every year, for the extent figures of notebooks 09b and 04c.
 
     Returns:
         xr.Dataset: ``mean``, ``low`` and ``high`` (the ``quantiles`` across members) on

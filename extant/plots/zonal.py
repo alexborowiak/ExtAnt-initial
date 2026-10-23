@@ -1,13 +1,22 @@
-"""Zonal-mean figures: the forced change at each latitude, model by model, after Bracegirdle et al. (2024).
+"""Zonal-mean panels: the forced change at each latitude, after Bracegirdle et al. (2024), layer by layer.
 
-Draws the output of ``zonal`` (and ``sea_ice.edge_latitude`` for the ice
-edge). The layout follows the paper's Figs 2, 6 and 8, but nothing is averaged
-across models: each model has its own row (or its own line).
+Draws the output of ``zonal`` (and ``sea_ice.edge_latitude`` for the ice edge) on axes from ``charts.chart_axes``.
+The changes are lines along latitude (``charts.lines_grid``), with a dot where the change is significant
+(``charts.significant_dots_grid``) and, in the width's column, hist-nat's own band (``charts.bands_grid``, in
+``NULL_COLOR``); the ice edge is a dashed vertical line (``ice_edge_lines_grid``). Nothing is averaged across
+models: each model has its own row (or its own line). For example, one model's four changes, seasons down::
+
+    fig = plt.figure(figsize=charts.chart_figure_size(n_rows=4, n_cols=4, n_legends=1))
+    axes, legend_axes = charts.chart_axes(fig, n_rows=4, n_cols=4, n_legends=1, sharex=True, sharey='col')
+    charts.lines_grid(model_ds['mean_change'].sel(experiment='hist-GHG'), 'lat', 'season', None, axes=axes[:, 0],
+                      color=FORCING_COLORS['hist-GHG'])
+    ...
+    axes[0, 0].xaxis.set_major_formatter(zonal.latitude_label)
 
 Reading them:
     columns     the mean; the low and the high extremes, both measured from the
                 median; the width between them (= high - low)
-    lines       experiments (FORCING_COLORS), or models (MODEL_COLORS)
+    lines       experiments (FORCING_COLORS), or models (charts.model_lines)
     dots        the zonal-mean change is significant by the hist-nat bootstrap
                 (10 hist-nat members over the same final years), the mean's and
                 the width's; the extremes have no test, so no dots
@@ -18,236 +27,87 @@ Reading them:
 
 Sections
 --------
-1. The change at each latitude, every model and experiment
-2. Where variability is largest: hist-nat's width and the ice edge
+1. The latitude axis (``latitude_label``) and the look of the band and the edge
+2. The ice edge as a latitude: ``plot_ice_edge_line`` (one panel), ``ice_edge_lines_grid`` (a grid)
 """
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
 
-from .. import response_change as rc
-from .era5_evaluation import EVAL_RC, INK, MUTED
-from .response_change import _experiments
-from plotting_modules import core
-from plotting_modules.constants import FORCING_COLORS
-from plotting_modules.utils import plot
+from . import charts
 
-#(t): One colour per model, in a fixed order (eight hues; the adjacent pairs are colour-blind safe)
-MODEL_COLORS = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948")
+# ---------------------------------------------------------------------------
+# 1. The latitude axis, the band and the edge
+# ---------------------------------------------------------------------------
 
-#(t): Column titles, and which test's p-values give each column its dots
-TITLES = {
-    "mean_change": "Mean",
-    "low_extreme_change": "Low extremes",
-    "high_extreme_change": "High extremes",
-    "width_change": "Width (high − low)",
-}
-PVALUES = {"mean_change": "mean_pvalue", "width_change": "width_pvalue"}
-
-NULL_COLOR = "0.88"
+#(t): hist-nat's own band of the width change, light grey; the ice edge, dashed
+NULL_COLOR = '0.88'
 EDGE_LINESTYLE = (0, (4, 2))
 
 
-def _colors(dim, values):
-    """A colour for each experiment (FORCING_COLORS) or model (MODEL_COLORS, by position)."""
-    if dim == "experiment":
-        return {v: FORCING_COLORS.get(v, INK) for v in values}
-    return {v: MODEL_COLORS[k % len(MODEL_COLORS)] for k, v in enumerate(values)}
-
-
-def _order(da, dim, values=None):
-    if dim == "experiment":
-        return _experiments(da, values)
-    present = [str(v) for v in da[dim].values]
-    return [v for v in (values or present) if v in present]
-
-
-def _limits(arrays, pad=0.08):
-    """Symmetric-enough y limits covering every array (and zero)."""
-    values = np.concatenate([np.ravel(np.asarray(a, dtype=float)) for a in arrays])
-    values = values[np.isfinite(values)]
-    low, high = min(values.min(initial=0), 0), max(values.max(initial=0), 0)
-    span = (high - low) or 1.0
-    return low - pad * span, high + pad * span
-
-
-def _latitude_axis(ax):
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{abs(v):g}°S" if v < 0 else f"{v:g}°"))
-
-
-def _edge(edges, selection):
-    """One equivalent latitude from ``edges``, or None where it has none."""
-    if edges is None:
-        return None
-    try:
-        value = float(edges.sel(selection))
-    except (KeyError, ValueError):
-        return None
-    return value if np.isfinite(value) else None
-
-
-# ---------------------------------------------------------------------------
-# 1. The change at each latitude, every model and experiment
-# ---------------------------------------------------------------------------
-
-@plot("figure")
-def zonal_change_grid(zonal, season=None, rows="model", lines="experiment", row_values=None, line_values=None,
-                      columns=tuple(rc.EXTREMES), edges=None, alpha=0.05, units="°C", title=None, panel_size=(3.0, 1.95),
-                      rc_params=None, width=None, select=None):
-    """The zonal-mean change in the mean, the low and high extremes and the width: one row per model.
-
-    Or one row per experiment, or per season (``rows="season"``, with one
-    model chosen by ``select``).
-
-    The form of Bracegirdle et al. (2024) Figs 2, 6 and 8, per model. The
-    mean column has its own scale; the extremes and the width share one, so
-    the width is visibly the high column minus the low.
+def latitude_label(value, position=None):
+    """A latitude's tick label, '60°S' rather than -60: give it to ``ax.xaxis.set_major_formatter``.
 
     Args:
-        zonal (xr.Dataset): ``zonal.zonal_summary`` output, on (model, experiment, season, lat).
-        season (str | None): Season shown; None with ``rows="season"``.
-        rows, lines (str): Dims mapped to rows and to lines: "model" and "experiment" either way round, or
-            "season" and either.
-        row_values, line_values (Sequence[str] | None): Subsets, in order; all by default.
-        columns (Sequence[str]): Variables of ``zonal``, one per column.
-        edges (xr.DataArray | None): ``sea_ice.edge_latitude`` output, on (model, experiment, season).
-        alpha (float): Significance level of the dots.
-        units (str): Units of the variable.
-        title (str | None): Figure title; a default if None, none if "" (for a paper figure).
-        panel_size (tuple[float, float]): Width and height of each panel, in inches.
-        rc_params (dict | None): rcParams to draw with; ``EVAL_RC`` by default (``forced_response.PAPER.rc`` for print).
-        width (float | None): The figure's width in inches, instead of ``panel_size[0]`` (e.g. 7.2 for a printed page).
-        select (dict | None): Any other selection, e.g. ``{"model": "CanESM5"}`` with ``rows="season"``.
+        value (float): The latitude (degrees north).
+        position: The tick's position, which matplotlib passes and this ignores.
 
     Returns:
-        core.Panels
+        str: E.g. '60°S', or '0°'.
     """
-    selection = {**(select or {}), **({} if season is None else {"season": season})}
-    data = zonal.sel(selection)
-    row_values = _order(data, rows, row_values)
-    line_values = _order(data, lines, line_values)
-    colors = _colors(lines, line_values)
-    lat = data["lat"].values
-    #(c): hist-nat's band is one per model and season, so it is drawn when the rows are either
-    with_band = rows in ("model", "season") and "null_lower" in data
-
-    with plt.rc_context(rc_params or EVAL_RC):
-        fig, axes = plt.subplots(len(row_values), len(columns),
-                                 figsize=(width or panel_size[0] * len(columns) + 1.2,
-                                          panel_size[1] * len(row_values) + 1.5),
-                                 sharex=True, layout="constrained", squeeze=False)
-        for i, row in enumerate(row_values):
-            for j, column in enumerate(columns):
-                ax = axes[i, j]
-                ax.axhline(0, color=MUTED, lw=0.8, zorder=1)
-                if column == "width_change" and with_band:
-                    ax.fill_between(lat, data["null_lower"].sel({rows: row}), data["null_upper"].sel({rows: row}),
-                                    color=NULL_COLOR, lw=0, zorder=0)
-                for line in line_values:
-                    y = data[column].sel({rows: row, lines: line})
-                    if not bool(y.notnull().any()):
-                        continue
-                    ax.plot(lat, y, color=colors[line], lw=1.6, zorder=3)
-                    pvalue = PVALUES.get(column)
-                    if pvalue in data:
-                        significant = (data[pvalue].sel({rows: row, lines: line}) < alpha).values
-                        ax.plot(lat[significant], y.values[significant], ls="none", marker="o", ms=4,
-                                color=colors[line], mec="white", mew=0.6, zorder=4)
-
-                #(t): The ice edge in each experiment's final years, hist-nat's included
-                edge_lines = [*line_values, "hist-nat"] if lines == "experiment" else line_values
-                for line in edge_lines:
-                    edge = _edge(edges, {**selection, rows: row, lines: line})
-                    if edge is not None:
-                        ax.axvline(edge, color=colors.get(line, FORCING_COLORS.get(line, INK)), lw=1.0,
-                                   ls=EDGE_LINESTYLE, zorder=2)
-                if i == 0:
-                    ax.set_title(f"{TITLES.get(column, column)}\n{rc.EXTREMES.get(column, column)}", loc="left")
-                if j == 0:
-                    ax.set_ylabel(f"{row}\n({units})")
-                if i == len(row_values) - 1:
-                    ax.set_xlabel("Latitude")
-                _latitude_axis(ax)
-                core.style_ax(ax)
-
-        #(t): One scale for the mean, one shared by the extremes and the width
-        for group in ([c for c in columns if c == "mean_change"], [c for c in columns if c != "mean_change"]):
-            if not group:
-                continue
-            arrays = [data[c].sel({rows: row_values, lines: line_values}) for c in group]
-            if with_band and "width_change" in group:
-                arrays += [data["null_lower"].sel({rows: row_values}), data["null_upper"].sel({rows: row_values})]
-            limits = _limits(arrays)
-            for j, column in enumerate(columns):
-                if column in group:
-                    for ax in axes[:, j]:
-                        ax.set_ylim(limits)
-        axes[0, 0].set_xlim(lat.min(), lat.max())
-
-        handles = [Line2D([], [], color=colors[v], lw=2, label=v) for v in line_values]
-        if any(PVALUES.get(c) in data for c in columns):
-            handles.append(Line2D([], [], ls="none", marker="o", ms=5, color=INK, mec="white",
-                                  label=f"Significant (p < {alpha:g})"))
-        if with_band and "width_change" in columns:
-            handles.append(Patch(color=NULL_COLOR, label="hist-nat variability alone (95%)"))
-        if edges is not None:
-            handles.append(Line2D([], [], color=INK, lw=1.0, ls=EDGE_LINESTYLE, label="Sea-ice edge (equivalent latitude)"))
-        fig.legend(handles=handles, loc="outside lower center", ncols=min(len(handles), 5), frameon=False)
-        if title != "":
-            fig.suptitle(title or f"Zonal-mean change, {', '.join(map(str, selection.values()))}: final years against hist-nat", fontsize=11,
-                         fontweight="bold", x=0.01, ha="left")
-    return core.Panels(fig=fig, axes=axes)
+    return f'{abs(value):g}°S' if value < 0 else f'{value:g}°'
 
 
 # ---------------------------------------------------------------------------
-# 2. Where variability is largest: hist-nat's width and the ice edge
+# 2. The ice edge as a latitude
 # ---------------------------------------------------------------------------
 
-@plot("figure")
-def zonal_reference_width(zonal, seasons=("DJF", "JJA"), edges=None, units="°C", title=None):
-    """hist-nat's zonal-mean width (Q95 − Q05) by latitude, every model, with each model's hist-nat ice edge.
-
-    Where a season varies most from year to year, and whether that is at the
-    ice edge, as Bracegirdle et al. (2024) found for winter temperature.
+def plot_ice_edge_line(edge_da, ax=None, color='k'):
+    """The ice edge's equivalent latitude as a dashed vertical line; nothing where there is none (no ice).
 
     Args:
-        zonal (xr.Dataset): ``zonal.zonal_summary`` output with ``hist_nat_width`` (from the width test).
-        seasons (Sequence[str]): One panel each.
-        edges (xr.DataArray | None): ``sea_ice.edge_latitude`` output.
-        units (str): Units of the variable.
-        title (str | None): Figure title.
+        edge_da (xr.DataArray): One equivalent latitude (degrees), e.g. ``sea_ice.edge_latitude`` output at one model,
+            experiment and season.
+        ax (matplotlib.axes.Axes | None): Where to draw, e.g. a panel of zonal means; a new figure if None.
+        color: The line's colour, e.g. the experiment's (``FORCING_COLORS``) or the model's.
 
     Returns:
-        core.Panels
+        matplotlib.lines.Line2D | None: The line; None where there is no edge.
     """
-    width = zonal["hist_nat_width"]
-    models = [str(m) for m in width["model"].values]
-    colors = _colors("model", models)
-    lat = width["lat"].values
-    top = 1.05 * float(width.sel(season=list(seasons)).max())
+    if ax is None:
+        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
+        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
+        ax = axes[0, 0]
+    edge = float(edge_da)
+    if not np.isfinite(edge):
+        return None
+    return ax.axvline(edge, color=color, linewidth=1.0, linestyle=EDGE_LINESTYLE, zorder=2)
 
-    with plt.rc_context(EVAL_RC):
-        fig, axes = plt.subplots(1, len(seasons), figsize=(4.2 * len(seasons) + 1.6, 3.6), sharey=True,
-                                 layout="constrained", squeeze=False)
-        for ax, season in zip(axes[0], seasons):
-            for model in models:
-                ax.plot(lat, width.sel(model=model, season=season), color=colors[model], lw=1.6)
-                edge = _edge(edges, {"model": model, "experiment": "hist-nat", "season": season})
-                if edge is not None:
-                    ax.axvline(edge, color=colors[model], lw=1.0, ls=EDGE_LINESTYLE)
-            ax.set_title(season, loc="left")
-            ax.set_xlabel("Latitude")
-            ax.set_xlim(lat.min(), lat.max())
-            ax.set_ylim(0, top)
-            _latitude_axis(ax)
-            core.style_ax(ax)
-        axes[0, 0].set_ylabel(f"hist-nat Q95 − Q05 ({units})")
-        handles = [Line2D([], [], color=colors[m], lw=2, label=m) for m in models]
-        if edges is not None:
-            handles.append(Line2D([], [], color=INK, lw=1.0, ls=EDGE_LINESTYLE, label="Sea-ice edge"))
-        fig.legend(handles=handles, loc="outside right center", frameon=False)
-        fig.suptitle(title or "Year-to-year variability in hist-nat: zonal-mean width of each season",
-                     fontsize=11, fontweight="bold", x=0.01, ha="left")
-    return core.Panels(fig=fig, axes=axes)
+
+def ice_edge_lines_grid(edge_da, row_dim, col_dim, axes=None, color='k'):
+    """``plot_ice_edge_line`` for every value of ``row_dim`` (down) and ``col_dim`` (across).
+
+    Args:
+        edge_da (xr.DataArray): Equivalent latitudes on (row_dim, col_dim); without row_dim or col_dim for a single row
+            or column.
+        row_dim, col_dim (str | None): As ``charts.lines_grid``'s.
+        axes (np.ndarray | None): The panels, rows × columns, e.g. those the changes were just drawn on.
+        color: As ``plot_ice_edge_line``'s, the same in every panel.
+
+    Example, each season's edge (rows) on all four columns: give the edges a column dim with the four columns, so
+    each column finds them::
+
+        ice_edge_lines_grid(edge_da.expand_dims(column=list(rc.EXTREMES)), 'season', 'column', axes=axes)
+    """
+    row_values = [None] if row_dim is None else edge_da[row_dim].values
+    col_values = [None] if col_dim is None else edge_da[col_dim].values
+    if axes is None:
+        fig = plt.figure(figsize=charts.chart_figure_size(len(row_values), len(col_values), n_legends=0))
+        axes, _ = charts.chart_axes(fig, len(row_values), len(col_values), n_legends=0)
+    #(c): The axes as rows × columns, as in charts.lines_grid
+    axes = np.reshape(axes, (len(row_values), len(col_values)))
+
+    for i, row_value in enumerate(row_values):
+        for j, col_value in enumerate(col_values):
+            selection = {dim: value for dim, value in ((row_dim, row_value), (col_dim, col_value)) if dim is not None}
+            plot_ice_edge_line(edge_da.sel(selection), axes[i, j], color=color)

@@ -108,7 +108,7 @@ class Variable:
 #(c): CMIP6 (``paths.CEDA_CMIP6``, table SImon), each model on its own grid, and puts it on the 2.5° grid. ERA5's
 #(c): sea-ice cover (code ci) is a fraction from 0 to 1; notebook 09 stores it in % like the models.
 #(c): sam is the Southern Annular Mode index, already standardised, from ``paths.SAM_RAW`` rather than the
-#(c): LESFMIP files (``sam.open_index``); it sorts the seasons into SAM phases (notebook 03, *The SAM phases*).
+#(c): LESFMIP files (``sam.open_index``); it sorts the seasons into SAM phases (notebook 03, *SAM Phases*).
 VARIABLES = {
     "tas": Variable("tas", "Near-surface air temperature", "°C", offset=-273.15, era5_code="2t", era5_name="t2m"),
     "pr": Variable("pr", "Precipitation", "mm day⁻¹", scale=86400.0),
