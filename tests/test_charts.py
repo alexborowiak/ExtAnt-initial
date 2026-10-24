@@ -1,11 +1,15 @@
-"""The axes of every chart (extant.plots.charts): the layout's sizes, sharing, legends, and a block in a bigger figure."""
+"""The charts' layers (extant.plots.charts): each styles its panel, and each grid fills a GridSpec from a DataTree or a
+DataArray."""
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
 import pytest  # noqa: E402
+import xarray as xr  # noqa: E402
 
+from extant.datatree import skip_empty  # noqa: E402
 from extant.plots import charts  # noqa: E402
 
 
@@ -22,58 +26,97 @@ def test_figure_size_and_the_width_that_fits_a_page():
     #(c): At that width the figure is the page's width
     width, _ = charts.chart_figure_size(2, 4, panel_width=charts.panel_width_to_fit(4, 7.2))
     assert width == pytest.approx(7.2)
+    #(c): Room in inches as a GridSpec's fractions, in a figure and in one part of it
+    fig = plt.figure(figsize=(10, 5))
+    assert charts.margins(fig, left=1.0, right=0.5, top=1.0, bottom=0.5) == pytest.approx(
+        dict(left=0.1, right=0.95, top=0.8, bottom=0.1))
+    top_fig, _ = fig.subfigures(2, 1)
+    assert charts.margins(top_fig, bottom=0.5)["bottom"] == pytest.approx(0.2)
 
 
-def test_panels_come_out_at_their_size_with_the_legends_under_them():
-    fig = plt.figure(figsize=charts.chart_figure_size(n_rows=2, n_cols=3, n_legends=2))
-    axes, legend_axes = charts.chart_axes(fig, n_rows=2, n_cols=3, n_legends=2)
-    assert axes.shape == (2, 3) and len(legend_axes) == 2
-    position = axes[0, 0].get_position()
-    assert position.width * fig.get_figwidth() == pytest.approx(charts.PANEL_WIDTH, rel=0.01)
-    assert position.height * fig.get_figheight() == pytest.approx(charts.PANEL_HEIGHT, rel=0.01)
-    #(c): The legends below the bottom row, top first, with nothing drawn round them
-    tops = [ax.get_position().y1 for ax in legend_axes]
-    assert tops == sorted(tops, reverse=True) and tops[0] < axes[-1, 0].get_position().y0
-    assert not legend_axes[0].axison
-    #(c): Every panel styled: no top or right spine
-    assert not any(ax.spines["top"].get_visible() or ax.spines["right"].get_visible() for ax in axes.ravel())
+def _cycle_tree():
+    """/<model>/historical, each model's extent on (member, month), with a different number of members each."""
+    rng = np.random.default_rng(0)
+    months = np.arange(1, 13)
+    return xr.DataTree.from_dict({
+        f"{model}/historical": xr.Dataset({"extent": (("member", "month"), rng.normal(size=(n_members, 12)))},
+                                          coords={"month": months})
+        for model, n_members in [("A", 3), ("B", 2), ("C", 5), ("D", 1), ("E", 4), ("F", 2)]})
 
 
-def test_colour_bars_go_under_the_legends():
-    fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=2, n_legends=1, n_colorbars=1))
-    axes, legend_axes = charts.chart_axes(fig, n_rows=1, n_cols=2, n_legends=1, n_colorbars=1)
-    legend_ax, cbar_ax = legend_axes
-    assert cbar_ax.get_position().y1 <= legend_ax.get_position().y0 + 1e-9
-    assert cbar_ax.get_position().height * fig.get_figheight() == pytest.approx(0.23, rel=0.01)
-    fig.colorbar(axes[0, 0].imshow([[0, 1]]), cax=cbar_ax, orientation="horizontal")
+def test_a_layer_styles_its_panel_once():
+    #(c): No axis given: a new figure with one panel, styled
+    lines = charts.plot_lines(_cycle_tree()["A/historical"]["extent"], "month", title="A")
+    ax = lines[0].axes
+    assert len(lines) == 3 and ax.get_title(loc="left") == "A"
+    assert not ax.spines["top"].get_visible() and not ax.spines["right"].get_visible()
+    #(c): A layer drawn later leaves what an earlier one changed: the model dots' x gridlines stay off
+    ax = plt.figure(layout="constrained").add_gridspec(1, 1).subplots()
+    charts.plot_model_dots(xr.DataArray([[1.0, 2.0]], dims=("model", "zone"), coords={"model": ["A"], "zone": [0, 1]}),
+                           "zone", ax=ax)
+    charts.plot_lines(xr.DataArray([0.0, 1.0], dims="zone", coords={"zone": [0, 1]}), "zone", ax=ax)
+    assert not any(line.get_visible() for line in ax.get_xgridlines())
+    assert any(line.get_visible() for line in ax.get_ygridlines())
 
 
-def test_small_panels_keep_their_gaps_in_inches():
-    fig = plt.figure(figsize=charts.chart_figure_size(n_rows=3, n_cols=2, panel_width=1.5, panel_height=0.8))
-    axes, _ = charts.chart_axes(fig, n_rows=3, n_cols=2)
-    top, below = axes[0, 0].get_position(), axes[1, 0].get_position()
-    assert top.height * fig.get_figheight() == pytest.approx(0.8, rel=0.01)
-    assert (top.y0 - below.y1) * fig.get_figheight() == pytest.approx(charts.ROW_GAP, rel=0.01)
-    assert (axes[0, 1].get_position().x0 - top.x1) * fig.get_figwidth() == pytest.approx(charts.COLUMN_GAP, rel=0.01)
+def test_grid_panels_of_a_tree_and_of_a_dataarray():
+    #(c): A tree: one panel per leaf, in its order, titled with the leaf's path
+    panels, shape = charts.grid_panels(_cycle_tree(), variable="extent")
+    assert [title for _, title in panels] == [f"{model}/historical" for model in "ABCDEF"] and shape == (1, 6)
+    assert panels[2][0].sizes["member"] == 5
+    #(c): A DataArray: row by row, untitled
+    da = xr.DataArray(np.arange(24.0).reshape(2, 3, 4), dims=("season", "model", "year"),
+                      coords={"season": ["DJF", "JJA"], "model": ["a", "b", "c"], "year": np.arange(4)})
+    panels, shape = charts.grid_panels(da, "season", "model")
+    assert shape == (2, 3) and panels[4][1] is None
+    assert float(panels[4][0][0]) == float(da.sel(season="JJA", model="b")[0])
+    #(c): A Dataset's variable, a single row
+    panels, shape = charts.grid_panels(da.to_dataset(name="x"), None, "model", variable="x")
+    assert shape == (1, 3)
 
 
-def test_shared_axes_label_only_the_outer_panels():
-    fig = plt.figure(figsize=charts.chart_figure_size(n_rows=2, n_cols=2))
-    axes, _ = charts.chart_axes(fig, n_rows=2, n_cols=2, sharex=True, sharey=True)
-    axes[1, 1].plot([0, 10], [0, 5])
-    assert axes[0, 0].get_xlim() == axes[1, 1].get_xlim() and axes[0, 0].get_ylim() == axes[1, 1].get_ylim()
-    fig.canvas.draw()
-    assert not any(label.get_visible() for label in axes[0, 1].get_xticklabels() + axes[0, 1].get_yticklabels())
-    assert any(label.get_visible() for label in axes[1, 0].get_xticklabels())
-    assert any(label.get_visible() for label in axes[1, 0].get_yticklabels())
+def test_lines_grid_fills_a_gridspec_from_a_tree():
+    tree = _cycle_tree()
+    fig = plt.figure(figsize=charts.chart_figure_size(n_rows=2, n_cols=3), layout="constrained")
+    axes = fig.add_gridspec(2, 3).subplots(sharex=True, sharey=True)
+    charts.lines_grid(tree, "month", axes=axes, variable="extent", **charts.MEMBER_LINE)
+    charts.lines_grid(tree.mean("member"), "month", axes=axes, variable="extent", **charts.ENSEMBLE_MEAN_LINE)
+    for ax in axes.ravel():
+        charts.plot_lines(xr.DataArray(np.zeros(12), dims="month", coords={"month": np.arange(1, 13)}), "month", ax=ax,
+                          **charts.ERA5_LINE)
+    #(c): Two rows of three, row by row: each model's members, their mean and ERA5
+    assert [len(ax.lines) for ax in axes.ravel()] == [5, 4, 7, 3, 6, 4]
+    assert axes[1, 0].get_title(loc="left") == "D/historical"
+    #(c): Too few axes is an error, not a model left out
+    with pytest.raises(ValueError, match="6 panels to draw but only 3 axes"):
+        charts.lines_grid(tree, "month", axes=axes[0], variable="extent")
+    #(c): No axes: a new figure, the leaves in one row
+    assert charts.lines_grid(tree, "month", variable="extent").shape == (1, 6)
 
 
-def test_a_block_of_panels_in_part_of_a_figure():
-    fig = plt.figure(figsize=(8, 8))
-    grid = fig.add_gridspec(2, 1)
-    other_ax = fig.add_subplot(grid[0])
-    axes, legend_axes = charts.chart_axes(fig, n_rows=1, n_cols=3, n_legends=1, subplot_spec=grid[1])
-    assert axes.shape == (1, 3) and axes[0, 0].get_position().y1 < other_ax.get_position().y0
+def test_the_other_layers_take_a_tree_too():
+    tree = _cycle_tree()
+    axes = plt.figure(layout="constrained").add_gridspec(2, 3).subplots()
+    charts.bands_grid(tree.min("member"), tree.max("member"), "month", axes=axes, variable="extent", alpha=0.3)
+    quantiles_tree = tree.map_over_datasets(skip_empty(lambda ds: ds.quantile([0.1, 0.9], "member")))
+    charts.quantile_bands_grid(quantiles_tree, [(0.1, 0.9)], "month", axes=axes, variable="extent")
+    mean_tree = tree.mean("member")
+    charts.significant_dots_grid(mean_tree, mean_tree > 0, "month", axes=axes, variable="extent")
+    assert all(len(ax.collections) == 2 for ax in axes.ravel())
+    assert axes[0, 2].get_title(loc="left") == "C/historical"
+    #(c): The dots only where the mean is above 0
+    n_dots = len(axes[0, 0].lines[0].get_xdata())
+    assert n_dots == int((mean_tree["A/historical"]["extent"] > 0).sum())
+    #(c): Model dots: each leaf on (model, x_dim)
+    dots_tree = xr.DataTree.from_dict({
+        season: xr.Dataset({"change": (("model", "zone"), np.ones((2, 3)))}, coords={"model": ["a", "b"], "zone": [0, 1, 2]})
+        for season in ["DJF", "JJA"]})
+    dot_axes = charts.model_dots_grid(dots_tree, "zone", variable="change")
+    assert dot_axes.shape == (1, 2) and dot_axes[0, 1].get_title(loc="left") == "JJA"
+
+
+def test_panel_letters_carry_on():
+    axes = plt.figure(layout="constrained").add_gridspec(1, 3).subplots(squeeze=False)
     assert charts.tag_panels(axes, start=2) == 5
     assert axes[0, 0].texts[0].get_text() == "c)"
 

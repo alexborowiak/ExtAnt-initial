@@ -1,7 +1,8 @@
 """Panels of the optimal fingerprinting (notebook 08b); the calculations are in ``extant.fingerprinting``.
 
-Each ``plot_*(..., ax=None)`` draws one panel, on an axis from ``charts.chart_axes`` (a new figure if ``ax`` is
-None); the notebook makes the figure and its axes, draws each panel and labels them, as everywhere (``charts``).
+Each ``plot_*(..., ax=None)`` styles one panel (``charts.style_chart_ax``) and draws on it (a new figure if ``ax``
+is None); the notebook makes the figure and its axes (a GridSpec), draws each panel and labels them, as everywhere
+(``charts``).
 
     plot_entry_table         a vector as a table of regions x seasons: the observations, a fingerprint, the fit
     plot_scaling_factors     β and its 90% range for one signal set, OLS and TLS, with lines at 0 and 1
@@ -40,10 +41,8 @@ def plot_entry_table(table, scale, row_dim="region", col_dim="season", ax=None):
         matplotlib.image.AxesImage: The cells, for a colour bar (``image.axes`` is the axis).
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, n_colorbars=1,
-                                                          panel_width=1.9, left_margin=1.6))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0, n_colorbars=1, left_margin=1.6)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=1.9)
+    charts.style_chart_ax(ax)
     rows, columns = list(table[row_dim].values), list(table[col_dim].values)
     values = table.transpose(row_dim, col_dim).values
     image = ax.imshow(values, cmap=scale.cmap, vmin=scale.levels[0], vmax=scale.levels[-1], aspect="auto")
@@ -72,9 +71,8 @@ def plot_scaling_factors(set_ds, ax=None):
         matplotlib.axes.Axes: The axis, the set's signals down its y axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=5.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=5.0)
+    charts.style_chart_ax(ax)
     methods = list(set_ds["fit"].values)
     signals = [s for s in set_ds["signal"].values if bool(set_ds["beta"].sel(signal=s).notnull().any())]
     for y, signal in enumerate(signals):
@@ -107,9 +105,8 @@ def plot_attributable_trends(observed, attributable, col_dim="season", ax=None):
         ``ax.get_legend_handles_labels()`` gives the legend.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=6.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=6.0)
+    charts.style_chart_ax(ax)
     columns = list(observed[col_dim].values)
     signals = list(attributable["signal"].values)
     width = 0.8 / (len(signals) + 1)
@@ -144,9 +141,8 @@ def plot_model_betas(beta, each_model, left_out, ax=None):
         in the k-th shade of its signal's colour (``charts.model_shades``).
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=5.5))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=5.5)
+    charts.style_chart_ax(ax)
     signals = list(beta["signal"].values)
     models = [str(m) for m in each_model["model"].values]
     for y, signal in enumerate(signals):
@@ -180,10 +176,8 @@ def plot_correlations(matrix, ax=None):
         matplotlib.image.AxesImage: The cells, for a colour bar (``image.axes`` is the axis).
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, n_colorbars=1,
-                                                          panel_width=3.0, panel_height=3.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0, n_colorbars=1)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=3.0, panel_height=3.0)
+    charts.style_chart_ax(ax)
     names = [str(v) for v in matrix[matrix.dims[0]].values]
     image = ax.imshow(matrix.values, cmap="RdBu_r", vmin=-1, vmax=1)
     for (r, c), value in np.ndenumerate(matrix.values):
@@ -206,9 +200,8 @@ def plot_residual_null(test, ax=None):
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     #(c): TLS's null has a long tail (near-degenerate refits); the axis stops past the observed value and the null's
     #(c): 99th percentile, so the bulk stays visible
     end = 1.15 * max(test["statistic"], np.percentile(test["null"], 99))

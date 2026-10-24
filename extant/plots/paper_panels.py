@@ -1,8 +1,9 @@
 """The paper's panels (notebooks 04d, 06 and 07), each drawn on one axis: probability ratios, whole distributions as
 ridgelines, and the verification against ERA5; and the colour scales of their maps.
 
-Each ``plot_*(..., ax=None)`` draws one panel, on an axis from ``charts.chart_axes`` (a new figure if ``ax`` is
-None); the notebook makes the figure and its axes, draws each panel and labels them, as everywhere (``charts``).
+Each ``plot_*(..., ax=None)`` styles one panel (``charts.style_chart_ax``) and draws on it (a new figure if ``ax``
+is None); the notebook makes the figure and its axes (a GridSpec), draws each panel and labels them, as everywhere
+(``charts``).
 Notebook 07 puts its candidate blocks together into layouts with ``fig.subfigures``, each block drawn into its part
 by a ``draw_...(fig, tag_start)`` of the notebook's own. The other panels of the candidates are the shared chart
 layers: the time series and percentile curves (``charts.lines_grid``, ``charts.bands_grid``,
@@ -108,9 +109,8 @@ def plot_probability_ratios(ratios_ds, ax=None, shift_only=False):
         forcing's colour (``charts.model_shades``).
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     experiments = list(ratios_ds["experiment"].values)
     models = list(ratios_ds["model"].values)
     #(c): Each model's offset from the middle of its forcing; the shift-only marker a little to its right
@@ -152,14 +152,16 @@ def probability_ratios_grid(ratios_ds, row_dim, col_dim, axes=None, shift_only=F
         ratios_ds (xr.Dataset): As ``plot_probability_ratios``', on (row_dim, col_dim, model, experiment) too, e.g.
             (tail, season); without row_dim or col_dim for a single row or column.
         row_dim, col_dim (str | None): As ``charts.lines_grid``'s.
-        axes (np.ndarray | None): The panels, rows × columns: ``charts.chart_axes``'. A new figure if None.
+        axes (np.ndarray | None): The panels, rows × columns, e.g. ``fig.add_gridspec(2, 4).subplots()``. A new
+            figure if None.
         shift_only (bool): As ``plot_probability_ratios``'.
     """
     row_values = [None] if row_dim is None else ratios_ds[row_dim].values
     col_values = [None] if col_dim is None else ratios_ds[col_dim].values
     if axes is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(len(row_values), len(col_values), n_legends=0))
-        axes, _ = charts.chart_axes(fig, len(row_values), len(col_values), n_legends=0)
+        fig = plt.figure(figsize=charts.chart_figure_size(len(row_values), len(col_values), n_legends=0),
+                         layout='constrained')
+        axes = fig.add_gridspec(len(row_values), len(col_values)).subplots(squeeze=False)
     #(c): The axes as rows × columns, as in charts.lines_grid
     axes = np.reshape(axes, (len(row_values), len(col_values)))
 
@@ -204,9 +206,8 @@ def plot_ridgelines(densities, means, ridge_dim, height_scale, limit=3.0, value_
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     ridges = list(densities[ridge_dim].values)
     x = densities["x"].values
     norm = Normalize(-limit, limit)
@@ -257,9 +258,8 @@ def plot_regional_rank_histogram(ranks_ds, ax=None):
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     rank = ranks_ds["rank"].values
     step = rank[1] - rank[0]
     #(c): Each bin's range drawn across the whole bin: its value repeated at both edges
@@ -302,10 +302,8 @@ def plot_percentile_table(percentile, verdict, row_dim="model", col_dim="experim
         matplotlib.image.AxesImage: The cells, for a colour bar (``percentile_scale()``'s ticks).
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, n_colorbars=1,
-                                                          left_margin=1.5))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0, n_colorbars=1, left_margin=1.5)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     scale = percentile_scale()
     table = percentile.transpose(row_dim, col_dim)
     flags = verdict.transpose(row_dim, col_dim)

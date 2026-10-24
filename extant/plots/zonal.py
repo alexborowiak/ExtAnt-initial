@@ -1,13 +1,13 @@
 """Zonal-mean panels: the forced change at each latitude, after Bracegirdle et al. (2024), layer by layer.
 
-Draws the output of ``zonal`` (and ``sea_ice.edge_latitude`` for the ice edge) on axes from ``charts.chart_axes``.
+Draws the output of ``zonal`` (and ``sea_ice.edge_latitude`` for the ice edge) on axes from a GridSpec.
 The changes are lines along latitude (``charts.lines_grid``), with a dot where the change is significant
 (``charts.significant_dots_grid``) and, in the width's column, hist-nat's own band (``charts.bands_grid``, in
 ``NULL_COLOR``); the ice edge is a dashed vertical line (``ice_edge_lines_grid``). Nothing is averaged across
 models: each model has its own row (or its own line). For example, one model's four changes, seasons down::
 
-    fig = plt.figure(figsize=charts.chart_figure_size(n_rows=4, n_cols=4, n_legends=1))
-    axes, legend_axes = charts.chart_axes(fig, n_rows=4, n_cols=4, n_legends=1, sharex=True, sharey='col')
+    fig = plt.figure(figsize=charts.chart_figure_size(n_rows=4, n_cols=4, n_legends=1), layout='constrained')
+    axes = fig.add_gridspec(4, 4).subplots(sharex=True, sharey='col')
     charts.lines_grid(model_ds['mean_change'].sel(experiment='hist-GHG'), 'lat', 'season', None, axes=axes[:, 0],
                       color=FORCING_COLORS['hist-GHG'])
     ...
@@ -75,9 +75,8 @@ def plot_ice_edge_line(edge_da, ax=None, color='k'):
         matplotlib.lines.Line2D | None: The line; None where there is no edge.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     edge = float(edge_da)
     if not np.isfinite(edge):
         return None
@@ -102,8 +101,9 @@ def ice_edge_lines_grid(edge_da, row_dim, col_dim, axes=None, color='k'):
     row_values = [None] if row_dim is None else edge_da[row_dim].values
     col_values = [None] if col_dim is None else edge_da[col_dim].values
     if axes is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(len(row_values), len(col_values), n_legends=0))
-        axes, _ = charts.chart_axes(fig, len(row_values), len(col_values), n_legends=0)
+        fig = plt.figure(figsize=charts.chart_figure_size(len(row_values), len(col_values), n_legends=0),
+                         layout='constrained')
+        axes = fig.add_gridspec(len(row_values), len(col_values)).subplots(squeeze=False)
     #(c): The axes as rows × columns, as in charts.lines_grid
     axes = np.reshape(axes, (len(row_values), len(col_values)))
 

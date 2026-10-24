@@ -1,9 +1,9 @@
 """Panels of the sea ice: how a field goes onto the 2.5° grid and its edge becomes a latitude, and the edge against
 ERA5's.
 
-Draws the output of ``sea_ice``. Each function draws one panel, on an axis made by ``charts.chart_axes`` (or a map's,
-``antarctica.map_axes``); the notebook makes the figure and its axes, then draws each panel and labels them, as
-everywhere (``charts``). On the maps the edge is the 15% contour of the ensemble-mean concentration, solid for the
+Draws the output of ``sea_ice``. Each function draws one panel, on an axis from a GridSpec (styled by
+``charts.style_chart_ax``) or a map's (``antarctica.map_axes``); the notebook makes the figure and its axes, then
+draws each panel and labels them, as everywhere (``charts``). On the maps the edge is the 15% contour of the ensemble-mean concentration, solid for the
 experiment and dashed for hist-nat, in ink so that it reads on red and blue alike; ERA5's black too (``charts.ERA5_LINE``), dotted.
 
 Sections
@@ -54,9 +54,8 @@ def plot_cap_area(extent, continent_area, edge_latitude, ax=None):
         plot_cap_area(9.8e6, 13.9e6, -63.4)
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     million = 1e6
     ice, continent = extent / million, continent_area / million
     total = ice + continent
@@ -144,9 +143,8 @@ def plot_native_points(native, lat, lon, on_grid, region=REGRID_REGION, ax=None)
         matplotlib.collections.PathCollection: The dots, for a colour bar (``REGRID_LEVELS``, land grey).
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     points_lon, points_lat, values = _region_points(native, lat, lon, region)
     cmap = plt.get_cmap("Blues").with_extremes(bad=REGRID_LAND_COLOR)
     dots = ax.scatter(points_lon, points_lat, c=values, cmap=cmap, norm=BoundaryNorm(REGRID_LEVELS, cmap.N), s=22,
@@ -169,9 +167,8 @@ def plot_grid_cells(native, lat, lon, on_grid, region=REGRID_REGION, ax=None):
         matplotlib.collections.QuadMesh: The cells, for a colour bar (``REGRID_LEVELS``, land grey).
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     (south, north), (west, east) = region
     lat_step, lon_step, first_lat_edge, first_lon_edge = _cell_edges(on_grid)
     cmap = plt.get_cmap("Blues").with_extremes(bad=REGRID_LAND_COLOR)
@@ -217,9 +214,8 @@ def plot_edge_latitudes(edges_tree, era5_da, seasons, ax=None):
         experiment='historical')`` for the legend.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=7.5))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=7.5)
+    charts.style_chart_ax(ax)
     leaves = edges_tree.match('*/historical').leaves
     #(c): Each model's offset from the middle of the season
     offsets_arr = np.linspace(-0.3, 0.3, len(leaves)) if len(leaves) > 1 else np.zeros(1)

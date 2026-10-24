@@ -1,8 +1,8 @@
 """Panels for talks: forcings revealed one at a time, labels for line and plume figures, and pictures of how the
 forced-response figures are made.
 
-Each ``plot_*(..., ax=None)`` draws one panel, on an axis from ``charts.chart_axes``; the notebook makes the figure and
-its axes, draws each panel and labels them, as everywhere (``charts``), in the slides' style
+Each ``plot_*(..., ax=None)`` styles one panel (``charts.style_chart_ax``) and draws on it; the notebook makes the
+figure and its axes (a GridSpec), draws each panel and labels them, as everywhere (``charts``), in the slides' style
 (``with plt.rc_context(fr.SLIDES.rc):``).
 
 Sections
@@ -46,10 +46,8 @@ def plot_buildup(tas_by_forcing, revealed, ylim, fade_earlier=True, baseline=0.0
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=8.0,
-                                                          panel_height=3.6))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=8.0, panel_height=3.6)
+    charts.style_chart_ax(ax)
     for position, forcing in enumerate(revealed):
         newest = position == len(revealed) - 1
         charts.plot_lines(tas_by_forcing[forcing], "year", ax=ax, color=FORCING_COLORS[forcing],
@@ -69,15 +67,15 @@ def plot_buildup_legend(order, revealed, fig):
     Args:
         order (Sequence[str]): Every forcing, in reveal order.
         revealed (Sequence[str]): Those drawn in this frame.
-        fig (matplotlib.figure.Figure): The frame; give its axes the room above them (``top_margin`` of
-            ``charts.chart_axes``, about 1 in for two rows of entries).
+        fig (matplotlib.figure.Figure): The frame, made with ``layout='constrained'``, which leaves the legend
+            its room above the axes.
 
     Returns:
         matplotlib.legend.Legend: The legend.
     """
     handles = [Line2D([], [], color=FORCING_COLORS[forcing], lw=2.4, label=FORCING_LEGEND_LABELS[forcing],
                       alpha=1.0 if forcing in revealed else 0.12) for forcing in order]
-    legend = fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 1.0), ncols=3, frameon=False)
+    legend = fig.legend(handles=handles, loc="outside upper center", ncols=3, frameon=False)
     for forcing, text in zip(order, legend.get_texts()):
         text.set_alpha(1.0 if forcing in revealed else 0.22)
     return legend
@@ -154,10 +152,8 @@ def plot_point_test(hist_nat_da, experiment_da, change, pvalue, experiment, ax=N
         plot_point_test(hist_nat_da, historical_da, change=0.8, pvalue=0.01, experiment='historical')
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=3.0,
-                                                          panel_height=2.6))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=3.0, panel_height=2.6)
+    charts.style_chart_ax(ax)
     #(c): Both densities over the range of both sets of values, a tenth more each side
     pooled_arr = np.concatenate([np.ravel(hist_nat_da.values), np.ravel(experiment_da.values)])
     pooled_arr = pooled_arr[np.isfinite(pooled_arr)]
@@ -200,10 +196,8 @@ def plot_joint_key_cell(shift, width, colour, fill=True, ax=None):
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=2.0,
-                                                          panel_height=1.6))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=2.0, panel_height=1.6)
+    charts.style_chart_ax(ax)
     x_arr = np.linspace(-5, 5, 400)
     ax.set_facecolor(colour)
     ax.patch.set_alpha(0.35)

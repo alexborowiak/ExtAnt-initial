@@ -23,10 +23,11 @@ def close_figures():
     plt.close("all")
 
 
-def _axes(n_rows, n_cols, sharex=False, sharey=False, **layout):
-    """A figure of chart panels, as the notebooks make them; ``layout`` is what both of charts' functions take."""
-    fig = plt.figure(figsize=charts.chart_figure_size(n_rows, n_cols, **layout))
-    return charts.chart_axes(fig, n_rows, n_cols, sharex=sharex, sharey=sharey, **layout)
+def _axes(n_rows, n_cols, sharex=False, sharey=False, **size):
+    """A figure of chart panels, as the notebooks make them: its size from charts.chart_figure_size (``size`` is what
+    that takes), its panels from a GridSpec."""
+    fig = plt.figure(figsize=charts.chart_figure_size(n_rows, n_cols, **size), layout="constrained")
+    return fig.add_gridspec(n_rows, n_cols).subplots(sharex=sharex, sharey=sharey, squeeze=False)
 
 
 def _tests(statistics):
@@ -73,20 +74,20 @@ def test_distribution_panels(point, tests):
     moments, _ = tests
     one = point["A/historical"].to_dataset()
     summaries = ev.distribution_summary(one["members"], one["era5"], ("raw", "anomaly", "detrended"))
-    axes, legend_axes = _axes(1, 3)
+    axes = _axes(1, 3)
     evp.plot_kde(summaries["raw"].sel(season="DJF"), ax=axes[0, 0])
     evp.plot_kde(summaries["anomaly"].sel(season="DJF"), ax=axes[0, 1], members=False)
     evp.plot_qq(summaries["anomaly"].sel(season="DJF"), ax=axes[0, 2])
     ok, message = evp.verdict(moments.sel(model="A", season="DJF"), evp.KDE_STATISTIC["anomaly"])
     evp.status_line(axes[0, 1], 0.98, 0.97, ok, message, ha="right")
-    legend_axes[0].legend(handles=evp.distribution_legend_handles())
+    axes[0, 0].figure.legend(handles=evp.distribution_legend_handles(), loc="outside lower center")
     #(c): On its own figure too
     assert evp.plot_qq(summaries["detrended"].sel(season="JJA")) is not None
 
 
 def test_plume_panels(point):
     plumes = {node.parent.name: ev.ensemble_plume(node["members"], node["era5"], "anomaly") for node in point.leaves}
-    axes, legend_axes = _axes(1, 2, sharey=True)
+    axes = _axes(1, 2, sharey=True)
     evp.plot_plume(plumes["A"].sel(season="DJF"), ax=axes[0, 0], context=plumes["B"].sel(season="DJF"))
     evp.plot_plume(plumes["B"].sel(season="DJF"), ax=axes[0, 1], note=False)
     assert len(evp.plume_legend_handles(context=True)) == len(evp.plume_legend_handles()) + 2
@@ -94,14 +95,14 @@ def test_plume_panels(point):
 
 def test_statistic_and_rank_panels(point, tests):
     moments, others = tests
-    axes, _ = _axes(2, 4)
+    axes = _axes(2, 4)
     evp.member_strips_grid(moments.sel(model="A", season=["DJF", "JJA"]), "season", axes=axes)
     assert evp.statistic_title(moments, "std").endswith("detrended anomalies")
     evp.member_strips_grid(others.sel(model="A"), "season", statistics=["trend", "width"])
 
     ranks = {label: _ranks(point, treatment) for label, treatment in
              (("Raw values", "raw"), ("Anomalies", "anomaly"), ("Detrended anomalies", "detrended"))}
-    axes, _ = _axes(1, 3)
+    axes = _axes(1, 3)
     for ax, tree in zip(axes[0], ranks.values()):
         evp.plot_rank_histogram(tree["A/historical"].to_dataset(), ax=ax)
     evp.plot_grouped_rank_histogram(ranks["Anomalies"]["B/historical"].to_dataset())
@@ -124,10 +125,10 @@ def test_summaries(point, tests):
     rank_rows = rank_rows.assign_coords(statistic=["rank_trend", "dispersion (anomaly)"])
     table = xr.concat([moments[["percentile", "verdict", "testable"]], others[["percentile", "verdict", "testable"]],
                        rank_rows], dim="statistic")
-    axes, cbar_axes = _axes(1, 1, n_legends=0, n_colorbars=1)
+    axes = _axes(1, 1, n_legends=0, n_colorbars=1)
     image = evp.plot_scorecard(table, ax=axes[0, 0])
-    plt.colorbar(image, cax=cbar_axes[0], orientation="horizontal")
-    axes, _ = _axes(1, 2)
+    plt.colorbar(image, ax=axes, location="bottom", shrink=0.6)
+    axes = _axes(1, 2)
     for ax, season in zip(axes[0], ["DJF", "JJA"]):
         evp.plot_signal_noise(table, season, ax=ax)
         evp.plot_signal_noise(table, season, y="width")
@@ -143,7 +144,7 @@ def test_summaries(point, tests):
     anomaly_ranks = ev.rank_histogram_test(demo["members"], demo["era5"], "anomaly", ("year", "season"))
     detrended_ranks = ev.rank_histogram_test(demo["members"], demo["era5"], "detrended", ("year", "season"))
     scenario = list(ev.SCENARIOS)[0]
-    axes, _ = _axes(1, 4)
+    axes = _axes(1, 4)
     evp.plot_plume(ev.ensemble_plume(demo["members"], demo["era5"], "raw").sel(scenario=scenario, season="DJF"),
                    ax=axes[0, 0])
     evp.plot_grouped_rank_histogram(anomaly_ranks.sel(scenario=scenario), ax=axes[0, 1], statistics=("dispersion",))
@@ -158,14 +159,14 @@ def test_point_and_scatter_panels():
     samples = {e: xr.DataArray(shift + scale * rng.standard_normal((20, 11)), dims=("member", "year"))
                for e, shift, scale in (("hist-nat", 0, 1), ("historical", 2, 1.4), ("hist-GHG", 3, 1.2))}
     shifts = {e: rc.quantile_shift(samples[e], samples["hist-nat"], n_boot=100) for e in ("historical", "hist-GHG")}
-    axes, _ = _axes(1, 2, n_legends=0)
+    axes = _axes(1, 2, n_legends=0)
     rcp.plot_point_distributions(samples, shifts["historical"], "historical", ax=axes[0, 0])
     rcp.plot_quantile_shifts(shifts, "historical", ax=axes[0, 1])
 
     coords = {"model": ["A", "B"], "experiment": ["hist-GHG", "historical"], "season": ["DJF", "JJA", "MAM", "SON"]}
     values = lambda: xr.DataArray(rng.standard_normal((2, 2, 4)), dims=tuple(coords), coords=coords)
     regional = xr.Dataset({"mean_change": values(), "width_change": values(), "tail_asymmetry": values()})
-    axes, _ = _axes(1, 4, sharex=True, sharey=True)
+    axes = _axes(1, 4, sharex=True, sharey=True)
     for ax, season in zip(axes[0], coords["season"]):
         charts.plot_scatter_by_forcing(regional["mean_change"].sel(season=season),
                                        regional["tail_asymmetry"].sel(season=season), ax=ax)
@@ -327,7 +328,7 @@ def test_zonal_layers(zonal_inputs):
     _, zonal_ds, _, edges = zonal_inputs
     columns = list(rc.EXTREMES)
     season_ds = zonal_ds.sel(season="JJA")
-    axes, _ = _axes(2, len(columns), sharex=True, sharey="col")
+    axes = _axes(2, len(columns), sharex=True, sharey="col")
     charts.bands_grid(season_ds["null_lower"], season_ds["null_upper"], "lat", "model", None, axes=axes[:, 3],
                       color=zp.NULL_COLOR)
     for experiment in season_ds["experiment"].values:
@@ -360,7 +361,7 @@ def test_sea_ice_panels(zonal_inputs):
     extents = xr.DataTree.from_dict({f"A/{e}": xr.Dataset({"extent": extent, "continent_area": 13.9e6})
                                      for e in ("hist-nat", "historical")})
     summary = sea_ice.extent_summary(extents)
-    axes, _ = _axes(2, 1, sharex=True, sharey="row")
+    axes = _axes(2, 1, sharex=True, sharey="row")
     for experiment in summary["experiment"].values:
         experiment_ds = summary.sel(experiment=experiment) / 1e6
         charts.bands_grid(experiment_ds["low"], experiment_ds["high"], "year", "season", "model", axes=axes, alpha=0.15)
@@ -382,14 +383,15 @@ def test_lines_and_dots_of_every_model():
                           coords={"model": ["A", "B", "C"], "experiment": ["hist-GHG", "historical"],
                                   "quantile": quantiles})
     curves = curves.assign_coords(percentile=("quantile", 100 * quantiles)).swap_dims(quantile="percentile")
-    axes, legend_axes = _axes(1, 2, sharey=True)
+    axes = _axes(1, 2, sharey=True)
     models = list(curves["model"].values)
     for j, experiment in enumerate(curves["experiment"].values):
         model_styles = charts.model_lines(experiment, models)
         for k, model in enumerate(models):
             charts.plot_lines(curves.sel(experiment=experiment, model=model), "percentile", ax=axes[0, j],
                               marker=charts.MODEL_MARKERS[k], **model_styles[model])
-    legend_axes[0].legend(handles=charts.model_legend_handles(models, experiment="historical"))
+    axes[0, 0].figure.legend(handles=charts.model_legend_handles(models, experiment="historical"),
+                             loc="outside lower center")
     assert len(axes[0, 1].lines) == 3
     #(c): hist-GHG's models in its reds, each with its own line style
     assert [line.get_label() for line in axes[0, 0].lines] == models
@@ -397,7 +399,7 @@ def test_lines_and_dots_of_every_model():
     assert len({str(line.get_linestyle()) + str(line.get_linewidth()) for line in axes[0, 0].lines}) == 3
 
     regional = curves.isel(percentile=0, drop=True)
-    axes, _ = _axes(1, 1)
+    axes = _axes(1, 1)
     charts.plot_model_dots(regional, "experiment", ax=axes[0, 0], color={"hist-GHG": "r"})
     #(c): A bar (the median) per forcing, a marker per model
     assert len(axes[0, 0].patches) == 2 and len(axes[0, 0].lines) == 1 + 2 * 3
@@ -430,15 +432,15 @@ def test_saving_and_the_talk_panels(tmp_path):
     ax = slides.plot_point_test(hist_nat_da, hist_nat_da + 1, change=1.0, pvalue=0.01, experiment="historical")
     assert "significant increase" in [text.get_text() for text in ax.texts]
     with plt.rc_context(fr.SLIDES.rc):
-        axes, _ = _axes(3, 3, column_gap=0.1, row_gap=0.1)
+        axes = _axes(3, 3, column_gap=0.1, row_gap=0.1)
         for i, shift in enumerate((-1.2, 0.0, 1.2)):
             for j, width in enumerate((0.65, 1.0, 1.5)):
                 slides.plot_joint_key_cell(shift, width, scales.joint.cmap(i * 3 + j), fill=i * 3 + j != 4,
                                            ax=axes[2 - i, j])
         series = {f: xr.DataArray(rng.standard_normal(10), dims="year", coords={"year": np.arange(1850, 1860)})
                   for f in ("hist-nat", "historical")}
-        fig = plt.figure(figsize=charts.chart_figure_size(1, 1, n_legends=0, top_margin=1.0))
-        axes, _ = charts.chart_axes(fig, 1, 1, n_legends=0, top_margin=1.0)
+        axes = _axes(1, 1, n_legends=0, top_margin=1.0)
+        fig = axes[0, 0].figure
         slides.plot_buildup(series, ["hist-nat"], (-3, 3), ax=axes[0, 0])
         legend = slides.plot_buildup_legend(["hist-nat", "historical"], ["hist-nat"], fig)
         #(c): Every forcing in the legend from the first frame, the one still to come faded

@@ -1,7 +1,8 @@
 """Panels of where and how the forced change affects the mean and the variability.
 
-Draws the output of response_change. Each function draws one panel, on an axis from ``charts.chart_axes``; the
-notebook makes the figure and its axes, then draws each panel and labels them, as everywhere (``charts``). Each
+Draws the output of response_change. Each function styles one panel (``charts.style_chart_ax``) and draws on it;
+the notebook makes the figure and its axes (a GridSpec), then draws each panel and labels them, as everywhere
+(``charts``). Each
 experiment has its colour, FORCING_COLORS (hist-nat green, hist-GHG red, ...). The maps of these results are drawn
 layer by layer with ``antarctica``, the area means with ``charts.plot_model_dots`` and
 ``charts.plot_scatter_by_forcing``, in notebook 04.
@@ -91,9 +92,8 @@ def plot_point_distributions(samples, shift_ds, experiment, test_ds=None, units=
         matplotlib.axes.Axes: The axis, with a legend of the two distributions.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=6.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=6.0)
+    charts.style_chart_ax(ax)
     #(c): The two distributions, sharing one kernel bandwidth
     pooled = {name: samples[name].stack(sample=("member", "year")).dropna("sample") for name in ("hist-nat", experiment)}
     values = np.concatenate([p.values for p in pooled.values()])
@@ -152,9 +152,8 @@ def plot_quantile_shifts(shifts, experiment=None, ax=None):
         matplotlib.axes.Axes: The axis, with a legend of the experiments.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     ax.axhline(0, color="0.6", lw=0.8)
     for name, shift_ds in shifts.items():
         colour = FORCING_COLORS.get(name, INK)
@@ -195,9 +194,8 @@ def plot_quadrant_labels(x, y, ax=None):
         matplotlib.axes.Axes: The axis. Its axis labels are ``SCATTER_LABELS[x][0]`` and ``SCATTER_LABELS[y][0]``.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     _, x_low, x_high = SCATTER_LABELS[x]
     _, y_low, y_high = SCATTER_LABELS[y]
     corners = {(0.98, 0.98, "right", "top"): f"{x_high}\n{y_high}", (0.02, 0.98, "left", "top"): f"{x_low}\n{y_high}",

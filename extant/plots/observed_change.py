@@ -1,7 +1,8 @@
 """Panels for the observed-change analysis; the calculations are in observed_change.
 
-Each ``plot_*(data, ax=None, ...)`` draws one panel, on an axis from ``charts.chart_axes`` (a new figure if ``ax`` is
-None); the notebook makes the figure and its axes, draws each panel and labels them, as everywhere (``charts``); each
+Each ``plot_*(data, ax=None, ...)`` styles one panel (``charts.style_chart_ax``) and draws on it (a new figure if
+``ax`` is None); the notebook makes the figure and its axes (a GridSpec), draws each panel and labels them, as
+everywhere (``charts``); each
 ``..._legend_handles`` gives a panel's legend entries. Colour follows the experiment (FORCING_COLORS) or the signal
 (``charts.SIGNAL_COLORS``), and ERA5 is always black.
 
@@ -47,9 +48,8 @@ def plot_experiment_strips(results, statistic="trend", ax=None):
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     experiments = [e for e in FORCING_REVEAL_ORDER if e in results] + [e for e in results if e not in FORCING_REVEAL_ORDER]
     era5 = float(next(iter(results.values()))["era5"].sel(statistic=statistic))
     for row, experiment in enumerate(experiments):
@@ -115,9 +115,8 @@ def plot_record_rates(curves, kind, experiments=("hist-nat", "historical"), ax=N
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=4.5))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=4.5)
+    charts.style_chart_ax(ax)
     years = curves["year"].values
     for experiment in experiments:
         members = curves["members"].sel(experiment=experiment, kind=kind).dropna("member", how="all")
@@ -161,9 +160,8 @@ def plot_scaling_factors(region_ds, ax=None):
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     models = list(region_ds["model"].values)
     signals = list(region_ds["signal"].values)
     offsets = np.linspace(-0.3, 0.3, len(models)) if len(models) > 1 else [0.0]
@@ -204,9 +202,8 @@ def plot_attributable_trends(region_ds, ax=None):
         matplotlib.axes.Axes: The axis, the models down its y axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, left_margin=1.5))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0, left_margin=1.5)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     models = list(region_ds["model"].values)
     signals = list(region_ds["signal"].values)
     height = 0.8 / len(signals)

@@ -1,48 +1,59 @@
-"""Every plot that isn't a map (lines, dots, bars, histograms), built like the maps: make the axes, then draw on them.
+"""Every plot that isn't a map (lines, dots, bars, histograms): make the axes from a GridSpec, then draw on them.
 
-``chart_figure_size`` gives the figure's size and ``chart_axes`` its panels (each styled by ``style_chart_ax``) and
-rows for legends under them. What goes on each panel is drawn at the call site, with ``ax.plot``, xarray's
-``.plot``, a module's one-axis ``plot_...(..., ax=ax)`` or anything else, so the same axes take any data, a figure
-can have as many rows as it needs, and a block of panels can sit in a bigger figure. The text's sizes come from the
-style the figure is drawn in, ``forced_response.NOTEBOOK``, ``PAPER`` or ``SLIDES``: a notebook sets
-``plt.rcParams.update(fr.NOTEBOOK.rc)`` once in its Setup, and a paper or slide figure is drawn inside
+A figure's panels come from a GridSpec at the call site, ``fig.add_gridspec(n_rows, n_cols).subplots(...)``, in a
+figure made with ``layout='constrained'`` (which makes room for the labels, titles, legends and colour bars) and
+sized by ``chart_figure_size``. The GridSpec can be cut up as the figure needs: a row for legends
+(``grid[1]``), a block of panels next to a map (``grid[0].subgridspec(...)``). What goes on each panel is drawn at
+the call site, with this module's ``plot_...(..., ax=ax)`` and ``..._grid(..., axes=axes)``, another module's
+one-axis ``plot_...``, or ``ax.plot``. Each ``plot_...`` styles the panel it draws on (``style_chart_ax``). The
+text's sizes come from the style the figure is drawn in, ``forced_response.NOTEBOOK``, ``PAPER`` or ``SLIDES``: a
+notebook sets ``plt.rcParams.update(fr.NOTEBOOK.rc)`` once in its Setup, and a paper or slide figure is drawn inside
 ``with plt.rc_context(fr.PAPER.rc):``. The lines that recur (each member, the ensemble mean, ERA5) have their
 settings here, passed with ``**``, so they look the same in every figure. For example, each model's seasonal cycle
-of sea-ice extent against ERA5's, in two rows of three::
+of sea-ice extent against ERA5's, in two rows of three: the models' members and their mean (a panel per model of
+/<model>/historical), then ERA5 on every panel::
 
-    fig = plt.figure(figsize=charts.chart_figure_size(n_rows=2, n_cols=3, n_legends=1))
-    axes, legend_axes = charts.chart_axes(fig, n_rows=2, n_cols=3, n_legends=1, sharex=True, sharey=True)
-    for ax, node in zip(axes.ravel(), cycle_tree.match('*/historical').leaves):
-        charts.plot_lines(node['extent'], 'month', ax=ax, **charts.MEMBER_LINE)
-        charts.plot_lines(node['extent'].mean('member'), 'month', ax=ax, **charts.ENSEMBLE_MEAN_LINE)
+    fig = plt.figure(figsize=charts.chart_figure_size(n_rows=2, n_cols=3, n_legends=1), layout='constrained')
+    axes = fig.add_gridspec(2, 3).subplots(sharex=True, sharey=True)
+    charts.lines_grid(cycle_tree, 'month', axes=axes, variable='extent', **charts.MEMBER_LINE)
+    charts.lines_grid(cycle_tree.mean('member'), 'month', axes=axes, variable='extent', **charts.ENSEMBLE_MEAN_LINE)
+    for ax in axes.ravel():
         charts.plot_lines(era5_da, 'month', ax=ax, **charts.ERA5_LINE)
-        ax.set_title(node.parent.name, loc='left')
-    legend_axes[0].legend(handles=[Line2D([], [], **charts.MEMBER_LINE), Line2D([], [], **charts.ERA5_LINE)],
-                          loc='center', ncols=2, frameon=False)
+    fig.legend(handles=[Line2D([], [], **charts.MEMBER_LINE), Line2D([], [], **charts.ERA5_LINE)],
+               loc='outside lower center', ncols=2, frameon=False)
     fig.suptitle('Seasonal cycle of sea-ice extent', x=0.01, ha='left')
+
+A colour bar goes under the panels with ``fig.colorbar(image, ax=axes, location='bottom', shrink=0.6)``. Two legends,
+one above the other, each go in a row of the GridSpec (the layout gives each row the room its legend needs)::
+
+    grid = fig.add_gridspec(3, 1, height_ratios=[1, 0.01, 0.01])
+    axes = grid[0].subgridspec(1, 4).subplots(sharex=True, sharey=True, squeeze=False)
+    legend_axes = [fig.add_subplot(grid[row]) for row in (1, 2)]
+    for legend_ax in legend_axes:
+        legend_ax.axis('off')
+    legend_axes[0].legend(handles=forcing_handles, loc='center', ncols=4, frameon=False)
+    legend_axes[1].legend(handles=model_handles, loc='center', ncols=6, frameon=False)
 
 Each panel's title goes on its left (``loc='left'``) and the figure's title at the top left (``x=0.01, ha='left'``);
 both are bold, at the style's sizes.
 
-A block of panels in a figure of maps: give ``chart_axes`` one cell of the figure's grid (``subplot_spec``), as
-``antarctica.map_axes`` takes another.
-
 Sections
 --------
-1. Layout: the figure's size (``chart_figure_size``, or ``panel_width_to_fit`` for a printed page), then its panels
-   and legend axes (``chart_axes``)
+1. Layout: the figure's size (``chart_figure_size``, or ``panel_width_to_fit`` for a printed page), and the GridSpec's
+   room in inches in a figure with maps beside the charts, which isn't constrained (``margins``)
 2. One panel's style (``style_chart_ax``), what recurs (each member, the ensemble mean, ERA5, each model, each
    forcing) and the legend entries for it, and the panels' letters (``tag_panels``)
 3. Layers along an x axis: ``plot_lines``, ``plot_band``, ``plot_quantile_bands`` (a plume) and
-   ``plot_significant_dots`` on one panel, and each one's ``..._grid`` (one panel per value of a row dim and a column
-   dim, as the maps' ``antarctica.heatmaps_of_antarctica``)
+   ``plot_significant_dots`` on one panel, and each one's ``..._grid`` (one panel per leaf of a DataTree, or per value
+   of a row dim and a column dim, as the maps' ``antarctica.heatmaps_of_antarctica``); ``grid_panels`` and
+   ``grid_axes`` say which data goes on which panel, for every ``..._grid``
 4. Models and forcings: ``plot_model_dots`` (each model's value in each category, and their median; and its grid)
    and ``plot_scatter_by_forcing`` (one change against another, a point per model and forcing)
 
-Each layer comes as ``plot_<layer>(data, ax=None, ...)``, which draws on one panel (a new figure if ``ax`` is None),
-and ``<layer>_grid(data, row_dim, col_dim, axes=None, ...)``, which draws it on every panel of a grid; nothing draws
-two layers at once. Rows of different kinds are slices of the same axes (``axes[2]``, ``axes[:, 0]``), each drawn by
-its own call.
+Each layer comes as ``plot_<layer>(data, ax=None, ...)``, which styles one panel and draws on it (a new figure if
+``ax`` is None), and ``<layer>_grid(data, row_dim, col_dim, axes=None, variable=None, ...)``, which draws it on every
+panel of a grid; nothing draws two layers at once. Rows of different kinds are slices of the same axes (``axes[2]``,
+``axes[:, 0]``), each drawn by its own call.
 """
 
 import colorsys
@@ -59,10 +70,11 @@ from plotting_modules.constants import FORCING_COLORS
 # 1. Layout
 # ---------------------------------------------------------------------------
 
-#(t): Sizes in inches: each panel's width and height; the gaps between columns (room for the y tick labels) and
-#(t): between rows (the x tick labels above and the title below); the room left of the panels (the y tick labels and
-#(t): label), above them (the figure's title and the first row's titles), under them (the x tick labels and label) and
-#(t): right of them; each legend's row; and each colour bar's row, its ticks and label included (as the maps')
+#(t): Sizes in inches, from which a figure's size is worked out: each panel's width and height; the gaps between
+#(t): columns (room for the y tick labels) and between rows (the x tick labels above and the title below); the room
+#(t): left of the panels (the y tick labels and label), above them (the figure's title and the first row's titles),
+#(t): under them (the x tick labels and label) and right of them; each legend's row; and each colour bar's row, its
+#(t): ticks and label included (as the maps')
 PANEL_WIDTH = 2.8
 PANEL_HEIGHT = 2.2
 COLUMN_GAP = 0.45
@@ -77,10 +89,12 @@ COLORBAR_HEIGHT = 0.7
 
 def chart_figure_size(n_rows, n_cols, n_legends=1, n_colorbars=0, panel_width=PANEL_WIDTH, panel_height=PANEL_HEIGHT,
                       top_margin=TOP_MARGIN, left_margin=LEFT_MARGIN, column_gap=COLUMN_GAP, row_gap=ROW_GAP):
-    """The size of a figure of panels with legends (and colour bars) under them.
+    """The size of a figure of panels with legends (and colour bars) under them, so each panel comes out about
+    ``panel_width`` × ``panel_height``.
 
-    Only the size, so the figure can be made bigger for something else (maps above the panels, say) before
-    ``chart_axes`` fills its part of it.
+    Only the size: the figure is made with it and ``layout='constrained'``, and its panels from a GridSpec. The
+    layout shares out the room, so the margins and gaps here only decide how big the figure is; give more of one
+    where the figure needs more room (long row labels on the left, text right of each panel).
 
     Args:
         n_rows, n_cols (int): Rows and columns of panels.
@@ -88,14 +102,19 @@ def chart_figure_size(n_rows, n_cols, n_legends=1, n_colorbars=0, panel_width=PA
         n_colorbars (int): Colour bars under the legends, one below another.
         panel_width, panel_height (float): Each panel's size (inches); ``panel_width_to_fit`` for a printed page.
         top_margin (float): The room above the panels (inches), for the title and the first row's titles; less for
-            a paper figure, which has no title (give ``chart_axes`` the same).
+            a paper figure, which has no title.
         left_margin (float): The room left of the panels (inches), for the y tick labels and label; more for long
-            row labels, a model's name say (give ``chart_axes`` the same).
+            row labels, a model's name say.
         column_gap, row_gap (float): The gaps between columns and between rows (inches); more for text right of each
-            panel, less for cells of a key (give ``chart_axes`` the same).
+            panel, less for cells of a key.
 
     Returns:
         tuple: (width, height) in inches. E.g. 2 rows, 3 columns and 1 legend: (10.2, 6.6).
+
+    Example::
+
+        fig = plt.figure(figsize=chart_figure_size(n_rows=2, n_cols=3, n_legends=1), layout='constrained')
+        axes = fig.add_gridspec(2, 3).subplots(sharex=True, sharey=True)
     """
     width = left_margin + n_cols * panel_width + (n_cols - 1) * column_gap + RIGHT_MARGIN
     height = (top_margin + n_rows * panel_height + (n_rows - 1) * row_gap + BOTTOM_MARGIN
@@ -116,96 +135,46 @@ def panel_width_to_fit(n_cols, width):
     return (width - LEFT_MARGIN - RIGHT_MARGIN - (n_cols - 1) * COLUMN_GAP) / n_cols
 
 
-def chart_axes(fig, n_rows, n_cols, n_legends=1, n_colorbars=0, sharex=False, sharey=False, subplot_spec=None,
-               top_margin=TOP_MARGIN, left_margin=LEFT_MARGIN, column_gap=COLUMN_GAP, row_gap=ROW_GAP):
-    """``n_rows`` × ``n_cols`` panels, each styled by ``style_chart_ax``, and legend and colour-bar axes under them.
+def margins(fig, left=LEFT_MARGIN, right=RIGHT_MARGIN, top=TOP_MARGIN, bottom=BOTTOM_MARGIN):
+    """A GridSpec's ``left``, ``right``, ``top`` and ``bottom`` that leave this much room round the panels (inches),
+    for a figure that has maps beside its charts.
 
-    The panels fill the figure, or one cell of a larger GridSpec (``subplot_spec``), leaving the rest of the figure
-    for other axes. In a figure from ``chart_figure_size`` the panels come out at its panel size, and the gaps
-    between them are always ``column_gap`` and ``row_gap`` (inches). A legend's axis spans the panels' width and has
-    no frame or ticks: put a legend in it with ``legend_axes[0].legend(handles=..., loc='center', frameon=False)``. A
-    colour bar's axis is as the maps' (``antarctica.map_axes``): the middle 60% of its row's width, 0.23 in thick, at
-    the top of its row, its ticks and label below it.
+    Such a figure isn't made with ``layout='constrained'``, which would squash the maps' colour bars
+    (``antarctica.map_axes`` sets their room in inches itself), so its chart panels need room for their labels and
+    legends set by hand. A legend then goes in the room below: ``fig.legend(..., loc='lower center')``.
 
     Args:
-        fig (matplotlib.figure.Figure | matplotlib.figure.SubFigure): The figure, e.g.
-            ``plt.figure(figsize=chart_figure_size(...))``, or one part of a layout (``fig.subfigures(2, 1)[0]``).
-        n_rows, n_cols, n_legends, n_colorbars (int): As ``chart_figure_size``'s.
-        sharex, sharey (bool | str): Which panels have the same x (y) axis, as in ``plt.subplots``: True for every
-            panel, 'row' for the panels of each row, 'col' for those of each column, False for none. Shared axes have
-            the same limits and ticks, so ticks set on one panel are set on all that share it. Sharing hides the
-            tick labels between the panels, as ``plt.subplots`` does: the x tick labels of all but the bottom row
-            (``sharex`` True or 'col'), the y tick labels of all but the first column (``sharey`` True or 'row').
-        subplot_spec (matplotlib.gridspec.SubplotSpec | None): The part of the figure to fill, e.g. ``grid[1]`` of
-            ``fig.add_gridspec(2, 1)``; the whole figure if None.
-        top_margin, left_margin, column_gap, row_gap (float): As given to ``chart_figure_size`` (inches).
+        fig (matplotlib.figure.Figure | matplotlib.figure.SubFigure): The figure, or its part the panels fill.
+        left, right, top, bottom (float): The room on each side (inches): left for the y tick labels and label, above
+            for the titles, below for the x tick labels and label, and a legend's 0.4 in.
 
     Returns:
-        tuple: The panels, an array of ``n_rows`` × ``n_cols``, and a list of the legend axes, top first, then the
-        colour bars' axes.
+        dict: left, right, top and bottom as fractions of ``fig``, for ``fig.add_gridspec(..., **margins(fig))``.
 
-    Example, maps above a row of panels::
+    Example, a row of four panels under maps, with a legend under them::
 
-        map_width, map_height = antarctica.map_figure_size(n_rows=1, n_cols=4, n_colorbars=1)
-        chart_width, chart_height = chart_figure_size(n_rows=1, n_cols=4, n_legends=1)
-        fig = plt.figure(figsize=(max(map_width, chart_width), map_height + chart_height))
-        grid = fig.add_gridspec(2, 1, height_ratios=[map_height, chart_height], left=0, right=1, top=1, bottom=0)
-        map_axes, cbar_axes = antarctica.map_axes(fig, n_rows=1, n_cols=4, n_colorbars=1, subplot_spec=grid[0])
-        axes, legend_axes = chart_axes(fig, n_rows=1, n_cols=4, n_legends=1, subplot_spec=grid[1])
+        maps_fig, series_fig = fig.subfigures(2, 1, height_ratios=[7.0, 2.6])
+        grid = series_fig.add_gridspec(1, 4, wspace=0.15, **margins(series_fig, bottom=0.9))
+        axes = grid.subplots(sharey=True, squeeze=False)
+        series_fig.legend(handles=handles, loc='lower center', ncols=4, frameon=False)
     """
-    under_height = n_legends * LEGEND_HEIGHT + n_colorbars * COLORBAR_HEIGHT
-    if subplot_spec is None:
-        #(c): The whole figure, less the room left of the panels and above them. Its size from its box, so that one
-        #(c): part of a layout (a SubFigure, from fig.subfigures) works too
-        width, height = fig.bbox.width / fig.dpi, fig.bbox.height / fig.dpi
-        #(c): Each panel's size: what is left of the figure once the margins, gaps, legends and bars are in, shared out
-        panel_width = (width - left_margin - RIGHT_MARGIN - (n_cols - 1) * column_gap) / n_cols
-        panel_height = (height - top_margin - BOTTOM_MARGIN - under_height - (n_rows - 1) * row_gap) / n_rows
-    else:
-        #(c): In part of a larger grid, whose size isn't known here: panels of the usual size, in proportion
-        panel_width, panel_height = PANEL_WIDTH, PANEL_HEIGHT
-    #(c): The panels' block, the room under it for the x tick labels and label, then one row per legend and colour bar
-    block_height = n_rows * panel_height + (n_rows - 1) * row_gap
-    height_ratios = [block_height, BOTTOM_MARGIN] + [LEGEND_HEIGHT] * n_legends + [COLORBAR_HEIGHT] * n_colorbars
-    if subplot_spec is None:
-        outer_grid = fig.add_gridspec(len(height_ratios), 1, height_ratios=height_ratios, hspace=0,
-                                      left=left_margin / width, right=1 - RIGHT_MARGIN / width,
-                                      top=1 - top_margin / height, bottom=0)
-    else:
-        outer_grid = subplot_spec.subgridspec(len(height_ratios), 1, height_ratios=height_ratios, hspace=0)
-    #(c): The panels, with the gaps between them as a share of a panel's size, as GridSpec takes them
-    panel_grid = outer_grid[0].subgridspec(n_rows, n_cols, wspace=column_gap / panel_width,
-                                           hspace=row_gap / panel_height)
+    #(c): Its size from its box, so that one part of a layout (a SubFigure) works too
+    width, height = fig.bbox.width / fig.dpi, fig.bbox.height / fig.dpi
+    return dict(left=left / width, right=1 - right / width, top=1 - top / height, bottom=bottom / height)
 
-    axes = np.empty((n_rows, n_cols), dtype=object)
-    for row in range(n_rows):
-        for col in range(n_cols):
-            #(c): The panel whose axes this one shares: the first panel, the first of its row or of its column. A panel
-            #(c): that is itself that first one is still None here, so it shares nothing
-            sharex_ax = {False: None, True: axes[0, 0], 'row': axes[row, 0], 'col': axes[0, col]}[sharex]
-            sharey_ax = {False: None, True: axes[0, 0], 'row': axes[row, 0], 'col': axes[0, col]}[sharey]
-            axes[row, col] = fig.add_subplot(panel_grid[row, col], sharex=sharex_ax, sharey=sharey_ax)
-            style_chart_ax(axes[row, col])
-    #(c): Axes shared down the columns need their x tick labels only along the bottom row, and those shared along the
-    #(c): rows their y tick labels only in the first column
-    if sharex in (True, 'col'):
-        for ax in axes[:-1].ravel():
-            ax.tick_params(axis='x', labelbottom=False)
-    if sharey in (True, 'row'):
-        for ax in axes[:, 1:].ravel():
-            ax.tick_params(axis='y', labelleft=False)
 
-    legend_axes = []
-    for legend in range(n_legends):
-        legend_ax = fig.add_subplot(outer_grid[2 + legend])
-        legend_ax.axis('off')
-        legend_axes.append(legend_ax)
-    for bar in range(n_colorbars):
-        #(c): The bar in the middle 60% of its row, 0.23 in thick at its top; the ticks and label go below it
-        bar_grid = outer_grid[2 + n_legends + bar].subgridspec(2, 3, height_ratios=[0.23, COLORBAR_HEIGHT - 0.23],
-                                                               width_ratios=[1, 3, 1], hspace=0, wspace=0)
-        legend_axes.append(fig.add_subplot(bar_grid[0, 1]))
-    return axes, legend_axes
+def one_panel(panel_width=PANEL_WIDTH, panel_height=PANEL_HEIGHT):
+    """A new figure with one panel, for a ``plot_...`` given no axis.
+
+    Args:
+        panel_width, panel_height (float): The panel's size (inches).
+
+    Returns:
+        matplotlib.axes.Axes: The panel.
+    """
+    fig = plt.figure(figsize=chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=panel_width,
+                                               panel_height=panel_height), layout='constrained')
+    return fig.add_gridspec(1, 1).subplots()
 
 
 # ---------------------------------------------------------------------------
@@ -215,13 +184,18 @@ def chart_axes(fig, n_rows, n_cols, n_legends=1, n_colorbars=0, sharex=False, sh
 def style_chart_ax(ax):
     """The style of every chart: light gridlines behind what is drawn, and no top or right spine.
 
-    Set on the axis itself, so it holds whatever is drawn on it afterwards, a quick look with xarray's ``.plot``
-    included. The text's sizes and colours come from the style's rcParams (``forced_response.NOTEBOOK.rc``).
-    ``chart_axes`` calls it on every panel.
+    Every ``plot_...`` calls it on the panel it draws on, before drawing, so a panel from a plain GridSpec gets the
+    style from whatever is drawn on it first; call it yourself on a panel drawn only with ``ax.plot``. Set on the axis
+    itself, so it holds whatever is drawn on it afterwards. A panel is styled once: one already styled (its top spine
+    hidden) is left as it is, so a layer drawn later doesn't bring back gridlines an earlier one turned off. The text's
+    sizes and colours come from the style's rcParams (``forced_response.NOTEBOOK.rc``).
 
     Args:
         ax (matplotlib.axes.Axes): The axis.
     """
+    #(c): Styled already, by an earlier layer
+    if not ax.spines['top'].get_visible():
+        return
     ax.grid(color='0.85', linewidth=0.6)
     ax.set_axisbelow(True)
     ax.spines[['top', 'right']].set_visible(False)
@@ -293,7 +267,7 @@ def model_lines(experiment, models):
         model_styles = model_lines('hist-GHG', models)
         for model in models:
             plot_lines(zonal_change_da.sel(model=model), 'lat', ax=ax, **model_styles[model])
-        legend_axes[0].legend(handles=[Line2D([], [], **style) for style in model_styles.values()], loc='center')
+        fig.legend(handles=[Line2D([], [], **style) for style in model_styles.values()], loc='outside lower center')
     """
     shades = model_shades(FORCING_COLORS[experiment], len(models))
     return {model: dict(color=shades[k], linestyle=MODEL_LINESTYLES[k % len(MODEL_LINESTYLES)],
@@ -314,8 +288,8 @@ def model_legend_handles(models, experiment='historical'):
 
     Example::
 
-        legend_axes[0].legend(handles=model_legend_handles(['CanESM5', 'MIROC6']), loc='center', ncols=2,
-                              frameon=False)
+        fig.legend(handles=model_legend_handles(['CanESM5', 'MIROC6']), loc='outside lower center', ncols=2,
+                   frameon=False)
     """
     colors = model_shades(FORCING_COLORS[experiment], len(models))
     return [Line2D([], [], linestyle='none', marker=MODEL_MARKERS[k % len(MODEL_MARKERS)], markersize=5,
@@ -361,14 +335,78 @@ def tag_panels(axes, start=0):
 # 3. Layers along an x axis: lines, bands and dots where significant
 # ---------------------------------------------------------------------------
 
-def plot_lines(da, x, ax=None, **style):
-    """``da`` against its dim ``x``: one line, or one line per value of its other dim (each member, say).
+def grid_panels(data, row_dim=None, col_dim=None, variable=None):
+    """What goes on each panel of a grid, row by row: one panel per leaf of a DataTree, or per value of ``row_dim``
+    (down) and ``col_dim`` (across) of a DataArray.
+
+    Every ``..._grid`` here gets its panels from this, so they all fill a grid the same way. A tree's leaves go in the
+    tree's order, each titled with its path in the tree ('CanESM5/historical'): so a tree of six models fills two rows
+    of three panels, or one row of six, whichever the axes are. A DataArray's panels go in the order of its rows' and
+    columns' values, untitled: label the rows and columns at the call site.
+
+    Args:
+        data (xr.DataTree | xr.Dataset | xr.DataArray): A DataTree, each leaf holding ``variable``; or a DataArray,
+            or a Dataset holding ``variable``, on (row_dim, col_dim, ...).
+        row_dim, col_dim (str | None): A DataArray's dims down the rows and across the columns; None for a single
+            row or column, and for a DataTree.
+        variable (str | None): The variable taken from each leaf of a DataTree, or from a Dataset.
+
+    Returns:
+        tuple: A list of (DataArray, title) for each panel, row by row (the title None for a DataArray's), and the
+        (n_rows, n_cols) of a figure that fits them: a tree's leaves in one row.
+
+    Example::
+
+        panels, shape = grid_panels(cycle_tree, variable='extent')
+        panels[0]    # (CanESM5's extent on (member, month), 'CanESM5/historical'); shape (1, 6)
+    """
+    if isinstance(data, xr.DataTree):
+        panels = [(node[variable], node.relative_to(data)) for node in data.leaves]
+        return panels, (1, len(panels))
+    da = data if variable is None else data[variable]
+    #(c): The values down the rows and across the columns ([None] for a single row or column)
+    row_values = [None] if row_dim is None else da[row_dim].values
+    col_values = [None] if col_dim is None else da[col_dim].values
+    panels = []
+    for row_value in row_values:
+        for col_value in col_values:
+            selection = {dim: value for dim, value in ((row_dim, row_value), (col_dim, col_value)) if dim is not None}
+            panels.append((da.sel(selection), None))
+    return panels, (len(row_values), len(col_values))
+
+
+def grid_axes(axes, shape, n_panels):
+    """The axes of a grid: those given, or a new figure's.
+
+    Args:
+        axes (np.ndarray | None): The panels, e.g. ``fig.add_gridspec(2, 3).subplots()``, or a slice of them
+            (``axes[2]`` for the third row); a new figure of ``shape`` if None.
+        shape (tuple): (n_rows, n_cols) of a new figure, as ``grid_panels`` gives it.
+        n_panels (int): How many panels will be drawn.
+
+    Returns:
+        np.ndarray: The axes, as given or made; ``np.ravel(axes)`` goes through them row by row.
+    """
+    if axes is None:
+        n_rows, n_cols = shape
+        fig = plt.figure(figsize=chart_figure_size(n_rows, n_cols, n_legends=0), layout='constrained')
+        axes = fig.add_gridspec(n_rows, n_cols).subplots(sharex=True, sharey=True, squeeze=False)
+    #(c): Too few axes would leave panels out without a word
+    if np.size(axes) < n_panels:
+        raise ValueError(f'{n_panels} panels to draw but only {np.size(axes)} axes')
+    return axes
+
+
+def plot_lines(da, x, ax=None, title=None, **style):
+    """``da`` against its dim ``x``: one line, or one line per value of its other dim (each member, say), on a panel
+    in the chart style (``style_chart_ax``).
 
     Args:
         da (xr.DataArray): On (x) or (x, one other dim), e.g. a member's extent on (month), or every member's on
             (member, month).
         x (str): The dim along the x axis, e.g. 'year' or 'month'.
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.
+        title (str | None): The panel's title, on its left; the title it has is kept if None.
         **style: How the lines are drawn, e.g. ``**MEMBER_LINE`` or ``color='C0', linewidth=1.4``.
 
     Returns:
@@ -376,29 +414,49 @@ def plot_lines(da, x, ax=None, **style):
 
     Example::
 
-        lines = plot_lines(cycle_tree['CanESM5/historical']['extent'], 'month', **MEMBER_LINE)
+        lines = plot_lines(cycle_tree['CanESM5/historical']['extent'], 'month', title='CanESM5', **MEMBER_LINE)
         plot_lines(era5_cycle_da, 'month', ax=lines[0].axes, **ERA5_LINE)
     """
     if ax is None:
-        fig = plt.figure(figsize=chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = one_panel()
+    style_chart_ax(ax)
     #(c): x first, so that each column of the values (each member) is one line
-    return ax.plot(da[x].values, da.transpose(x, ...).values, **style)
+    lines = ax.plot(da[x].values, da.transpose(x, ...).values, **style)
+    if title is not None:
+        ax.set_title(title, loc='left')
+    return lines
 
 
-def lines_grid(da, x, row_dim, col_dim, axes=None, **style):
-    """``plot_lines`` for every value of ``row_dim`` (down) and ``col_dim`` (across).
+def lines_grid(data, x, row_dim=None, col_dim=None, axes=None, variable=None, **style):
+    """``plot_lines`` on every panel of a grid: one panel per leaf of a DataTree, or per value of ``row_dim`` (down)
+    and ``col_dim`` (across) of a DataArray (``grid_panels``).
+
+    The style is the same on every panel; for another layer (the members' mean, ERA5), draw again on the same axes.
 
     Args:
-        da (xr.DataArray): On (row_dim, col_dim, x), and one more dim for several lines a panel; without row_dim or
-            col_dim for a single row or column.
-        x (str): The dim along the x axis.
-        row_dim (str | None): The dim down the rows, in the order of its values; None for a single row.
-        col_dim (str | None): The dim across the columns, in the order of its values; None for a single column.
-        axes (np.ndarray | None): The panels, rows × columns: ``chart_axes``', or a slice of them (``axes[2]`` for the
-            third row). A new figure if None.
-        **style: As ``plot_lines``', the same in every panel.
+        data (xr.DataTree | xr.Dataset | xr.DataArray): What to draw. A DataTree: each leaf's ``variable``, on (x) or
+            (x, one other dim), e.g. /<model>/historical with each model's members on (member, month). A DataArray,
+            or a Dataset's ``variable``: on (row_dim, col_dim, x), and one more dim for several lines a panel.
+        x (str): The dim along the x axis, e.g. 'month'.
+        row_dim, col_dim (str | None): A DataArray's dims down the rows and across the columns, in the order of their
+            values; None for a single row or column, and for a DataTree.
+        axes (np.ndarray | None): The panels, at least one per leaf or per row and column, e.g.
+            ``fig.add_gridspec(2, 3).subplots()``, or a slice of them (``axes[2]`` for the third row). A new figure
+            if None.
+        variable (str | None): The variable drawn from each leaf of a DataTree, or from a Dataset.
+        **style: As ``plot_lines``', the same on every panel, e.g. ``**MEMBER_LINE`` or ``color='C0'``.
+
+    Returns:
+        np.ndarray: The panels, as given or made.
+
+    Example, each model's members and their mean, two rows of three models, then ERA5 on every panel::
+
+        fig = plt.figure(figsize=chart_figure_size(n_rows=2, n_cols=3, n_legends=1), layout='constrained')
+        axes = fig.add_gridspec(2, 3).subplots(sharex=True, sharey=True)
+        lines_grid(cycle_tree, 'month', axes=axes, variable='extent', **MEMBER_LINE)
+        lines_grid(cycle_tree.mean('member'), 'month', axes=axes, variable='extent', **ENSEMBLE_MEAN_LINE)
+        for ax in axes.ravel():
+            plot_lines(era5_cycle_da, 'month', ax=ax, **ERA5_LINE)
 
     Example, each experiment's ensemble mean, seasons down and models across::
 
@@ -406,70 +464,73 @@ def lines_grid(da, x, row_dim, col_dim, axes=None, **style):
             lines_grid(mean_da.sel(experiment=experiment), 'year', 'season', 'model', axes=axes,
                        color=FORCING_COLORS[experiment])
     """
-    #(c): The values down the rows and across the columns ([None] for a single row or column)
-    row_values = [None] if row_dim is None else da[row_dim].values
-    col_values = [None] if col_dim is None else da[col_dim].values
-    if axes is None:
-        fig = plt.figure(figsize=chart_figure_size(len(row_values), len(col_values), n_legends=0))
-        axes, _ = chart_axes(fig, len(row_values), len(col_values), n_legends=0)
-    #(c): The axes as rows × columns: a slice of one row (axes[2]) or of one column (axes[:, 0]) comes 1-D
-    axes = np.reshape(axes, (len(row_values), len(col_values)))
-
-    for i, row_value in enumerate(row_values):
-        for j, col_value in enumerate(col_values):
-            #(c): This row's and column's lines
-            selection = {dim: value for dim, value in ((row_dim, row_value), (col_dim, col_value)) if dim is not None}
-            plot_lines(da.sel(selection), x, axes[i, j], **style)
+    panels, shape = grid_panels(data, row_dim, col_dim, variable)
+    axes = grid_axes(axes, shape, len(panels))
+    for ax, (panel_da, title) in zip(np.ravel(axes), panels):
+        plot_lines(panel_da, x, ax=ax, title=title, **style)
+    return axes
 
 
-def plot_band(low_da, high_da, x, ax=None, **style):
-    """The band between ``low_da`` and ``high_da`` along ``x``: e.g. the members' 5-95%.
+def plot_band(low_da, high_da, x, ax=None, title=None, **style):
+    """The band between ``low_da`` and ``high_da`` along ``x`` (e.g. the members' 5-95%), on a panel in the chart
+    style.
 
     Args:
         low_da, high_da (xr.DataArray): The band's edges, each on (x).
         x (str): The dim along the x axis.
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.
+        title (str | None): The panel's title, on its left; the title it has is kept if None.
         **style: How the band is drawn, e.g. ``color='C0', alpha=0.15``; it has no edge line unless given a
             ``linewidth``.
 
     Returns:
         matplotlib.collections.PolyCollection: The band (``band.axes`` is the axis).
+
+    Example, the members' 5-95% of one model's seasonal cycle::
+
+        members_da = cycle_tree['CanESM5/historical']['extent']
+        plot_band(members_da.quantile(0.05, 'member'), members_da.quantile(0.95, 'member'), 'month', alpha=0.3)
     """
     if ax is None:
-        fig = plt.figure(figsize=chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = one_panel()
+    style_chart_ax(ax)
     #(c): No edge line unless asked: with the band's own colour it would draw a darker outline
     style = {'linewidth': 0, **style}
-    return ax.fill_between(low_da[x].values, low_da.values, high_da.values, **style)
+    band = ax.fill_between(low_da[x].values, low_da.values, high_da.values, **style)
+    if title is not None:
+        ax.set_title(title, loc='left')
+    return band
 
 
-def bands_grid(low_da, high_da, x, row_dim, col_dim, axes=None, **style):
-    """``plot_band`` for every value of ``row_dim`` (down) and ``col_dim`` (across).
+def bands_grid(low_data, high_data, x, row_dim=None, col_dim=None, axes=None, variable=None, **style):
+    """``plot_band`` on every panel of a grid: one panel per leaf of a DataTree, or per value of ``row_dim`` (down)
+    and ``col_dim`` (across) of a DataArray (``grid_panels``).
 
     Args:
-        low_da, high_da (xr.DataArray): The bands' edges, each on (row_dim, col_dim, x); without row_dim or col_dim
-            for a single row or column.
-        x, row_dim, col_dim, axes: As ``lines_grid``'s.
-        **style: As ``plot_band``'s, the same in every panel.
+        low_data, high_data (xr.DataTree | xr.Dataset | xr.DataArray): The bands' edges, alike: two DataTrees with
+            ``variable`` on (x) in each leaf, or two DataArrays (or Datasets' ``variable``) on (row_dim, col_dim, x).
+        x, row_dim, col_dim, axes, variable: As ``lines_grid``'s.
+        **style: As ``plot_band``'s, the same on every panel.
+
+    Returns:
+        np.ndarray: The panels, as given or made.
+
+    Example, the range of each model's members, a panel per model::
+
+        bands_grid(cycle_tree.min('member'), cycle_tree.max('member'), 'month', axes=axes, variable='extent',
+                   color='C0', alpha=0.3)
     """
-    row_values = [None] if row_dim is None else low_da[row_dim].values
-    col_values = [None] if col_dim is None else low_da[col_dim].values
-    if axes is None:
-        fig = plt.figure(figsize=chart_figure_size(len(row_values), len(col_values), n_legends=0))
-        axes, _ = chart_axes(fig, len(row_values), len(col_values), n_legends=0)
-    #(c): The axes as rows × columns, as in lines_grid
-    axes = np.reshape(axes, (len(row_values), len(col_values)))
-
-    for i, row_value in enumerate(row_values):
-        for j, col_value in enumerate(col_values):
-            selection = {dim: value for dim, value in ((row_dim, row_value), (col_dim, col_value)) if dim is not None}
-            plot_band(low_da.sel(selection), high_da.sel(selection), x, axes[i, j], **style)
+    low_panels, shape = grid_panels(low_data, row_dim, col_dim, variable)
+    high_panels, _ = grid_panels(high_data, row_dim, col_dim, variable)
+    axes = grid_axes(axes, shape, len(low_panels))
+    for ax, (low_da, title), (high_da, _) in zip(np.ravel(axes), low_panels, high_panels):
+        plot_band(low_da, high_da, x, ax=ax, title=title, **style)
+    return axes
 
 
-def plot_quantile_bands(quantiles_da, pairs, x, ax=None, color='C0', alpha=0.35, edge_width=0):
-    """Nested bands between pairs of quantiles (a plume): each pair a band, the narrower ones over the wider, so the
-    middle is the darkest.
+def plot_quantile_bands(quantiles_da, pairs, x, ax=None, color='C0', alpha=0.35, edge_width=0, title=None):
+    """Nested bands between pairs of quantiles (a plume), on a panel in the chart style: each pair a band, the
+    narrower ones over the wider, so the middle is the darkest.
 
     Args:
         quantiles_da (xr.DataArray): On (quantile, x), e.g. the members' quantiles each year.
@@ -480,6 +541,7 @@ def plot_quantile_bands(quantiles_da, pairs, x, ax=None, color='C0', alpha=0.35,
         color: The bands' colour.
         alpha (float): Each band's opacity; where n bands overlap the colour is 1 - (1 - alpha)^n strong.
         edge_width (float): Width of a thin line along each band's edges; none if 0.
+        title (str | None): The panel's title, on its left; the title it has is kept if None.
 
     Returns:
         list: The bands, widest first (``bands[0].axes`` is the axis).
@@ -490,9 +552,8 @@ def plot_quantile_bands(quantiles_da, pairs, x, ax=None, color='C0', alpha=0.35,
         plot_lines(quantiles_da.sel(quantile=0.5), 'year', color='k')
     """
     if ax is None:
-        fig = plt.figure(figsize=chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = one_panel()
+    style_chart_ax(ax)
     bands = []
     for lower, upper in pairs:
         lower_da = quantiles_da.sel(quantile=lower, method='nearest')
@@ -501,35 +562,42 @@ def plot_quantile_bands(quantiles_da, pairs, x, ax=None, color='C0', alpha=0.35,
         if edge_width:
             for edge_da in (lower_da, upper_da):
                 plot_lines(edge_da, x, ax=ax, color=color, linewidth=edge_width, alpha=0.55, zorder=2)
+    if title is not None:
+        ax.set_title(title, loc='left')
     return bands
 
 
-def quantile_bands_grid(quantiles_da, pairs, x, row_dim, col_dim, axes=None, color='C0', alpha=0.35, edge_width=0):
-    """``plot_quantile_bands`` for every value of ``row_dim`` (down) and ``col_dim`` (across).
+def quantile_bands_grid(quantiles_data, pairs, x, row_dim=None, col_dim=None, axes=None, variable=None, color='C0',
+                        alpha=0.35, edge_width=0):
+    """``plot_quantile_bands`` on every panel of a grid: one panel per leaf of a DataTree, or per value of
+    ``row_dim`` (down) and ``col_dim`` (across) of a DataArray (``grid_panels``).
 
     Args:
-        quantiles_da (xr.DataArray): On (row_dim, col_dim, quantile, x); without row_dim or col_dim for a single row or
-            column.
-        pairs, x, color, alpha, edge_width: As ``plot_quantile_bands``', the same in every panel.
-        row_dim, col_dim, axes: As ``lines_grid``'s.
+        quantiles_data (xr.DataTree | xr.Dataset | xr.DataArray): A DataTree with ``variable`` on (quantile, x) in
+            each leaf, or a DataArray (or a Dataset's ``variable``) on (row_dim, col_dim, quantile, x).
+        pairs, x, color, alpha, edge_width: As ``plot_quantile_bands``', the same on every panel.
+        row_dim, col_dim, axes, variable: As ``lines_grid``'s.
+
+    Returns:
+        np.ndarray: The panels, as given or made.
+
+    Example, each model's members' 5-95% and 25-75%, a panel per model (a DataTree has no ``.quantile``, so it is
+    mapped over the nodes, skipping the empty ones)::
+
+        quantiles_tree = cycle_tree.map_over_datasets(
+            datatree.skip_empty(lambda ds: ds.quantile([0.05, 0.25, 0.75, 0.95], 'member')))
+        quantile_bands_grid(quantiles_tree, [(0.05, 0.95), (0.25, 0.75)], 'month', axes=axes, variable='extent')
     """
-    row_values = [None] if row_dim is None else quantiles_da[row_dim].values
-    col_values = [None] if col_dim is None else quantiles_da[col_dim].values
-    if axes is None:
-        fig = plt.figure(figsize=chart_figure_size(len(row_values), len(col_values), n_legends=0))
-        axes, _ = chart_axes(fig, len(row_values), len(col_values), n_legends=0)
-    #(c): The axes as rows × columns, as in lines_grid
-    axes = np.reshape(axes, (len(row_values), len(col_values)))
-
-    for i, row_value in enumerate(row_values):
-        for j, col_value in enumerate(col_values):
-            selection = {dim: value for dim, value in ((row_dim, row_value), (col_dim, col_value)) if dim is not None}
-            plot_quantile_bands(quantiles_da.sel(selection), pairs, x, axes[i, j], color=color, alpha=alpha,
-                                edge_width=edge_width)
+    panels, shape = grid_panels(quantiles_data, row_dim, col_dim, variable)
+    axes = grid_axes(axes, shape, len(panels))
+    for ax, (panel_da, title) in zip(np.ravel(axes), panels):
+        plot_quantile_bands(panel_da, pairs, x, ax=ax, color=color, alpha=alpha, edge_width=edge_width, title=title)
+    return axes
 
 
-def plot_significant_dots(da, significant_da, x, ax=None, color='k'):
-    """A dot on ``da``'s line wherever ``significant_da`` is True: e.g. where a zonal-mean change is significant.
+def plot_significant_dots(da, significant_da, x, ax=None, color='k', title=None):
+    """A dot on ``da``'s line wherever ``significant_da`` is True (e.g. where a zonal-mean change is significant), on
+    a panel in the chart style.
 
     Args:
         da (xr.DataArray): The line's values, on (x).
@@ -537,49 +605,57 @@ def plot_significant_dots(da, significant_da, x, ax=None, color='k'):
         x (str): The dim along the x axis.
         ax (matplotlib.axes.Axes | None): Where to draw, e.g. the panel the line is on; a new figure if None.
         color: The dots' colour, the line's.
+        title (str | None): The panel's title, on its left; the title it has is kept if None.
 
     Returns:
         list: The dots (``dots[0].axes`` is the axis).
+
+    Example::
+
+        plot_lines(zonal_ds['mean_change'], 'lat', ax=ax, color='C3')
+        plot_significant_dots(zonal_ds['mean_change'], zonal_ds['mean_pvalue'] < 0.05, 'lat', ax=ax, color='C3')
     """
     if ax is None:
-        fig = plt.figure(figsize=chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = one_panel()
+    style_chart_ax(ax)
     where_arr = significant_da.transpose(*da.dims).values.astype(bool)
-    return ax.plot(da[x].values[where_arr], da.values[where_arr], linestyle='none', marker='o', markersize=4,
+    dots = ax.plot(da[x].values[where_arr], da.values[where_arr], linestyle='none', marker='o', markersize=4,
                    color=color, markeredgecolor='white', markeredgewidth=0.6, zorder=4)
+    if title is not None:
+        ax.set_title(title, loc='left')
+    return dots
 
 
-def significant_dots_grid(da, significant_da, x, row_dim, col_dim, axes=None, color='k'):
-    """``plot_significant_dots`` for every value of ``row_dim`` (down) and ``col_dim`` (across).
+def significant_dots_grid(data, significant_data, x, row_dim=None, col_dim=None, axes=None, variable=None,
+                          color='k'):
+    """``plot_significant_dots`` on every panel of a grid: one panel per leaf of a DataTree, or per value of
+    ``row_dim`` (down) and ``col_dim`` (across) of a DataArray (``grid_panels``).
 
     Args:
-        da, significant_da (xr.DataArray): On (row_dim, col_dim, x); without row_dim or col_dim for a single row or
-            column.
-        x, row_dim, col_dim, axes: As ``lines_grid``'s.
-        color: As ``plot_significant_dots``', the same in every panel.
-    """
-    row_values = [None] if row_dim is None else da[row_dim].values
-    col_values = [None] if col_dim is None else da[col_dim].values
-    if axes is None:
-        fig = plt.figure(figsize=chart_figure_size(len(row_values), len(col_values), n_legends=0))
-        axes, _ = chart_axes(fig, len(row_values), len(col_values), n_legends=0)
-    #(c): The axes as rows × columns, as in lines_grid
-    axes = np.reshape(axes, (len(row_values), len(col_values)))
+        data, significant_data (xr.DataTree | xr.Dataset | xr.DataArray): The lines' values and where they are
+            significant, alike: two DataTrees with ``variable`` on (x) in each leaf (e.g. ``change_tree`` and
+            ``pvalue_tree < 0.05``), or two DataArrays (or Datasets' ``variable``) on (row_dim, col_dim, x).
+        x, row_dim, col_dim, axes, variable: As ``lines_grid``'s.
+        color: As ``plot_significant_dots``', the same on every panel.
 
-    for i, row_value in enumerate(row_values):
-        for j, col_value in enumerate(col_values):
-            selection = {dim: value for dim, value in ((row_dim, row_value), (col_dim, col_value)) if dim is not None}
-            plot_significant_dots(da.sel(selection), significant_da.sel(selection), x, axes[i, j], color=color)
+    Returns:
+        np.ndarray: The panels, as given or made.
+    """
+    panels, shape = grid_panels(data, row_dim, col_dim, variable)
+    significant_panels, _ = grid_panels(significant_data, row_dim, col_dim, variable)
+    axes = grid_axes(axes, shape, len(panels))
+    for ax, (panel_da, title), (significant_da, _) in zip(np.ravel(axes), panels, significant_panels):
+        plot_significant_dots(panel_da, significant_da, x, ax=ax, color=color, title=title)
+    return axes
 
 
 # ---------------------------------------------------------------------------
 # 4. Models and forcings
 # ---------------------------------------------------------------------------
 
-def plot_model_dots(da, x_dim, ax=None, color='0.35'):
+def plot_model_dots(da, x_dim, ax=None, color='0.35', title=None):
     """Each model's value at each value of ``x_dim``: a marker per model, spread a little sideways, and a bar for the
-    multi-model median.
+    multi-model median, on a panel in the chart style.
 
     The quickest view of how big a change is in each category (a forcing, a zone) and how far the models agree.
     Model k has marker ``MODEL_MARKERS[k]`` and the k-th shade of its category's colour (``model_shades``;
@@ -591,6 +667,7 @@ def plot_model_dots(da, x_dim, ax=None, color='0.35'):
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.
         color: The markers' and bars' colour: one for all, or a dict of one per category (e.g. ``FORCING_COLORS``
             when the categories are forcings; grey for a category it lacks).
+        title (str | None): The panel's title, on its left; the title it has is kept if None.
 
     Returns:
         matplotlib.axes.Axes: The axis.
@@ -600,9 +677,8 @@ def plot_model_dots(da, x_dim, ax=None, color='0.35'):
         plot_model_dots(change_da.sel(season='JJA'), 'experiment', color=FORCING_COLORS)
     """
     if ax is None:
-        fig = plt.figure(figsize=chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = one_panel()
+    style_chart_ax(ax)
     x_values = list(da[x_dim].values)
     models = list(da['model'].values)
     #(c): Each model's offset from the middle of its category
@@ -623,35 +699,41 @@ def plot_model_dots(da, x_dim, ax=None, color='0.35'):
     #(c): Each category's name on two lines, broken at its first space, so long names fit
     ax.set_xticks(range(len(x_values)), [str(value).replace(' ', '\n', 1) for value in x_values])
     ax.grid(axis='x', visible=False)
+    if title is not None:
+        ax.set_title(title, loc='left')
     return ax
 
 
-def model_dots_grid(da, x_dim, row_dim, col_dim, axes=None, color='0.35'):
-    """``plot_model_dots`` for every value of ``row_dim`` (down) and ``col_dim`` (across).
+def model_dots_grid(data, x_dim, row_dim=None, col_dim=None, axes=None, variable=None, color='0.35'):
+    """``plot_model_dots`` on every panel of a grid: one panel per leaf of a DataTree, or per value of ``row_dim``
+    (down) and ``col_dim`` (across) of a DataArray (``grid_panels``).
 
     Args:
-        da (xr.DataArray): On (row_dim, col_dim, model, x_dim); without row_dim or col_dim for a single row or column.
-        x_dim, color: As ``plot_model_dots``', the same in every panel: for a colour per row (each experiment's), one
+        data (xr.DataTree | xr.Dataset | xr.DataArray): A DataTree with ``variable`` on (model, x_dim) in each leaf,
+            or a DataArray (or a Dataset's ``variable``) on (row_dim, col_dim, model, x_dim).
+        x_dim, color: As ``plot_model_dots``', the same on every panel: for a colour per row (each experiment's), one
             call per row.
-        row_dim, col_dim, axes: As ``lines_grid``'s.
-    """
-    row_values = [None] if row_dim is None else da[row_dim].values
-    col_values = [None] if col_dim is None else da[col_dim].values
-    if axes is None:
-        fig = plt.figure(figsize=chart_figure_size(len(row_values), len(col_values), n_legends=0))
-        axes, _ = chart_axes(fig, len(row_values), len(col_values), n_legends=0)
-    #(c): The axes as rows × columns, as in lines_grid
-    axes = np.reshape(axes, (len(row_values), len(col_values)))
+        row_dim, col_dim, axes, variable: As ``lines_grid``'s.
 
-    for i, row_value in enumerate(row_values):
-        for j, col_value in enumerate(col_values):
-            selection = {dim: value for dim, value in ((row_dim, row_value), (col_dim, col_value)) if dim is not None}
-            plot_model_dots(da.sel(selection), x_dim, axes[i, j], color=color)
+    Returns:
+        np.ndarray: The panels, as given or made.
+
+    Example, experiments down and seasons across, each row in its experiment's colour::
+
+        for row_axes, experiment in zip(axes, EXPERIMENTS):
+            model_dots_grid(zone_means_da.sel(experiment=experiment), 'zone', None, 'season', axes=row_axes,
+                            color=FORCING_COLORS[experiment])
+    """
+    panels, shape = grid_panels(data, row_dim, col_dim, variable)
+    axes = grid_axes(axes, shape, len(panels))
+    for ax, (panel_da, title) in zip(np.ravel(axes), panels):
+        plot_model_dots(panel_da, x_dim, ax=ax, color=color, title=title)
+    return axes
 
 
 def plot_scatter_by_forcing(x_da, y_da, ax=None):
-    """One change against another, one point per model and forcing: the forcing its colour, the model its marker and
-    its shade of that colour (``model_shades``).
+    """One change against another, one point per model and forcing, on a panel in the chart style: the forcing its
+    colour, the model its marker and its shade of that colour (``model_shades``).
 
     The correlation over all the points is at the bottom of the panel, and the zero lines are grey.
     ``forcing_legend_handles`` and ``model_legend_handles`` give the legend.
@@ -670,9 +752,8 @@ def plot_scatter_by_forcing(x_da, y_da, ax=None):
             plot_scatter_by_forcing(extent_change_da.sel(season=season), mean_change_da.sel(season=season), ax=ax)
     """
     if ax is None:
-        fig = plt.figure(figsize=chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = one_panel()
+    style_chart_ax(ax)
     #(c): Only the models and forcings both have, in the same order
     x_da, y_da = xr.align(x_da, y_da, join='inner')
     y_da = y_da.transpose(*x_da.dims)

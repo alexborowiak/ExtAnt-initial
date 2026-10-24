@@ -31,11 +31,11 @@ def test_probability_ratios_in_a_layout():
     #(c): A ratio of 0 is drawn at the bottom edge, not lost
     ratios["pr"][0, 0, 0, 0] = 0.0
     with plt.rc_context(fr.PAPER.rc):
-        fig = plt.figure(figsize=(fr.PAGE_WIDTH, 8))
+        fig = plt.figure(figsize=(fr.PAGE_WIDTH, 8), layout="constrained")
         top_fig, bottom_fig = fig.subfigures(2, 1)
         next_tag = 0
         for part in (top_fig, bottom_fig):
-            axes, _ = charts.chart_axes(part, n_rows=2, n_cols=2, n_legends=1, sharex=True, sharey=True)
+            axes = part.add_gridspec(2, 2).subplots(sharex=True, sharey=True)
             pp.probability_ratios_grid(ratios, "tail", "season", axes=axes, shift_only=True)
             next_tag = charts.tag_panels(axes, start=next_tag)
     assert next_tag == 8
@@ -93,8 +93,8 @@ def test_ridgelines():
     densities = fast_kde_xr(values, x, dim=["model", "member"], bandwidth=0.3)
     means = values.mean(["model", "member"])
     lines = values.sel(experiment="hist-nat").quantile([0.05, 0.95], dim=["model", "member"])
-    fig = plt.figure(figsize=charts.chart_figure_size(1, 2, n_legends=0, n_colorbars=1))
-    axes, _ = charts.chart_axes(fig, 1, 2, n_legends=0, n_colorbars=1, sharex=True, sharey=True)
+    fig = plt.figure(figsize=charts.chart_figure_size(1, 2, n_legends=0, n_colorbars=1), layout="constrained")
+    axes = fig.add_gridspec(1, 2).subplots(sharex=True, sharey=True, squeeze=False)
     height_scale = 1.8 / float(densities.max())
     for ax, season in zip(axes[0], SEASONS):
         pp.plot_ridgelines(densities.sel(season=season), means.sel(season=season), "experiment", height_scale,

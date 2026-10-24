@@ -1,7 +1,8 @@
 """Panels for the ERA5 evaluation; the calculations live in era5_evaluation.
 
-Each ``plot_*(data, ax=None, ...)`` draws one panel, on an axis from ``charts.chart_axes`` (a new figure if ``ax`` is
-None); the notebook makes the figure and its axes, draws each panel, and labels them, as everywhere (``charts``).
+Each ``plot_*(data, ax=None, ...)`` styles one panel (``charts.style_chart_ax``) and draws on it (a new figure if
+``ax`` is None); the notebook makes the figure and its axes (a GridSpec), draws each panel, and labels them, as
+everywhere (``charts``).
 ``member_strips_grid`` draws the member strips of a grid of seasons and statistics; each ``..._legend_handles()``
 gives a panel's legend entries. Nothing here computes a test statistic. Every function draws the output of an
 era5_evaluation function, so the numbers on a figure are exactly the numbers the tests used.
@@ -91,6 +92,10 @@ EVAL_RC = {
     "savefig.dpi": 200,
     "savefig.bbox": "tight",
     "lines.solid_capstyle": "round",
+    #(c): The gaps between panels in a figure with layout='constrained', as a share of the figure, so panels whose tick
+    #(c): labels are hidden (shared axes) don't touch
+    "figure.constrained_layout.wspace": 0.06,
+    "figure.constrained_layout.hspace": 0.08,
 }
 
 
@@ -213,9 +218,8 @@ def plot_kde(summary, ax=None, members=True):
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     x = summary["x"].values
     member_kde = summary["member_kde"].transpose("member", "x").values
     if members:
@@ -251,9 +255,8 @@ def plot_qq(summary, ax=None):
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     obs_q = summary["obs_quantiles"].values
     member_q = summary["member_quantiles"].transpose("member", "quantile").values
     low, mid, high = np.nanquantile(member_q, [0.05, 0.5, 0.95], axis=0)
@@ -304,9 +307,8 @@ def plot_plume(plume, ax=None, context=None, x_dim="year", note=True):
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=4.3))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=4.3)
+    charts.style_chart_ax(ax)
     x = plume[x_dim].values
     quantiles = plume["quantiles"]
     ax.fill_between(x, plume["minimum"], plume["maximum"], color=ENSEMBLE["range"], lw=0, zorder=1)
@@ -374,9 +376,8 @@ def plot_member_strip(result, ax=None):
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_height=1.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_height=1.0)
+    charts.style_chart_ax(ax)
     members = result["members"].values
     members = np.sort(members[np.isfinite(members)])
     era5 = float(result["era5"])
@@ -410,15 +411,16 @@ def member_strips_grid(result, row_dim, axes=None, statistics=None):
         result (xr.Dataset): ``ev.locate`` results along a ``statistic`` dim (e.g. notebook 02's moment test) at one
             point, with ``row_dim`` (e.g. 'season').
         row_dim (str): The dim down the rows, in the order of its values.
-        axes (np.ndarray | None): The panels, rows × columns: ``charts.chart_axes``'. A new figure if None.
+        axes (np.ndarray | None): The panels, rows × columns, e.g. ``fig.add_gridspec(4, 3).subplots()``. A new
+            figure if None.
         statistics (Sequence[str] | None): The statistics across, in order; all of ``result``'s by default.
     """
     statistics = list(statistics if statistics is not None else result["statistic"].values)
     row_values = result[row_dim].values
     if axes is None:
         fig = plt.figure(figsize=charts.chart_figure_size(len(row_values), len(statistics), n_legends=0,
-                                                          panel_width=2.0, panel_height=0.9))
-        axes, _ = charts.chart_axes(fig, len(row_values), len(statistics), n_legends=0)
+                                                          panel_width=2.0, panel_height=0.9), layout='constrained')
+        axes = fig.add_gridspec(len(row_values), len(statistics)).subplots(squeeze=False)
     axes = np.reshape(axes, (len(row_values), len(statistics)))
 
     for i, row_value in enumerate(row_values):
@@ -485,10 +487,8 @@ def plot_rank_histogram(result, ax=None, smooth=5, statistics=None):
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=4.0,
-                                                          panel_height=3.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=4.0, panel_height=3.0)
+    charts.style_chart_ax(ax)
     statistics = _rank_verdicts(result, statistics)
     alpha = result.attrs["alpha"]
     frequency = result["obs_frequency"]
@@ -554,9 +554,8 @@ def plot_grouped_rank_histogram(result, ax=None, n_bins=10, statistics=None):
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     if statistics is None:
         statistics = [s for s in _rank_verdicts(result) if s != "rank_trend"]
     alpha = result.attrs["alpha"]
@@ -618,9 +617,8 @@ def plot_rank_counting(ensemble, obs, years, ax=None):
         matplotlib.axes.Axes: The axis, with a legend of the dots.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     n_members = ensemble.sizes["member"]
     for k, year in enumerate(years):
         values = np.sort(ensemble.sel(year=year).values)
@@ -658,9 +656,8 @@ def plot_rank_through_time(result, years=(), ax=None):
         matplotlib.axes.Axes: The axis, with the rank trend's verdict.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=5.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=5.0)
+    charts.style_chart_ax(ax)
     rank = result["obs_rank"]
     n_members = result.attrs["n_members"]
     _, fitted = ev.linear_fit(rank, "year")
@@ -735,11 +732,8 @@ def plot_scorecard(table, statistics=None, ax=None):
     models, seasons = list(table["model"].values), list(table["season"].values)
     n_groups, n_seasons = len(statistics), len(seasons)
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0,
-                                                          panel_width=0.44 * n_groups * n_seasons,
-                                                          panel_height=0.46 * len(models)))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=0.44 * n_groups * n_seasons, panel_height=0.46 * len(models))
+    charts.style_chart_ax(ax)
 
     #(c): One row per model, one column per statistic and season
     percentile = table["percentile"].transpose("model", "statistic", "season").values.reshape(len(models), -1)
@@ -806,9 +800,8 @@ def plot_signal_noise(table, season, x="trend", y="std", ax=None):
         and ``MODEL_MARKERS[k]`` (``charts.model_legend_handles(models, experiment='historical')``).
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     alpha = table.attrs.get("alpha", ev.ALPHA)
     low, high = 100 * alpha / 2, 100 - 100 * alpha / 2
     ax.add_patch(Rectangle((low, low), high - low, high - low, color="#f0efec", lw=0, zorder=0))
@@ -864,9 +857,8 @@ def plot_percentile_ladder(tests, anomaly_ranks, detrended_ranks, alpha=ev.ALPHA
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, left_margin=1.8))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0, left_margin=1.8)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     #(c): The ladder: (label, its result, statistic), top to bottom
     ladder = [(ev.DIAGNOSTICS[s].label, tests, s) for s in tests["statistic"].values] + [
         ("Rank dispersion (anomalies)", anomaly_ranks, "dispersion"),

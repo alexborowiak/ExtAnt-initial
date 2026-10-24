@@ -12,7 +12,8 @@ them, as everywhere (``charts``). Two kinds:
   the members in two, so each of its panels shows both groups;
 - quick looks that follow the data through the notebooks: monthly to seasonal means, the year x season split, a
   rolling quantile, the smoothing, the change against hist-nat, the forced response, the two samples of a test, the
-  members per model and experiment, and the SAM phases. Their axes come from ``charts.chart_axes``.
+  members per model and experiment, and the SAM phases. Their axes come from a GridSpec, each styled by
+  the function that draws on it (``charts.style_chart_ax``).
 
 Sections
 --------
@@ -155,9 +156,8 @@ def plot_centred_ensembles(hist_nat, final, experiment, observed, quantiles=(0.0
         matplotlib.axes.Axes: The axis, with a legend of the two ensembles.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=8.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=8.0)
+    charts.style_chart_ax(ax)
     exp_color, nat_color = _color(experiment), _color("hist-nat")
     nat_values, exp_values = _clean(hist_nat), _clean(final)
     nat_width = _qrange(nat_values, quantiles)[0]
@@ -191,9 +191,8 @@ def plot_two_ensembles(hist_nat, final, experiment, units="°C", ax=None):
         matplotlib.axes.Axes: The axis, with a legend of the two ensembles.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=8.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=8.0)
+    charts.style_chart_ax(ax)
     exp_color, nat_color = _color(experiment), _color("hist-nat")
     nat_values, exp_values = _clean(hist_nat), _clean(final)
     edges = np.histogram_bin_edges(np.concatenate([nat_values, exp_values]), bins=30)
@@ -284,9 +283,8 @@ def plot_trial_distribution(trials, observed, hist_nat_value, experiment, n_memb
         matplotlib.axes.Axes: The axis, with a legend.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=8.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=8.0)
+    charts.style_chart_ax(ax)
     exp_color, nat_color = _color(experiment), _color("hist-nat")
     trials = _clean(trials)
     low, high = np.quantile(trials, [0.025, 0.975])
@@ -354,9 +352,8 @@ def plot_permutation_distribution(permutations, mean_change, experiment, bins=40
         matplotlib.axes.Axes: The axis, with a legend.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=8.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=8.0)
+    charts.style_chart_ax(ax)
     exp_color, nat_color = _color(experiment), _color("hist-nat")
     ax.hist(_clean(permutations), bins=bins, density=True, color=nat_color, edgecolor=nat_color, alpha=0.65, lw=0.8,
             label="Relabellings")
@@ -399,9 +396,8 @@ def plot_thresholds(experiment_final, hist_nat_final, thresholds, experiment, bi
         matplotlib.axes.Axes: The axis, with a legend.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=8.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=8.0)
+    charts.style_chart_ax(ax)
     exp_values, nat_values = _clean(experiment_final), _clean(hist_nat_final)
     edges = np.histogram_bin_edges(np.concatenate([exp_values, nat_values]), bins=bins)
     for values, name in ((nat_values, "hist-nat"), (exp_values, experiment)):
@@ -436,9 +432,8 @@ def plot_shift_only(experiment_final, hist_nat_final, thresholds, shift, experim
         matplotlib.axes.Axes: The axis, with a legend.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=8.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=8.0)
+    charts.style_chart_ax(ax)
     exp_color, nat_color = _color(experiment), _color("hist-nat")
     exp_values, nat_values = _clean(experiment_final), _clean(hist_nat_final)
     shift = float(shift)
@@ -474,9 +469,8 @@ def plot_ratio_trials(trials, label, ax=None, **style):
         matplotlib.axes.Axes: The axis, with a legend.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=8.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=8.0)
+    charts.style_chart_ax(ax)
     log_edges = np.linspace(-6, 6, 97)
     for tail in ("warm", "cold"):
         ratios = np.clip(np.asarray(trials.sel(tail=tail), dtype=float), 2.0 ** -6, 2.0 ** 6)
@@ -516,10 +510,8 @@ def plot_seasonal_means(monthly, seasonal, years, ax=None):
         matplotlib.axes.Axes: The axis, with a legend above it.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=8.8,
-                                                          panel_height=2.6))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=8.8, panel_height=2.6)
+    charts.style_chart_ax(ax)
     months = monthly.sel(time=slice(str(years.start), str(years.stop)))
     ax.plot(_decimal_year(months.time), months.values, color="0.6", lw=0.8, marker="o", ms=3, zorder=2)
     for year in range(years.start, years.stop):
@@ -545,9 +537,8 @@ def plot_seasons_in_time(seasonal, ax=None):
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     for season in SEASONS:
         first, last = _SEASON_SPAN[season]
         ax.scatter(seasonal["year"].values + (first + last) / 24, seasonal.sel(season=season).values, s=5,
@@ -566,9 +557,8 @@ def plot_seasons_split(seasonal, ax=None):
         matplotlib.axes.Axes: The axis, with a legend of the seasons.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     for season in SEASONS:
         ax.plot(seasonal["year"].values, seasonal.sel(season=season).values, color=SEASON_COLORS[season], lw=1,
                 label=season)
@@ -595,9 +585,8 @@ def plot_window(members, year, window, color="C0", ax=None):
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     half = window // 2
     charts.plot_lines(members, "year", ax=ax, color=color, linewidth=0.4, alpha=0.4)
     ax.axvspan(year - half - 0.5, year + half + 0.5, color="0.85", zorder=0)
@@ -619,9 +608,8 @@ def plot_window_values(members, year, window, quantiles=(0.05, 0.5, 0.95), color
         matplotlib.axes.Axes: The axis; its title can say how many values (``ax.patches`` are the bars).
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=1.5))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=1.5)
+    charts.style_chart_ax(ax)
     half = window // 2
     pooled = _clean(members.sel(year=slice(year - half, year + half)))
     ax.hist(pooled, bins=20, orientation="horizontal", color=color, alpha=0.5)
@@ -643,9 +631,8 @@ def plot_rolling_quantiles(rolling, year=None, quantiles=(0.05, 0.5, 0.95), ax=N
         matplotlib.axes.Axes: The axis, with a legend of the quantiles.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     for q, shade in zip(quantiles, quantile_shades(len(quantiles))):
         series = rolling.sel(quantile=q, method="nearest")
         ax.plot(series["year"], series, color=shade, lw=1.5, label=f"Q{q * 100:02.0f}")
@@ -668,9 +655,8 @@ def plot_smoothing(rolling, smooth, ax=None):
         matplotlib.axes.Axes: The axis, with a legend of the quantiles.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=8.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=8.0)
+    charts.style_chart_ax(ax)
     shades = plt.get_cmap("viridis")(np.linspace(0.1, 0.9, rolling.sizes["quantile"]))
     for q, shade in zip(rolling["quantile"].values, shades):
         ax.plot(rolling["year"], rolling.sel(quantile=q), color=shade, lw=0.8, alpha=0.5)
@@ -695,9 +681,8 @@ def plot_smoothed_quantiles(smooth, base, experiment, quantiles=(0.05, 0.95), ax
         matplotlib.axes.Axes: The axis, with a legend.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     exp_color, ref_color = _color(experiment), _color("hist-nat")
     styles = dict(zip(quantiles, ("-", "--")))
     for q in quantiles:
@@ -725,9 +710,8 @@ def plot_quantile_changes(smooth, base, experiment, quantiles=(0.05, 0.95), ax=N
         matplotlib.axes.Axes: The axis, with a legend.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     exp_color = _color(experiment)
     styles = dict(zip(quantiles, ("-", "--")))
     change = smooth.sel(experiment=experiment) - base
@@ -754,9 +738,8 @@ def plot_two_samples(experiment_values, hist_nat_values, experiment, t=None, p=N
         matplotlib.axes.Axes: The axis, with a legend.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=6.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=6.0)
+    charts.style_chart_ax(ax)
     exp, ref = _clean(experiment_values), _clean(hist_nat_values)
     edges = np.histogram_bin_edges(np.concatenate([exp, ref]), bins=30)
     for values, name in ((ref, "hist-nat"), (exp, experiment)):
@@ -779,11 +762,8 @@ def plot_member_counts(counts, ax=None):
         matplotlib.image.AxesImage: The cells, for a colour bar (``image.axes`` is the axis).
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, n_colorbars=1,
-                                                          panel_width=0.9 * counts.shape[1] + 0.5,
-                                                          panel_height=0.4 * counts.shape[0] + 0.3, left_margin=1.8))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0, n_colorbars=1, left_margin=1.8)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=0.9 * counts.shape[1] + 0.5, panel_height=0.4 * counts.shape[0] + 0.3)
+    charts.style_chart_ax(ax)
     cmap = plt.get_cmap("Blues").with_extremes(bad="0.9")
     values = counts.values.astype(float)
     image = ax.imshow(np.ma.masked_invalid(values), cmap=cmap, aspect="auto")
@@ -815,9 +795,8 @@ def plot_sam_index(hist_nat_index, experiment_index, thresholds, experiment, ax=
         matplotlib.axes.Axes: The axis, with a legend.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0, panel_width=10.0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel(panel_width=10.0)
+    charts.style_chart_ax(ax)
     lower, upper = (float(value) for value in thresholds.values)
     nat_index, exp_index = _clean(hist_nat_index), _clean(experiment_index)
     edges = np.histogram_bin_edges(np.concatenate([nat_index, exp_index]), bins=30)
@@ -852,9 +831,8 @@ def plot_phase_temperatures(hist_nat_values, experiment_values, experiment, unit
         matplotlib.axes.Axes: The axis.
     """
     if ax is None:
-        fig = plt.figure(figsize=charts.chart_figure_size(n_rows=1, n_cols=1, n_legends=0))
-        axes, _ = charts.chart_axes(fig, n_rows=1, n_cols=1, n_legends=0)
-        ax = axes[0, 0]
+        ax = charts.one_panel()
+    charts.style_chart_ax(ax)
     nat, exp = _clean(hist_nat_values), _clean(experiment_values)
     if edges is None:
         edges = np.histogram_bin_edges(np.concatenate([nat, exp]), bins=20)
