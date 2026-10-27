@@ -39,7 +39,7 @@ seasons at once, or a whole map. ``obs`` is ERA5 in practice, but nothing here
 is ERA5-specific. Works on numpy- or dask-backed data; at a single point the
 data are tiny, so ``.load()`` them first.
 
-Each test is run in notebook calc_03a, one statistic at a time: treat ERA5 and the
+Each test is run in notebook 02, one statistic at a time: treat ERA5 and the
 members alike, compute the statistic for each, then ``locate`` ERA5 among the
 members. Every result has the layout ``locate`` gives it, so the notebook can
 put several along a ``statistic`` dim and ``plots.era5_evaluation`` can draw them.
@@ -323,7 +323,7 @@ class Diagnostic:
 
     ``low`` and ``high`` say what it means for the *model* when ERA5 falls
     significantly below or above the members; the plots print them as the
-    verdict. ``treatment`` is the values notebook calc_03a computes it on, printed
+    verdict. ``treatment`` is the values notebook 02 computes it on, printed
     when a result does not carry its own ``treatment`` coordinate.
     """
 
@@ -559,12 +559,41 @@ def ensemble_rank(ensemble, obs, member_dim=MEMBER_DIM):
     return (ensemble < obs).sum(member_dim).where(obs.notnull())
 
 
+# Simpler but slower
+# def _rank_among_others(values):
+#     """For each value along the last axis, how many of the others lie below it."""
+#     ranks = np.argsort(np.argsort(values, axis=-1, kind="stable"), axis=-1).astype(float)
+#     return np.where(np.isnan(values), np.nan, ranks)
+    
 def _rank_among_others(values):
-    """For each value along the last axis, how many of the others lie below it."""
+    """For each value along the last axis, how many of the others lie below it.
+
+    ``argsort`` gives the finishing order of a race: which member came 1st,
+    2nd, 3rd. The rank is the other way round: which place each member came.
+    ``put_along_axis`` swaps one for the other, writing each place onto the
+    member in that place. It is this loop, done for every year at once::
+
+        for year in range(n_years):
+            for place in range(n_members):
+                ranks[year, order[year, place]] = place
+
+    Example::
+
+        values                   [3.0, 1.0, 4.0, 2.0]
+        np.argsort(values)       [1, 3, 0, 2]   member 1 is the smallest, then 3, then 0, then 2
+        _rank_among_others(...)  [2, 0, 3, 1]   member 0 has 2 below it, member 1 none, ...
+
+    The same as ``np.argsort(np.argsort(values))``, with one sort instead of two.
+    """
+    #(t): The finishing order: order[..., k] is the member in place k, place 0 the smallest
     order = np.argsort(values, axis=-1, kind="stable")
     ranks = np.empty(values.shape, dtype=float)
-    positions = np.broadcast_to(np.arange(values.shape[-1], dtype=float), values.shape)
+    #(t): The places 0, 1, ..., N - 1, the same for every year
+    # positions = np.broadcast_to(np.arange(values.shape[-1], dtype=float), values.shape)
+    positions = np.arange(values.shape[-1], dtype=float)
+    #(t): Each place written onto the member in it: put_along_axis(where to write, at which index, what)
     np.put_along_axis(ranks, order, positions, axis=-1)
+    #(c): argsort sorts NaN last, so the other members' ranks are unaffected; a missing member stays missing
     return np.where(np.isnan(values), np.nan, ranks)
 
 
@@ -574,14 +603,18 @@ def pseudo_observation_ranks(ensemble, member_dim=MEMBER_DIM):
     Treating each member in turn as if it were the observations ("model as
     truth") shows what the rank histogram of a *perfect* model looks like,
     for this ensemble size and this record length.
+
+    A member's rank among the others is just its rank in the whole ensemble
+    (it is never below itself), so one sort per sample ranks every member at once.
     """
+    #(c): apply_ufunc hands _rank_among_others numpy arrays with member_dim moved last, and leaves it last
+    #(c): in the output; the transpose puts the dims back in the ensemble's order
     ranks = xr.apply_ufunc(
         _rank_among_others, ensemble,
         input_core_dims=[[member_dim]], output_core_dims=[[member_dim]],
         dask="parallelized", output_dtypes=[float],
     )
     return ranks.transpose(*ensemble.dims)
-
 
 def _rank_bins(n_ranks, rank_dim):
     return xr.DataArray(np.arange(n_ranks), dims=rank_dim, coords={rank_dim: np.arange(n_ranks)})
