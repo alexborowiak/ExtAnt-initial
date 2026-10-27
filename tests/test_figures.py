@@ -464,9 +464,11 @@ def test_paper_figures_fit_the_page_and_ranges_are_checked(tmp_path):
     #(c): white space as when saved, no wider than the page
     panel_size = antarctica.panel_size_to_fit(4, 6, 1, width=fr.PAGE_WIDTH, height=fr.PAGE_HEIGHT, title_height=0.35)
     with plt.rc_context(fr.PAPER.rc):
-        fig = plt.figure(figsize=antarctica.map_figure_size(4, 6, 1, panel_size=panel_size, title_height=0.35))
-        axes, cbar_axes = antarctica.map_axes(fig, 4, 6, 1, title_height=0.35)
-        antarctica.heatmaps_of_antarctica(field, "experiment", "model", axes=axes, cax=cbar_axes[0],
+        fig = plt.figure(figsize=antarctica.map_figure_size(4, 6, 1, panel_size=panel_size, title_height=0.35),
+                         layout="constrained")
+        axes = antarctica.map_axes(fig, 4, 6)
+        antarctica.heatmaps_of_antarctica(field, "experiment", "model", axes=axes,
+                                          cax=antarctica.colorbar_axis_below(axes),
                                           **scales.change.colours())
         antarctica.label_columns(axes, models, fontsize=fr.PAPER.label_size)
         antarctica.label_rows(axes, experiments, fontsize=fr.PAPER.label_size)

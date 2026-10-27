@@ -6,10 +6,11 @@ the axes, then draws each layer on them. Rows of different kinds (the zones, the
 axes, each drawn by its own call. For example, one model's change in sea ice in every experiment and season, with
 each experiment's ice edge::
 
-    figsize = antarctica.map_figure_size(n_rows=4, n_cols=4, n_colorbars=1)
-    fig = plt.figure(figsize=figsize)
-    axes, cbar_axes = antarctica.map_axes(fig, n_rows=4, n_cols=4, n_colorbars=1)
-    antarctica.heatmaps_of_antarctica(change_da, 'experiment', 'season', axes=axes, cax=cbar_axes[0],
+    figsize = antarctica.map_figure_size(n_rows=4, n_cols=4, n_colorbar_rows=1)
+    fig = plt.figure(figsize=figsize, layout='constrained')
+    axes = antarctica.map_axes(fig, n_rows=4, n_cols=4)
+    cax = antarctica.colorbar_axis_below(axes)
+    antarctica.heatmaps_of_antarctica(change_da, 'experiment', 'season', axes=axes, cax=cax,
                                       levels=np.arange(-55, 56, 10), cmap='RdBu', label='Change (%)')
     antarctica.ice_edges(ice_da, 'experiment', 'season', axes=axes)
     antarctica.label_columns(axes, ['DJF', 'MAM', 'JJA', 'SON'])
@@ -18,8 +19,9 @@ each experiment's ice edge::
 
 Sections
 --------
-1. Layout: the figure's size (``map_figure_size``, or ``panel_size_to_fit`` for a printed page), then its map axes
-   and colour-bar axes (``map_axes``)
+1. Layout: the figure's size (``map_figure_size``, or ``panel_size_to_fit`` for a printed page), its map axes
+   (``map_axes``), then an axis for each colour bar or key, under the maps it is for (``colorbar_axis_below``,
+   ``key_axis_below``)
 2. One map's style: the round edge, coastlines and gridlines
 3. Fields: ``plot_heatmap_of_antarctica`` (one map), ``heatmaps_of_antarctica`` (a grid, and its colour bar),
    ``bivariate_key`` (a grid of classes instead of a colour bar)
@@ -31,6 +33,7 @@ Sections
 import warnings
 
 import cartopy.crs as ccrs
+import matplotlib.colorbar
 import matplotlib.path as mpath
 import matplotlib.pyplot as plt
 import numpy as np
@@ -42,124 +45,155 @@ from matplotlib.colors import BoundaryNorm
 # 1. Layout
 # ---------------------------------------------------------------------------
 
-#(t): Sizes in inches: each map's width and height, each colour bar's row (its label included), each key's row (a
-#(t): grid of classes, ``bivariate_key``), and the space above the maps for the title and the column labels, and left
-#(t): of them for the row labels
+#(t): Sizes in inches: each map's width and height, the room each row of colour bars takes (its ticks and label
+#(t): included), each row with a key (a grid of classes, ``bivariate_key``), a legend's row under the maps, and the
+#(t): space above the maps for the title and the column labels, and left of them for the row labels
 PANEL_SIZE = 2.3
 COLORBAR_HEIGHT = 0.7
 KEY_HEIGHT = 1.2
+LEGEND_HEIGHT = 0.4
 TITLE_HEIGHT = 0.9
 ROW_LABEL_WIDTH = 0.5
 
 
-def map_figure_size(n_rows, n_cols, n_colorbars, n_keys=0, panel_size=PANEL_SIZE, title_height=TITLE_HEIGHT,
-                    colorbar_height=COLORBAR_HEIGHT):
-    """The size of a figure of maps with colour bars (and keys) under them.
+def map_figure_size(n_rows, n_cols, n_colorbar_rows, n_keys=0, n_legends=0, panel_size=PANEL_SIZE,
+                    title_height=TITLE_HEIGHT, colorbar_height=COLORBAR_HEIGHT):
+    """The size of a figure of maps with their colour bars (and keys and a legend).
 
     Only the size, so the figure can be made bigger for something else (a time series under the maps, say) before
-    ``map_axes`` fills its part of it.
+    ``map_axes`` fills its part of it. Make the figure with ``layout='constrained'``: matplotlib then fits the maps,
+    labels and colour bars into it.
 
     Args:
         n_rows, n_cols (int): Rows and columns of maps.
-        n_colorbars (int): Colour bars under the maps, one below another.
-        n_keys (int): Keys under the colour bars (``bivariate_key``), which need more height than a bar.
+        n_colorbar_rows (int): The rows of maps with colour bars under them (``colorbar_axis_below``). Bars side by
+            side, under different columns of the same row, count once: 2 for a figure whose top two rows share one
+            bar and whose third row has its own.
+        n_keys (int): The rows of maps with a key under them (``key_axis_below``), which needs more height than a
+            bar; a bar beside a key in the same row is counted with the key, not in ``n_colorbar_rows``.
+        n_legends (int): Legends under the maps (``fig.legend(..., loc='outside lower center')``), one row each.
         panel_size (float): Each map's width and height (inches); ``panel_size_to_fit`` for a printed page.
         title_height (float): The room above the maps (inches), for the title and the column labels; less for a
-            paper figure, which has no title (give ``map_axes`` the same).
-        colorbar_height (float): Each colour bar's row (inches), its ticks and label included; more for long class
-            names on several lines (give ``map_axes`` the same).
+            paper figure, which has no title.
+        colorbar_height (float): The room for each row of colour bars (inches), their ticks and labels included;
+            more for long class names on several lines.
 
     Returns:
-        tuple: (width, height) in inches. E.g. 3 rows, 4 columns and 2 colour bars: (9.7, 9.2).
+        tuple: (width, height) in inches. E.g. 3 rows, 4 columns and 2 rows of colour bars: (9.7, 9.2).
     """
     width = ROW_LABEL_WIDTH + n_cols * panel_size
-    height = title_height + n_rows * panel_size + n_colorbars * colorbar_height + n_keys * KEY_HEIGHT
+    height = (title_height + n_rows * panel_size + n_colorbar_rows * colorbar_height + n_keys * KEY_HEIGHT
+              + n_legends * LEGEND_HEIGHT)
     return width, height
 
 
-def panel_size_to_fit(n_rows, n_cols, n_colorbars, width, height, n_keys=0, title_height=TITLE_HEIGHT,
+def panel_size_to_fit(n_rows, n_cols, n_colorbar_rows, width, height, n_keys=0, n_legends=0, title_height=TITLE_HEIGHT,
                       colorbar_height=COLORBAR_HEIGHT):
     """The largest map size (inches) at which a figure of maps is no wider than ``width`` and no taller than ``height``.
 
     For a printed page: the maps fill the page's width, or are made smaller if that would make the figure too tall.
 
     Args:
-        n_rows, n_cols, n_colorbars, n_keys, title_height, colorbar_height: As ``map_figure_size``'s.
+        n_rows, n_cols, n_colorbar_rows, n_keys, n_legends, title_height, colorbar_height: As ``map_figure_size``'s.
         width, height (float): The most the figure can be wide and tall (inches), e.g. 7.2 and 9.0 for a two-column
             page (``forced_response.PAGE_WIDTH``, ``PAGE_HEIGHT``).
 
     Returns:
-        float: The maps' width and height. E.g. 3 rows, 4 columns and 4 colour bars on a 7.2 × 9 in page: 1.675.
+        float: The maps' width and height. E.g. 3 rows, 4 columns and 2 rows of colour bars on a 7.2 × 9 in page:
+        1.675.
     """
-    #(c): As wide as the page allows, and as tall as what is left of its height once the bars and keys are in
+    #(c): As wide as the page allows, and as tall as what is left of its height once the bars, keys and legends are in
     across = (width - ROW_LABEL_WIDTH) / n_cols
-    down = (height - title_height - n_colorbars * colorbar_height - n_keys * KEY_HEIGHT) / n_rows
+    down = (height - title_height - n_colorbar_rows * colorbar_height - n_keys * KEY_HEIGHT
+            - n_legends * LEGEND_HEIGHT) / n_rows
     return min(across, down)
 
 
-def map_axes(fig, n_rows, n_cols, n_colorbars, n_keys=0, subplot_spec=None, title_height=TITLE_HEIGHT,
-             colorbar_height=COLORBAR_HEIGHT):
-    """``n_rows`` × ``n_cols`` map axes (South Polar Stereographic), and ``n_colorbars`` colour-bar axes under them.
+def map_axes(fig, n_rows, n_cols, subplot_spec=None):
+    """``n_rows`` × ``n_cols`` map axes (South Polar Stereographic), filling the figure or part of it.
 
-    The maps fill the figure, or one cell of a larger GridSpec (``subplot_spec``), leaving the rest of the figure
-    for other axes. A colour bar's row is ``colorbar_height`` tall and a key's ``KEY_HEIGHT``; the rows of maps share
-    what is left of the figure once the title, bars and keys are in, so in a figure from ``map_figure_size`` they
-    come out at its ``panel_size``. Each colour bar takes the middle 60% of its row's width and is 0.23 in thick, at
-    the top of its row; its ticks and label go in the space below. A key's axis is in the middle fifth of its row's
-    width and its top three quarters.
+    Colour bars are added afterwards, each under the maps it is for (``colorbar_axis_below``). Make the figure with
+    ``layout='constrained'``, so matplotlib fits the maps, their labels and the colour bars into it.
 
     Args:
         fig (matplotlib.figure.Figure | matplotlib.figure.SubFigure): The figure, e.g.
-            ``plt.figure(figsize=map_figure_size(...))``, or one part of a layout (``fig.subfigures(2, 1)[0]``).
-        n_rows, n_cols, n_colorbars, n_keys (int): As ``map_figure_size``'s.
+            ``plt.figure(figsize=map_figure_size(...), layout='constrained')``, or one part of a layout
+            (``fig.subfigures(2, 1)[0]``).
+        n_rows, n_cols (int): As ``map_figure_size``'s.
         subplot_spec (matplotlib.gridspec.SubplotSpec | None): The part of the figure to fill, e.g. ``grid[0]`` of
             ``fig.add_gridspec(2, 1)``; the whole figure if None.
-        title_height, colorbar_height (float): As given to ``map_figure_size`` (inches).
 
     Returns:
-        tuple: The map axes, an array of ``n_rows`` × ``n_cols``, and a list of the colour-bar axes, top first, then
-        the keys' axes.
+        np.ndarray: The map axes, ``n_rows`` × ``n_cols``.
 
     Example, maps above a time series::
 
-        map_width, map_height = map_figure_size(n_rows=1, n_cols=4, n_colorbars=1)
-        fig = plt.figure(figsize=(map_width, map_height + 3))
+        map_width, map_height = map_figure_size(n_rows=1, n_cols=4, n_colorbar_rows=1)
+        fig = plt.figure(figsize=(map_width, map_height + 3), layout='constrained')
         grid = fig.add_gridspec(2, 1, height_ratios=[map_height, 3])
-        axes, cbar_axes = map_axes(fig, n_rows=1, n_cols=4, n_colorbars=1, subplot_spec=grid[0])
+        axes = map_axes(fig, n_rows=1, n_cols=4, subplot_spec=grid[0])
+        cax = colorbar_axis_below(axes)
         series_ax = fig.add_subplot(grid[1])
     """
-    n_grid_rows = n_rows + n_colorbars + n_keys
-    if subplot_spec is None:
-        #(c): The whole figure, less the space for the row labels (left) and the title and column labels (top). Its size
-        #(c): from its box, so that one part of a layout (a SubFigure, from fig.subfigures) works too
-        width, height = fig.bbox.width / fig.dpi, fig.bbox.height / fig.dpi
-        #(c): One row per row of maps, sharing what the title, bars and keys leave, then one per colour bar and key
-        map_row_height = (height - title_height - n_colorbars * colorbar_height - n_keys * KEY_HEIGHT) / n_rows
-        height_ratios = [map_row_height] * n_rows + [colorbar_height] * n_colorbars + [KEY_HEIGHT] * n_keys
-        grid = fig.add_gridspec(n_grid_rows, n_cols, height_ratios=height_ratios,
-                                left=ROW_LABEL_WIDTH / width, right=0.99, top=1 - title_height / height, bottom=0.01,
-                                wspace=0.05, hspace=0.05)
-    else:
-        #(c): In part of a larger grid, whose size isn't known here: the rows of maps PANEL_SIZE tall, in proportion
-        height_ratios = [PANEL_SIZE] * n_rows + [colorbar_height] * n_colorbars + [KEY_HEIGHT] * n_keys
-        grid = subplot_spec.subgridspec(n_grid_rows, n_cols, height_ratios=height_ratios, wspace=0.05, hspace=0.05)
+    grid = fig.add_gridspec(n_rows, n_cols) if subplot_spec is None else subplot_spec.subgridspec(n_rows, n_cols)
+    return grid.subplots(squeeze=False, subplot_kw=dict(projection=ccrs.SouthPolarStereo()))
 
-    axes = np.empty((n_rows, n_cols), dtype=object)
-    for row in range(n_rows):
-        for col in range(n_cols):
-            axes[row, col] = fig.add_subplot(grid[row, col], projection=ccrs.SouthPolarStereo())
 
-    cbar_axes = []
-    for bar in range(n_colorbars):
-        #(c): The bar in the middle 60% of its row, 0.23 in thick at its top; the ticks and label go below it
-        bar_grid = grid[n_rows + bar, :].subgridspec(2, 3, height_ratios=[0.23, colorbar_height - 0.23],
-                                                     width_ratios=[1, 3, 1], hspace=0, wspace=0)
-        cbar_axes.append(fig.add_subplot(bar_grid[0, 1]))
-    for key in range(n_keys):
-        #(c): The key in the middle fifth of its row and its top three quarters; the column names go below it
-        key_grid = grid[n_rows + n_colorbars + key, :].subgridspec(2, 3, height_ratios=[3, 1], width_ratios=[2, 1, 2])
-        cbar_axes.append(fig.add_subplot(key_grid[0, 1]))
-    return axes, cbar_axes
+def colorbar_axis_below(axes, shrink=0.8):
+    """An axis for a colour bar directly under the maps it is for, centred on them.
+
+    In a figure made with ``layout='constrained'``, matplotlib puts the bar under the lowest of ``axes`` and makes
+    room for it there, between that row and the next. So a bar for the top two rows sits between the second and
+    third rows, and a bar for the last column sits under that column only. The bar is a tenth of a map's width
+    thick, however many columns it spans. (In a figure without a layout, one with charts whose margins are set by
+    hand, matplotlib makes the room by shrinking the maps instead.)
+
+    Args:
+        axes (np.ndarray | matplotlib.axes.Axes): The maps the bar is for: ``axes`` for all of them,
+            ``axes[:2, :3]`` for the first three columns of the top two rows, ``axes[2, 3]`` for one map.
+        shrink (float): The bar's length, as a fraction of the width of the maps it is under.
+
+    Returns:
+        matplotlib.axes.Axes: The bar's axis, for ``heatmaps_of_antarctica(..., cax=...)``.
+
+    Example, two rows of maps sharing one colour scale, a third row of their change on another, and a fourth
+    column of the spread on its own scales::
+
+        fig = plt.figure(figsize=map_figure_size(n_rows=3, n_cols=4, n_colorbar_rows=2), layout='constrained')
+        axes = map_axes(fig, n_rows=3, n_cols=4)
+        temperature_cax = colorbar_axis_below(axes[:2, :3])     # between rows 2 and 3, under columns 1-3
+        spread_cax = colorbar_axis_below(axes[:2, 3])           # between rows 2 and 3, under column 4
+        change_cax = colorbar_axis_below(axes[2, :3])           # under row 3, columns 1-3
+        spread_change_cax = colorbar_axis_below(axes[2, 3])     # under row 3, column 4
+    """
+    parent_axes = list(np.ravel(axes))
+    #(c): The columns of maps the bar is under. Its length over its thickness grows with them, so every bar is a tenth
+    #(c): of a map's width thick: a bar under three maps is three times as long as one under one map, and as thick
+    columns = {col for ax in parent_axes for col in ax.get_subplotspec().colspan}
+    aspect = 10 * len(columns) * shrink
+    #(c): panchor=False leaves the maps where they are in their cells; matplotlib places the bar under them
+    cax, _ = matplotlib.colorbar.make_axes(parent_axes, location='bottom', shrink=shrink, aspect=aspect, panchor=False)
+    return cax
+
+
+def key_axis_below(axes):
+    """An axis for a key (``bivariate_key``) under the maps it is for, centred on them, as ``colorbar_axis_below``.
+
+    The key is as wide as one map, however many columns it is under, and half as tall as it is wide.
+
+    Args:
+        axes (np.ndarray | matplotlib.axes.Axes): The maps the key is for, e.g. ``axes[:, 4]`` for the last column.
+
+    Returns:
+        matplotlib.axes.Axes: The key's axis, for ``bivariate_key``.
+    """
+    parent_axes = list(np.ravel(axes))
+    columns = {col for ax in parent_axes for col in ax.get_subplotspec().colspan}
+    #(c): One map's width, whatever the columns, so its column names fit; up to half the maps' height (fraction), so
+    #(c): that a key under one row of maps has its room too
+    cax, _ = matplotlib.colorbar.make_axes(parent_axes, location='bottom', shrink=1 / len(columns), aspect=2,
+                                           fraction=0.5, panchor=False)
+    return cax
 
 
 # ---------------------------------------------------------------------------
@@ -181,10 +215,14 @@ def style_antarctic_ax(ax):
     angles_arr = np.linspace(0, 2 * np.pi, 200)
     circle = mpath.Path(np.column_stack([np.cos(angles_arr), np.sin(angles_arr)]) * 0.5 + 0.5)
     ax.set_boundary(circle, transform=ax.transAxes)
-    ax.coastlines(linewidth=0.6)
+    coastlines = ax.coastlines(linewidth=0.6)
     #(c): Light, so they don't compete with the field; drawn in 90 steps each, so the latitude circles come out round
     gridlines = ax.gridlines(crs=ccrs.PlateCarree(), color='0.5', alpha=0.45, linewidth=0.4, linestyle='--')
     gridlines.n_steps = 90
+    #(c): Both stay inside the map's circle, so a constrained layout needn't measure them: skipping them makes a big
+    #(c): figure of maps several times faster to draw
+    coastlines.set_in_layout(False)
+    gridlines.set_in_layout(False)
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +264,8 @@ def plot_heatmap_of_antarctica(da, ax=None, levels=None, cmap='RdBu_r', extend='
     mesh = da.plot.pcolormesh(ax=ax, x='lon', y='lat', transform=ccrs.PlateCarree(), cmap=colormap, norm=norm,
                               add_colorbar=False)
     ax.set_title('')
+    #(c): Inside the map's circle too, so left out of a constrained layout's measuring, as in style_antarctic_ax
+    mesh.set_in_layout(False)
     style_antarctic_ax(ax)
     return mesh
 
@@ -241,8 +281,8 @@ def heatmaps_of_antarctica(da, row_dim, col_dim, axes=None, cax=None, levels=Non
         col_dim (str | None): The dim across the columns, in the order of its values; None for a single column.
         axes (np.ndarray | None): The map axes, rows × columns: ``map_axes``'s, or a slice of them (``axes[2]`` for
             the third row, ``axes[:, 0]`` for the first column). A new figure if None.
-        cax (matplotlib.axes.Axes | None): Where the colour bar goes; no colour bar if None (e.g. when another
-            call's bar already covers the same colours).
+        cax (matplotlib.axes.Axes | None): Where the colour bar goes, e.g. ``colorbar_axis_below(axes)``; no colour
+            bar if None (e.g. when another call's bar already covers the same colours).
         levels, cmap, extend: As ``plot_heatmap_of_antarctica``'s; the same on every map, so one colour bar fits
             them all. ``levels`` is the range of all the fields in 10 steps if None.
         label (str): The colour bar's label.
@@ -260,9 +300,10 @@ def heatmaps_of_antarctica(da, row_dim, col_dim, axes=None, cax=None, levels=Non
     row_values = [None] if row_dim is None else da[row_dim].values
     col_values = [None] if col_dim is None else da[col_dim].values
     if axes is None:
-        fig = plt.figure(figsize=map_figure_size(len(row_values), len(col_values), n_colorbars=1))
-        axes, cbar_axes = map_axes(fig, len(row_values), len(col_values), n_colorbars=1)
-        cax = cbar_axes[0]
+        fig = plt.figure(figsize=map_figure_size(len(row_values), len(col_values), n_colorbar_rows=1),
+                         layout='constrained')
+        axes = map_axes(fig, len(row_values), len(col_values))
+        cax = colorbar_axis_below(axes)
     #(c): The axes as rows × columns: a slice of one row (axes[2]) or of one column (axes[:, 0]) comes 1-D
     axes = np.reshape(axes, (len(row_values), len(col_values)))
     #(c): The same levels on every map, so that one colour bar fits them all
@@ -287,12 +328,13 @@ def heatmaps_of_antarctica(da, row_dim, col_dim, axes=None, cax=None, levels=Non
 def bivariate_key(cax, cmap, rows, columns, row_title, column_title):
     """The key of a scale of two things at once (the mean and the width, say), drawn as a grid of its classes.
 
-    Used instead of a colour bar, in a key's axis from ``map_axes`` (``n_keys=1``: the last of ``cbar_axes``). Class
+    Used instead of a colour bar, in an axis under the maps it is for (``key_axis_below``; give
+    ``map_figure_size`` ``n_keys=1`` for its room). Class
     ``i * len(columns) + j`` is the cell of row ``i`` (from the bottom) and column ``j``, as in
     ``forced_response.bivariate_scale``.
 
     Args:
-        cax (matplotlib.axes.Axes): Where the key goes, e.g. ``cbar_axes[-1]``.
+        cax (matplotlib.axes.Axes): Where the key goes, e.g. ``key_axis_below(axes)``.
         cmap (matplotlib.colors.ListedColormap): One colour per class, in the order of their numbers.
         rows, columns (Sequence[str]): The names of the rows (bottom first) and of the columns.
         row_title, column_title (str): What the rows and the columns are, e.g. 'Mean' and 'Width'.
@@ -300,7 +342,7 @@ def bivariate_key(cax, cmap, rows, columns, row_title, column_title):
     Example, the joint change in the mean and the width (``forced_response.joint_scale``)::
 
         rows, columns, row_title, column_title = scales.joint.key
-        bivariate_key(cbar_axes[-1], scales.joint.cmap, rows, columns, row_title, column_title)
+        bivariate_key(key_axis_below(axes), scales.joint.cmap, rows, columns, row_title, column_title)
     """
     #(c): The classes' numbers laid out as the grid: row i (from the bottom), column j holds i * len(columns) + j
     classes_arr = np.arange(len(rows) * len(columns)).reshape(len(rows), len(columns))
@@ -384,8 +426,9 @@ def ice_edges(siconc_da, row_dim, col_dim, axes=None, color='k', linestyle='soli
     row_values = [None] if row_dim is None else siconc_da[row_dim].values
     col_values = [None] if col_dim is None else siconc_da[col_dim].values
     if axes is None:
-        fig = plt.figure(figsize=map_figure_size(len(row_values), len(col_values), n_colorbars=0))
-        axes, _ = map_axes(fig, len(row_values), len(col_values), n_colorbars=0)
+        fig = plt.figure(figsize=map_figure_size(len(row_values), len(col_values), n_colorbar_rows=0),
+                         layout='constrained')
+        axes = map_axes(fig, len(row_values), len(col_values))
         for ax in axes.ravel():
             style_antarctic_ax(ax)
     #(c): The axes as rows × columns, as in heatmaps_of_antarctica
@@ -439,8 +482,9 @@ def not_significant_dots_grid(mask_da, row_dim, col_dim, axes=None, size=1.5, co
     row_values = [None] if row_dim is None else mask_da[row_dim].values
     col_values = [None] if col_dim is None else mask_da[col_dim].values
     if axes is None:
-        fig = plt.figure(figsize=map_figure_size(len(row_values), len(col_values), n_colorbars=0))
-        axes, _ = map_axes(fig, len(row_values), len(col_values), n_colorbars=0)
+        fig = plt.figure(figsize=map_figure_size(len(row_values), len(col_values), n_colorbar_rows=0),
+                         layout='constrained')
+        axes = map_axes(fig, len(row_values), len(col_values))
         for ax in axes.ravel():
             style_antarctic_ax(ax)
     #(c): The axes as rows × columns, as in heatmaps_of_antarctica
@@ -498,8 +542,9 @@ def hatching_grid(mask_da, row_dim, col_dim, axes=None, pattern='////', color=HA
     row_values = [None] if row_dim is None else mask_da[row_dim].values
     col_values = [None] if col_dim is None else mask_da[col_dim].values
     if axes is None:
-        fig = plt.figure(figsize=map_figure_size(len(row_values), len(col_values), n_colorbars=0))
-        axes, _ = map_axes(fig, len(row_values), len(col_values), n_colorbars=0)
+        fig = plt.figure(figsize=map_figure_size(len(row_values), len(col_values), n_colorbar_rows=0),
+                         layout='constrained')
+        axes = map_axes(fig, len(row_values), len(col_values))
         for ax in axes.ravel():
             style_antarctic_ax(ax)
     axes = np.reshape(axes, (len(row_values), len(col_values)))
@@ -550,8 +595,9 @@ def contour_lines_grid(da, levels, row_dim, col_dim, axes=None, color='#333333',
     row_values = [None] if row_dim is None else da[row_dim].values
     col_values = [None] if col_dim is None else da[col_dim].values
     if axes is None:
-        fig = plt.figure(figsize=map_figure_size(len(row_values), len(col_values), n_colorbars=0))
-        axes, _ = map_axes(fig, len(row_values), len(col_values), n_colorbars=0)
+        fig = plt.figure(figsize=map_figure_size(len(row_values), len(col_values), n_colorbar_rows=0),
+                         layout='constrained')
+        axes = map_axes(fig, len(row_values), len(col_values))
         for ax in axes.ravel():
             style_antarctic_ax(ax)
     axes = np.reshape(axes, (len(row_values), len(col_values)))

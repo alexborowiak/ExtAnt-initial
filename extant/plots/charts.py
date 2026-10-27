@@ -139,9 +139,9 @@ def margins(fig, left=LEFT_MARGIN, right=RIGHT_MARGIN, top=TOP_MARGIN, bottom=BO
     """A GridSpec's ``left``, ``right``, ``top`` and ``bottom`` that leave this much room round the panels (inches),
     for a figure that has maps beside its charts.
 
-    Such a figure isn't made with ``layout='constrained'``, which would squash the maps' colour bars
-    (``antarctica.map_axes`` sets their room in inches itself), so its chart panels need room for their labels and
-    legends set by hand. A legend then goes in the room below: ``fig.legend(..., loc='lower center')``.
+    Such a figure isn't made with ``layout='constrained'`` (there, a map's colour bar takes its room from the map:
+    ``antarctica.colorbar_axis_below``), so its chart panels need room for their labels and legends set by hand. A
+    legend then goes in the room below: ``fig.legend(..., loc='lower center')``.
 
     Args:
         fig (matplotlib.figure.Figure | matplotlib.figure.SubFigure): The figure, or its part the panels fill.

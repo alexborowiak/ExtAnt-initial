@@ -11,10 +11,10 @@ skipped whole (``JASMIN_NOTEBOOKS``). IPython magics, shell lines and help lines
 temporary folder: the scratch folder they write out as a plain path is replaced
 by a temporary scratch folder, and this repository's figures folder
 (``Path('../figures')``) by a temporary figures folder. So notebooks 04a-08b
-read what 02a, 03 and 09a saved, just as they do on JASMIN; 09a runs straight
-after 03 for that. Cells run in order in one namespace per notebook, as in
-Jupyter, from the notebooks folder; a failing cell is reported and the run
-carries on. Resampling cells use at most ``--trials`` trials (default 500),
+read what 02a, 02c, 03 and 09a saved, just as they do on JASMIN; 02c runs
+straight after 02a, so that 02b can draw its results, and 09a straight after 03.
+Cells run in order in one namespace per notebook, as in Jupyter, from the
+notebooks folder; a failing cell is reported and the run carries on. Resampling cells use at most ``--trials`` trials (default 500),
 and figures are drawn and closed. The whole run takes a few minutes.
 
 Exits with 1 if any cell failed.
@@ -54,6 +54,7 @@ JASMIN_SECTIONS = {
                         "Full data", "Save", "4. Test Sample", "6. SAM Index"},
     "02a_era5_evaluation_calculations": {"Full data"},
     "02b_era5_evaluation_figures": {"Full data"},
+    "02c_observed_change_calculations": {"Full data"},
     "03_forced_response": {"Dask Cluster", "Full data"},
     "09a_sea_ice_calculations": {"Dask cluster", "Daily values to monthly means", "What is on CEDA", "Example processing",
                                  "Processing full data and saving", "Opening Data", "Year-to-year correlation"},
@@ -209,8 +210,12 @@ def main():
     if args.notebooks:
         notebooks = [p.resolve() for p in args.notebooks]
     else:
-        #(c): In order, but 09a straight after 03: it reads notebook 03's results, and 04a-04c read its sea ice
+        #(c): In order, but 02c straight after 02a, as 02b draws its results too; and 09a straight after 03: it reads
+        #(c): notebook 03's results, and 04a-04c read its sea ice
         notebooks = sorted(NOTEBOOKS.glob("[0-9]*.ipynb"))
+        observed_change = NOTEBOOKS / "02c_observed_change_calculations.ipynb"
+        notebooks.remove(observed_change)
+        notebooks.insert(notebooks.index(NOTEBOOKS / "02a_era5_evaluation_calculations.ipynb") + 1, observed_change)
         sea_ice = NOTEBOOKS / "09a_sea_ice_calculations.ipynb"
         notebooks.remove(sea_ice)
         notebooks.insert(notebooks.index(NOTEBOOKS / "03_forced_response.ipynb") + 1, sea_ice)
