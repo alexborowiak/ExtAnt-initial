@@ -293,8 +293,8 @@ def plot_percentile_table(percentile, verdict, row_dim="model", col_dim="experim
     the attribution needs.
 
     Args:
-        percentile, verdict (xr.DataArray): On (row_dim, col_dim), e.g. one region and season of notebook calc_03a's
-            ``regional_consistency`` (the trend).
+        percentile, verdict (xr.DataArray): On (row_dim, col_dim), e.g. one region and season of notebook plot_06's
+            ``regional_consistency`` (ERA5's regional trend among each experiment's members).
         row_dim, col_dim (str): The dims down and across, in the order of their values.
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.
 

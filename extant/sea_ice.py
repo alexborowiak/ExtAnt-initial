@@ -300,7 +300,12 @@ def cap_area(lat):
 
 
 def equivalent_latitude(area):
-    """The latitude (degrees) whose polar cap has ``area`` (km²): the inverse of ``cap_area``."""
+    """The latitude (degrees) whose polar cap has ``area`` (km²): the inverse of ``cap_area``.
+
+    Example: 32 million km² of ice and continent is 32 / 255 = 0.125 of a
+    hemisphere (2πR² = 255 million km²), so 1 + sin φ = 0.125 and φ = arcsin(-0.875),
+    about 61°S.
+    """
     return np.rad2deg(np.arcsin(np.clip(area / HEMISPHERE - 1, -1, 1)))
 
 

@@ -10,7 +10,7 @@ The data are on JASMIN. A small sample (a 3×3 block of grid cells from two mode
 notebooks/
     calc_01_process_data.ipynb               raw files -> monthly stores -> seasonal means (once per variable); the SAM index (once)
     calc_02_forced_response.ipynb            the forced response, each method explained; saves every result (probability ratios, SAM, additivity of the variance)
-    calc_03a_era5_moment_test.ipynb          are the models consistent with ERA5? the climatologies, the moment test and the other statistics, saved
+    calc_03a_era5_moment_test.ipynb          are the models consistent with ERA5? the climatologies, then each statistic (four moments, trend, width, tails) of every member and ERA5 at every grid point, saved as values
     calc_03b_era5_rank_histograms.ipynb      ... the rank histograms, the paper's grid-point evaluation, and every test in one table, saved
     calc_03c_observed_change.ipynb           is the observed change detectable, and which forcings is it consistent with? saved
     calc_04_sea_ice.ipynb                    the sea ice from CEDA onto the 2.5° grid, extent and edge, against ERA5, with the temperature changes

@@ -13,7 +13,7 @@ Sections
                         with the uncertainty from a perfect-model test
 
 ERA5's trend among each experiment's members (consistency and detection) is
-worked out in notebooks calc_03a (section 9) and calc_03c with era5_evaluation:
+worked out in notebooks plot_06 (V4, from calc_03a's regional trends) and calc_03c with era5_evaluation:
 ``ev.align`` for common samples, ``ev.locate`` for where ERA5 falls among the members.
 """
 

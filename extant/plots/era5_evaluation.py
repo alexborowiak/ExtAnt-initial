@@ -408,7 +408,7 @@ def member_strips_grid(result, row_dim, axes=None, statistics=None):
     time.
 
     Args:
-        result (xr.Dataset): ``ev.locate`` results along a ``statistic`` dim (e.g. notebook calc_03a's moment test) at one
+        result (xr.Dataset): ``ev.locate`` results along a ``statistic`` dim (e.g. notebook plot_01's moment test) at one
             point, with ``row_dim`` (e.g. 'season').
         row_dim (str): The dim down the rows, in the order of its values.
         axes (np.ndarray | None): The panels, rows × columns, e.g. ``fig.add_gridspec(4, 3).subplots()``. A new
