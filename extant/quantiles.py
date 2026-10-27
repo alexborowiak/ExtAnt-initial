@@ -81,7 +81,7 @@ def pooled_quantiles(ds, quantiles, dims=("member", "year")):
 def rolling_quantile(da, rolling_dim, window, quantiles, extra_dims=None):
     """Rolling quantiles via xarray's construct, keeping the shortened windows at either end (slow, memory-heavy).
 
-    Notebook 05's plumes use it to reach the ends of the record. The analysis
+    Notebook plot_04's plumes use it to reach the ends of the record. The analysis
     uses ``centred_rolling_quantiles``, where those years are NaN.
     """
     dims = ["window", *(extra_dims or [])]

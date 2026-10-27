@@ -15,7 +15,7 @@ def test_open_index(tmp_path):
                          "P": ("level", [1000.0, 850.0, 500.0])},
                         coords={"time_mm": times, "level": [1000.0, 850.0, 500.0]})
         ds.to_netcdf(folder / f"SAM_zonal_mon_hist-nat_MODEL_{member}_interp.nc")
-    #(c): Listed as notebook 01 lists them: /<experiment>/<model>/*.nc
+    #(c): Listed as notebook calc_01 lists them: /<experiment>/<model>/*.nc
     files = sorted((tmp_path / "hist-nat" / "MODEL").glob("*.nc"))
     assert [sam.member_of(f) for f in files] == ["r1i1p1f1", "r2i1p1f1"]
     index = sam.open_index(files, level=1).load()
@@ -80,7 +80,7 @@ def test_synthetic_index_matches_the_tree():
 
 
 def test_notebook_01_chain(tmp_path):
-    #(c): Notebook 01, section 6, on fake files: open, cut where historical ends, seasonal means, year x season
+    #(c): Notebook calc_01, section 6, on fake files: open, cut where historical ends, seasonal means, year x season
     from extant import datatree, preprocessing as pp
     times = xr.date_range("1850-01-16", "2020-12-16", freq="MS", calendar="360_day", use_cftime=True)
     for experiment in ("historical", "hist-nat"):

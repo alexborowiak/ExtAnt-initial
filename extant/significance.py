@@ -2,7 +2,7 @@
 
 All resampling works on whole members, so each member's time series stays intact.
 
-The width test and the mean test (notebook 03, sections 2 and 4) compare an
+The width test and the mean test (notebook calc_02, sections 2 and 4) compare an
 experiment's final years with hist-nat's over the same years. Their null is a
 bootstrap of hist-nat alone: each trial is 10 different hist-nat members, all
 the years given pooled (``bootstrap_draws``). ``bootstrap_qrange`` gives each

@@ -1,4 +1,4 @@
-"""The colour scales and styles of notebooks 04-07, and saving a figure for the paper.
+"""The colour scales and styles of notebooks plot_03 to plot_06, and saving a figure for the paper.
 
 Every map in the notebooks is drawn layer by layer with ``antarctica``; its colours come from here, so that colour
 and pattern mean the same thing in every figure:
@@ -116,7 +116,7 @@ def count_scale(n_models, label="Number of models with a significant decrease (b
     """Discrete and diverging: how many models have a significant decrease (left) or increase (right); white for none.
 
     Up to half the models are blues and reds; more than half, purples and
-    browns, so where most models agree stands out. Notebook 04 maps the
+    browns, so where most models agree stands out. Notebook plot_03 maps the
     decreases as negative numbers (the signed counts), so this one colour bar
     serves both rows of counts; the tick labels are the counts themselves.
     """
@@ -186,7 +186,7 @@ def joint_scale():
 
 @dataclass(frozen=True)
 class Scales:
-    """Every colour scale of notebooks 04, 05 and 06, one per quantity (``colour_scales`` makes them)."""
+    """Every colour scale of notebooks plot_03, plot_04 and plot_05, one per quantity (``colour_scales`` makes them)."""
 
     temperature: Scale
     change: Scale
@@ -203,7 +203,7 @@ class Scales:
 #(t): The range of each colour scale, per variable, as (end, step): the values (start, stop, step, tick step), the
 #(t): largest change, standard deviation, spread and change in spread shown, and the step between colours.
 #(c): About a dozen colours per scale: more cannot be told apart in a small printed panel, and every level also
-#(c): gets a contour line. Check them on the real data with ``saturation`` (notebook 06)
+#(c): gets a contour line. Check them on the real data with ``saturation`` (notebook plot_05)
 RANGES = {
     "tas": dict(values=(-60, 10, 5, 15), change=(3, 0.5), noise=(4, 0.5), spread=(12, 1), spread_change=(1, 0.25)),
 }
@@ -278,7 +278,7 @@ class Style:
     tag_size: float = 9
 
 
-#(t): On screen, in notebook 04
+#(t): On screen, in notebook plot_03
 NOTEBOOK = Style(EVAL_RC)
 
 #(t): In print: 7-8 pt text, for figures 183 mm (7.2 in) wide, a two-column page

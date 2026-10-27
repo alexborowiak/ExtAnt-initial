@@ -10,7 +10,7 @@ label:
 4. split ``time`` into ``year`` and ``season`` (``split_time``);
 5. ERA5 only: put it on the LESFMIP grid (``match_grid``).
 
-``seasonal_tree`` and ``seasonal_era5`` run the whole chain; notebook 01 saves
+``seasonal_tree`` and ``seasonal_era5`` run the whole chain; notebook calc_01 saves
 their output, and the sample sections of the other notebooks run it on the
 sample in memory.
 """
@@ -139,7 +139,7 @@ def match_grid(obs, like, tolerance=0.01, lat="lat", lon="lon"):
        in longitude. Points outside ``obs``'s coverage are NaN.
 
     Interpolation suits data at a similar resolution, like the ERA5 store
-    (conservatively regridded to 2.5° in notebook 01, section 2). Regrid much
+    (conservatively regridded to 2.5° in notebook calc_01, section 2). Regrid much
     finer data conservatively first.
 
     Args:
@@ -175,7 +175,7 @@ def match_grid(obs, like, tolerance=0.01, lat="lat", lon="lon"):
 # ---------------------------------------------------------------------------
 
 def seasonal_tree(tree, variable, last_month=config.LAST_MONTH, chunks=SEASONAL_CHUNKS):
-    """Monthly LESFMIP (the monthly stores, as notebook 01 opens them) to seasonal means in analysis units.
+    """Monthly LESFMIP (the monthly stores, as notebook calc_01 opens them) to seasonal means in analysis units.
 
     Lazy: nothing is computed until the result is saved, persisted or loaded.
 
@@ -200,7 +200,7 @@ def seasonal_tree(tree, variable, last_month=config.LAST_MONTH, chunks=SEASONAL_
 
 
 def seasonal_era5(monthly, variable, like, start_year=config.ERA5_START_YEAR):
-    """Monthly ERA5 (as notebook 01 opens it) to seasonal means on the LESFMIP grid.
+    """Monthly ERA5 (as notebook calc_01 opens it) to seasonal means on the LESFMIP grid.
 
     Args:
         monthly (xr.DataArray): Monthly means on (time, lat, lon), raw units, on its own calendar.

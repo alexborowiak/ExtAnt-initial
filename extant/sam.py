@@ -1,11 +1,11 @@
 """The Southern Annular Mode (SAM): which phase each season is in, so every result can be split by it.
 
 The index is not computed here. LEADER-EPESC working group 1 made a monthly
-SAM index for every LESFMIP member (notebook 01's ``SAM_RAW_DIR``, the files
+SAM index for every LESFMIP member (notebook calc_01's ``SAM_RAW_DIR``, the files
 archive/draft_current_DAILY.ipynb opened): the zonal-mean index of Gong & Wang
 (1999), the difference between standardised zonal means at 40°S and 65°S, one
-file per member with ``SAM`` on (time_mm, level). Notebook 01 (section 6) turns
-it into seasonal means; notebook 03 (*SAM Phases*) cuts it into phases:
+file per member with ``SAM`` on (time_mm, level). Notebook calc_01 (section 6) turns
+it into seasonal means; notebook calc_02 (*SAM Phases*) cuts it into phases:
 
     negative   the index below hist-nat's lower tercile
     neutral    between hist-nat's two terciles
@@ -14,7 +14,7 @@ it into seasonal means; notebook 03 (*SAM Phases*) cuts it into phases:
 hist-nat's terciles over the final years, per model and season, members and
 years pooled, and the same for every experiment of the model: hist-nat has a
 third of its seasons in each phase, and an experiment whose SAM has shifted
-has more in one. Each section of notebook 03 then has a *By SAM phase*
+has more in one. Each section of notebook calc_02 then has a *By SAM phase*
 subsection that redoes its result with the seasons of one phase alone.
 
 Sections
@@ -63,7 +63,7 @@ def open_index(files, level=0):
     in a file so the right one can be chosen.
 
     Args:
-        files (Sequence[Path]): One file per member (notebook 01 lists them).
+        files (Sequence[Path]): One file per member (notebook calc_01 lists them).
         level (int): Position along the files' ``level`` dim.
 
     Returns:

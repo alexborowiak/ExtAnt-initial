@@ -219,7 +219,7 @@ MODEL_LINESTYLES = ('solid', (0, (6, 2)), (0, (1, 1.5)), (0, (6, 2, 1, 2)), 'sol
                     (0, (6, 2, 1, 2, 1, 2)), (0, (10, 3)))
 MODEL_LINEWIDTHS = (2.6, 1.4, 2.0, 1.2, 1.0, 1.8, 1.0, 2.2)
 
-#(t): Each signal of the attribution (notebooks 02b and 08): its forcing's colour, and for the combinations their nearest
+#(t): Each signal of the attribution (notebooks plot_01 and fingerprinting): its forcing's colour, and for the combinations their nearest
 #(t): (ALL is historical's; ANT orange, apart from it; OTH, the forcings other than GHG, a blue-grey)
 SIGNAL_COLORS = {'ALL': FORCING_COLORS['historical'], 'ANT': '#d95f02', 'NAT': FORCING_COLORS['hist-nat'],
                  'GHG': FORCING_COLORS['hist-GHG'], 'AER': FORCING_COLORS['hist-aer'],

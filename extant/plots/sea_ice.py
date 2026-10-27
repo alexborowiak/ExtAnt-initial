@@ -38,7 +38,7 @@ CELL_COLORS = ("white", "#9ec5f4", "#c9c8c3")
 def plot_cap_area(extent, continent_area, edge_latitude, ax=None):
     """The area south of each latitude, A(φ) = 2πR²(1 + sin φ), read backwards from the ice's and the continent's area.
 
-    The last step of how the ice edge becomes a latitude (notebook 09b, section 2): the curve, and the total area
+    The last step of how the ice edge becomes a latitude (notebook plot_02, section 2): the curve, and the total area
     taken across to it and down to the latitude whose polar cap holds it.
 
     Args:
@@ -130,7 +130,7 @@ def _draw_cell_lines(ax, on_grid, region):
 def plot_native_points(native, lat, lon, on_grid, region=REGRID_REGION, ax=None):
     """A field on its own grid, close up: one dot per point, coloured by its value, with the 2.5° cells over them.
 
-    The first step of how a field goes onto the 2.5° grid (``sea_ice.to_grid``; notebook 09b, section 1).
+    The first step of how a field goes onto the 2.5° grid (``sea_ice.to_grid``; notebook plot_02, section 1).
 
     Args:
         native (xr.DataArray): Concentration (%) on the field's own grid, e.g. (j, i); empty over land.
@@ -157,7 +157,7 @@ def plot_grid_cells(native, lat, lon, on_grid, region=REGRID_REGION, ax=None):
     """The 2.5° cells, close up: each coloured by the area-weighted mean of its points, with the points as dots and
     how many of them went into each cell.
 
-    The second step of how a field goes onto the 2.5° grid (``sea_ice.to_grid``; notebook 09b, section 1).
+    The second step of how a field goes onto the 2.5° grid (``sea_ice.to_grid``; notebook plot_02, section 1).
 
     Args:
         native, lat, lon, on_grid, region: As ``plot_native_points``'.
@@ -239,7 +239,7 @@ def plot_edge_latitudes(edges_tree, era5_da, seasons, ax=None):
 
 
 def era5_verdict(cell_ds, diagnostic):
-    """``(ok, message)`` for one statistic of ERA5's extent test (notebook 09a, section 6) at one model and season.
+    """``(ok, message)`` for one statistic of ERA5's extent test (notebook calc_04, section 6) at one model and season.
 
     ``ok`` is True (ERA5 inside the members' 5-95%), False (outside: the message says what that means for the
     model) or None (no data, or too few members for the test to flag anything). For ``era5_evaluation.status_line``.

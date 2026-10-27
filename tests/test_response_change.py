@@ -36,13 +36,13 @@ def tree():
 
 
 def _mean_response(tree, years=11):
-    """Notebook 03's mean response: final-years ensemble means, each minus hist-nat's."""
+    """Notebook calc_02's mean response: final-years ensemble means, each minus hist-nat's."""
     final = datatree.reduce_to_dataset(tree.isel(year=slice(-years, None)), lambda ds: ds.mean(["year", "member"]))
     return (final - final.sel(experiment="hist-nat")).drop_sel(experiment="hist-nat").tas
 
 
 def _tails(tree, years=11):
-    """Notebook 03's tails: the change in Q05, Q50 and Q95, final years against hist-nat over the same years."""
+    """Notebook calc_02's tails: the change in Q05, Q50 and Q95, final years against hist-nat over the same years."""
     quantiles = partial(qc.pooled_quantiles, quantiles=[0.05, 0.5, 0.95])
     final_q = datatree.reduce_to_dataset(tree.isel(year=slice(-years, None)), quantiles).tas
     final = final_q.drop_sel(experiment="hist-nat")
@@ -176,7 +176,7 @@ def test_quantile_shift_recovers_shift_and_widening(tree):
 
 
 def test_the_step_by_step_permutations_are_the_member_block_tests(tree):
-    """Notebook 03's demonstration (weights from default_rng(0), times the member means) is member_block_pvalue's test."""
+    """Notebook calc_02's demonstration (weights from default_rng(0), times the member means) is member_block_pvalue's test."""
     point = dict(season="DJF", lat=-80.0, lon=0.0)
     experiment, hist_nat = (tree[f"A/{e}"].tas.sel(point).isel(year=slice(-11, None)).mean("year")
                             for e in ("historical", "hist-nat"))

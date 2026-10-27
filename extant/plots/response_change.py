@@ -5,7 +5,7 @@ the notebook makes the figure and its axes (a GridSpec), then draws each panel a
 (``charts``). Each
 experiment has its colour, FORCING_COLORS (hist-nat green, hist-GHG red, ...). The maps of these results are drawn
 layer by layer with ``antarctica``, the area means with ``charts.plot_model_dots`` and
-``charts.plot_scatter_by_forcing``, in notebook 04.
+``charts.plot_scatter_by_forcing``, in notebook plot_03.
 
 Sections
 --------
@@ -60,7 +60,7 @@ def count_colormap(n_models, base_cmap="Purples"):
     return cmap, BoundaryNorm(np.arange(-0.5, n_models + 1.5), cmap.N)
 
 
-#(t): The titles of the extremes' maps and zonal means (notebook 04c), by their names in ``rc.EXTREMES``
+#(t): The titles of the extremes' maps and zonal means (notebook plot_03c), by their names in ``rc.EXTREMES``
 EXTREME_TITLES = {
     "mean_change": "Mean",
     "low_extreme_change": "Low extremes",

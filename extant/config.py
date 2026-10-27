@@ -14,7 +14,8 @@ import numpy as np
 
 #(t): The experiments analysed. hist-nat is the counterfactual every other experiment is compared with
 MAIN_EXPERIMENTS = ["hist-nat", "hist-aer", "hist-totalO3", "hist-GHG", "historical"]
-FORCED_EXPERIMENTS = ["hist-aer", "hist-totalO3", "hist-GHG", "historical"]
+#(t): The experiments compared with hist-nat, in the order of every figure
+FORCED_EXPERIMENTS = ["hist-GHG", "hist-aer", "hist-totalO3", "historical"]
 
 #(t): Which version of the raw files to convert: 'interp' is every model on the common 2.5° grid
 GROUP = "interp"
@@ -60,6 +61,9 @@ PLOT_SEL = dict(model="CanESM5", experiment="historical")
 #(t): Quantiles for the rolling-quantile analysis: the median and three symmetric pairs
 QUANTILES = np.array([0.01, 0.05, 0.1, 0.5, 0.9, 0.95, 0.99])
 
+#(t): The significance level of every test of the forced response (notebook calc_02, and the figures drawn from it)
+ALPHA = 0.05
+
 #(t): Multi-model agreement thresholds (IPCC AR6 advanced approach)
 SIGNIFICANT_THRESHOLD = 0.66   # fraction of models that must be significant
 SIGN_THRESHOLD = 0.8           # fraction of models that must agree on the sign of the median
@@ -79,7 +83,7 @@ class Variable:
         scale, offset: analysis value = raw value * scale + offset.
         era5_code: Code in the hourly ERA5 file names (``*.2t.nc``); None if there is no ERA5 recipe yet.
         era5_name: Name of the variable inside those files.
-        table: CMIP table, the folder the raw files are in (notebook 01's ``RAW_DIR``).
+        table: CMIP table, the folder the raw files are in (notebook calc_01's ``RAW_DIR``).
     """
 
     name: str
@@ -108,11 +112,11 @@ class Variable:
 #(c): pr and sfcWind follow the CMIP conventions (kg m-2 s-1 and m s-1) but have not been run yet. ERA5
 #(c): precipitation is a forecast accumulation (fc_sfc, not an_sfc) and wind speed has to be built from 10u
 #(c): and 10v, so neither has an ERA5 recipe in convert.py yet.
-#(c): siconc (sea-ice concentration, %) is not in the LEADER-EPESC folders: notebook 09 takes it from CEDA's copy of
-#(c): CMIP6 (09a's ``CEDA_DIRS``, table SImon), each model on its own grid, and puts it on the 2.5° grid. ERA5's
-#(c): sea-ice cover (code ci) is a fraction from 0 to 1; notebook 09 stores it in % like the models.
-#(c): sam is the Southern Annular Mode index, already standardised, from notebook 01's ``SAM_RAW_DIR`` rather than the
-#(c): LESFMIP files (``sam.open_index``); it sorts the seasons into SAM phases (notebook 03, *SAM Phases*).
+#(c): siconc (sea-ice concentration, %) is not in the LEADER-EPESC folders: notebook calc_04 takes it from CEDA's copy of
+#(c): CMIP6 (calc_04's ``CEDA_DIRS``, table SImon), each model on its own grid, and puts it on the 2.5° grid. ERA5's
+#(c): sea-ice cover (code ci) is a fraction from 0 to 1; notebook calc_04 stores it in % like the models.
+#(c): sam is the Southern Annular Mode index, already standardised, from notebook calc_01's ``SAM_RAW_DIR`` rather than the
+#(c): LESFMIP files (``sam.open_index``); it sorts the seasons into SAM phases (notebook calc_02, *SAM Phases*).
 VARIABLES = {
     "tas": Variable("tas", "Near-surface air temperature", "°C", offset=-273.15, era5_code="2t", era5_name="t2m"),
     "pr": Variable("pr", "Precipitation", "mm day⁻¹", scale=86400.0),

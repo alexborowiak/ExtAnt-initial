@@ -80,7 +80,7 @@ def unflatten(vector):
 
 #(t): The signal sets, from one signal to four: each signal is a sum of experiments' responses, with coefficients.
 #(t): ANT is historical minus hist-nat; OTH (aerosols and ozone) is hist-aer plus hist-totalO3. Every set with
-#(t): more than one signal assumes the single forcings add up (notebook 03, section 6)
+#(t): more than one signal assumes the single forcings add up (notebook calc_02, section 6)
 SIGNAL_SETS = {
     "1 signal": {"ALL": {"historical": 1}},
     "2 signals": {"ANT": {"historical": 1, "hist-nat": -1}, "NAT": {"hist-nat": 1}},

@@ -31,14 +31,14 @@ def _axes(n_rows, n_cols, sharex=False, sharey=False, **size):
 
 
 def _tests(statistics):
-    """``ev.locate`` of each statistic (members and ERA5 in one Dataset), along a statistic dim, as in notebook 02."""
+    """``ev.locate`` of each statistic (members and ERA5 in one Dataset), along a statistic dim, as in notebook calc_03a."""
     return xr.concat([ev.locate(values["members"], values["era5"]) for values in statistics.values()],
                      dim=xr.Variable("statistic", list(statistics)))
 
 
 @pytest.fixture(scope="module")
 def point():
-    """Two toy models at one point, as notebook 02 has them: members and ERA5 on the same samples, side by side."""
+    """Two toy models at one point, as notebook calc_03a has them: members and ERA5 on the same samples, side by side."""
     nodes = {}
     for name, n, kwargs in (("A", 25, {}), ("B", 30, {"noise": 1.6})):
         ens, obs = ev.align(*ev.simulate_ensemble(n_members=n, seed=n, **kwargs))
@@ -136,7 +136,7 @@ def test_summaries(point, tests):
     #(c): An unknown statistic (an experiment, say) is its own label
     evp.plot_scorecard(table.sel(statistic=["mean"]).assign_coords(statistic=["hist-nat"]))
 
-    #(c): The toy scenarios: one row, as notebook 02b draws each
+    #(c): The toy scenarios: one row, as notebook plot_01 draws each
     demo = xr.concat([xr.Dataset(dict(zip(("members", "era5"), ev.simulate_ensemble(n_members=20, **kwargs))))
                       for kwargs in ev.SCENARIOS.values()], dim=xr.Variable("scenario", list(ev.SCENARIOS)))
     detrended = demo.map(ev.detrend)
@@ -321,7 +321,7 @@ def zonal_inputs():
     return summary, zonal_ds, ice, edges
 
 def test_zonal_layers(zonal_inputs):
-    """A zonal figure as notebook 04c draws it: the four changes across, one line per experiment, the dots, hist-nat's
+    """A zonal figure as notebook plot_03c draws it: the four changes across, one line per experiment, the dots, hist-nat's
     band and the ice edges."""
     from extant.plots import zonal as zp
 
@@ -460,7 +460,7 @@ def test_paper_figures_fit_the_page_and_ranges_are_checked(tmp_path):
     field = xr.DataArray(np.random.default_rng(4).normal(0, 2, (4, 6, lat.size, lon.size)),
                          dims=("experiment", "model", "lat", "lon"),
                          coords={"experiment": experiments, "model": models, "lat": lat, "lon": lon})
-    #(c): As notebook 06 draws them: maps as big as fit 183 mm, long model names across, letters; once trimmed of
+    #(c): As notebook plot_05 draws them: maps as big as fit 183 mm, long model names across, letters; once trimmed of
     #(c): white space as when saved, no wider than the page
     panel_size = antarctica.panel_size_to_fit(4, 6, 1, width=fr.PAGE_WIDTH, height=fr.PAGE_HEIGHT, title_height=0.35)
     with plt.rc_context(fr.PAPER.rc):

@@ -51,7 +51,7 @@ def test_bootstrap_qrange_on_a_dataset_is_the_same():
 
 
 def test_the_bootstrap_test_detects_a_wider_experiment():
-    """The width test as notebook 03 runs it: the experiment's width against 10 hist-nat members over the same years."""
+    """The width test as notebook calc_02 runs it: the experiment's width against 10 hist-nat members over the same years."""
     hist_nat = _ensemble(30, n_years=21)
     trials = sig.bootstrap_qrange(hist_nat, 10, n_trials=300)
     for experiment, expected in ((_ensemble(30, n_years=21, scale=2.0), "wide"), (_ensemble(30, n_years=21), "same")):
@@ -109,7 +109,7 @@ def test_bootstrap_mean_on_a_dataset_is_the_same():
 
 
 def test_the_mean_test_finds_a_shift():
-    """The mean test as notebook 03 runs it: the experiment's mean against 10 hist-nat members over the same years."""
+    """The mean test as notebook calc_02 runs it: the experiment's mean against 10 hist-nat members over the same years."""
     hist_nat = _ensemble(30, n_years=21)
     trials = sig.bootstrap_mean(hist_nat, 10, n_trials=300)
     for experiment, expected in ((_ensemble(30, n_years=21, shift=0.5), "shifted"), (_ensemble(30, n_years=21), "same")):

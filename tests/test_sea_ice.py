@@ -58,7 +58,7 @@ def test_extent_and_edge_of_one_field():
 
 @skip_empty
 def _seasonal_extent(ds):
-    """Notebook 09's steps for one node: the monthly extent, up to config.LAST_MONTH, averaged into seasons."""
+    """Notebook calc_04's steps for one node: the monthly extent, up to config.LAST_MONTH, averaged into seasons."""
     monthly = sea_ice.monthly_extent(ds).sel(time=slice(None, config.LAST_MONTH))
     return pp.seasonal_means(monthly[["extent"]]).assign(continent_area=monthly["continent_area"])
 

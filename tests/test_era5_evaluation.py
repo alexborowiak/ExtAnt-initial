@@ -146,7 +146,7 @@ def test_locate():
 # ---------------------------------------------------------------------------
 
 def _moment_tests(ens, obs):
-    """The moment test as notebook 02 runs it: each moment of the members and ERA5, then ``locate``."""
+    """The moment test as notebook calc_03a runs it: each moment of the members and ERA5, then ``locate``."""
     ds = xr.Dataset({"members": ens, "era5": obs})
     detrended = ds.map(ev.detrend)
     moments = [ds.mean("year"), detrended.std("year", ddof=1), detrended.map(ev.skewness),
@@ -156,7 +156,7 @@ def _moment_tests(ens, obs):
 
 
 def _statistic_tests(ens, obs):
-    """The other statistics as notebook 02 runs them."""
+    """The other statistics as notebook calc_03a runs them."""
     ds = xr.Dataset({"members": ens, "era5": obs})
     detrended = ds.map(ev.detrend)
     statistics = {

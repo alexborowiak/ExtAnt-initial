@@ -290,7 +290,7 @@ def heatmaps_of_antarctica(da, row_dim, col_dim, axes=None, cax=None, levels=Non
         ticklabels (Sequence[str] | None): A label for each tick, e.g. the names of the classes of a discrete scale;
             the tick values if None.
 
-    A colour scale of notebooks 04-07 (``forced_response.colour_scales``) passes its levels, colours, ticks and label
+    A colour scale of notebooks plot_03 to plot_06 (``forced_response.colour_scales``) passes its levels, colours, ticks and label
     in one go: ``heatmaps_of_antarctica(da, 'model', 'season', axes=axes, cax=cax, **scales.change.colours())``.
 
     Returns:

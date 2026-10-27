@@ -1,10 +1,10 @@
-"""The paper's panels (notebooks 04d, 06 and 07), each drawn on one axis: probability ratios, whole distributions as
+"""The paper's panels (notebooks plot_03d, plot_05 and plot_06), each drawn on one axis: probability ratios, whole distributions as
 ridgelines, and the verification against ERA5; and the colour scales of their maps.
 
 Each ``plot_*(..., ax=None)`` styles one panel (``charts.style_chart_ax``) and draws on it (a new figure if ``ax``
 is None); the notebook makes the figure and its axes (a GridSpec), draws each panel and labels them, as everywhere
 (``charts``).
-Notebook 07 puts its candidate blocks together into layouts with ``fig.subfigures``, each block drawn into its part
+Notebook plot_06 puts its candidate blocks together into layouts with ``fig.subfigures``, each block drawn into its part
 by a ``draw_...(fig, tag_start)`` of the notebook's own. The other panels of the candidates are the shared chart
 layers: the time series and percentile curves (``charts.lines_grid``, ``charts.bands_grid``,
 ``charts.quantile_bands_grid``), the scatter of one change against another (``charts.plot_scatter_by_forcing``) and
@@ -99,7 +99,7 @@ def plot_probability_ratios(ratios_ds, ax=None, shift_only=False):
 
     Args:
         ratios_ds (xr.Dataset): ``pr``, ``pr_lower``, ``pr_upper`` (and ``pr_shift_only`` for ``shift_only``) on
-            (model, experiment), e.g. one region, chance, tail and season of notebook 03's
+            (model, experiment), e.g. one region, chance, tail and season of notebook calc_02's
             ``probability_ratio_regional``.
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.
         shift_only (bool): Also draw the shift-only ratios (open markers).
@@ -250,7 +250,7 @@ def plot_regional_rank_histogram(ranks_ds, ax=None):
 
     Args:
         ranks_ds (xr.Dataset): ``obs_frequency``, ``pseudo_lower``, ``pseudo_upper`` on (rank), and ``percentile``,
-            ``verdict`` on (statistic), e.g. one region, experiment, treatment, model and season of notebook 02's
+            ``verdict`` on (statistic), e.g. one region, experiment, treatment, model and season of notebook calc_03a's
             ``regional_ranks``.
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.
 
@@ -293,7 +293,7 @@ def plot_percentile_table(percentile, verdict, row_dim="model", col_dim="experim
     the attribution needs.
 
     Args:
-        percentile, verdict (xr.DataArray): On (row_dim, col_dim), e.g. one region and season of notebook 02's
+        percentile, verdict (xr.DataArray): On (row_dim, col_dim), e.g. one region and season of notebook calc_03a's
             ``regional_consistency`` (the trend).
         row_dim, col_dim (str): The dims down and across, in the order of their values.
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.

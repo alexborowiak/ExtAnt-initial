@@ -1,6 +1,6 @@
 """Raw files to monthly zarr stores: LESFMIP (one netCDF file per member) and ERA5 (hourly files).
 
-Used by notebook 01 on JASMIN, once per variable, and by notebook 09a for the
+Used by notebook calc_01 on JASMIN, once per variable, and by notebook calc_04 for the
 sea ice, which is in CEDA's copy of the CMIP6 archive rather than the
 LEADER-EPESC folders (the last section lists its folders). Only the pieces are
 here (opening one model's member files together, a month of ERA5, the CEDA

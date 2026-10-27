@@ -1,4 +1,4 @@
-"""Panels of the optimal fingerprinting (notebook 08b); the calculations are in ``extant.fingerprinting``.
+"""Panels of the optimal fingerprinting (notebook fingerprinting_02); the calculations are in ``extant.fingerprinting``.
 
 Each ``plot_*(..., ax=None)`` styles one panel (``charts.style_chart_ax``) and draws on it (a new figure if ``ax``
 is None); the notebook makes the figure and its axes (a GridSpec), draws each panel and labels them, as everywhere

@@ -10,7 +10,7 @@ Sections
 1. The build-up: the forcings' lines revealed one at a time (``plot_buildup``), with a legend that has every forcing
    from the first frame, the ones still to come faded (``plot_buildup_legend``)
 2. Labels: names at the end of lines, quantile levels at the edge of a plume
-3. How the figures are made: one model's test at a point (``plot_point_test``, which notebook 05 draws for every
+3. How the figures are made: one model's test at a point (``plot_point_test``, which notebook plot_04 draws for every
    model before counting them), and one cell of the joint key drawn with a sketched distribution
    (``plot_joint_key_cell``)
 """
@@ -134,7 +134,7 @@ def plot_point_test(hist_nat_da, experiment_da, change, pvalue, experiment, ax=N
 
     Each set of values is drawn as its density (members and years pooled), its mean as a dashed line; the change,
     its p-value and the verdict (a significant increase or decrease, or not significant) go in the top-left corner.
-    Notebook 05 draws one per model, then counts the verdicts.
+    Notebook plot_04 draws one per model, then counts the verdicts.
 
     Args:
         hist_nat_da, experiment_da (xr.DataArray): The values at the point, on any dims (e.g. member, year).
@@ -182,7 +182,7 @@ def plot_joint_key_cell(shift, width, colour, fill=True, ax=None):
     """One cell of the joint key drawn as what it means: hist-nat's distribution (grey, dashed) and a changed one
     shifted by ``shift`` and ``width`` times as wide, in the cell's colour, on the cell's colour faded.
 
-    No data: a picture to explain the joint maps in a talk (notebook 05), one cell per class of
+    No data: a picture to explain the joint maps in a talk (notebook plot_04), one cell per class of
     ``forced_response.joint_scale``.
 
     Args:

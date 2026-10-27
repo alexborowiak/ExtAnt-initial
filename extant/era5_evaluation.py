@@ -39,7 +39,7 @@ seasons at once, or a whole map. ``obs`` is ERA5 in practice, but nothing here
 is ERA5-specific. Works on numpy- or dask-backed data; at a single point the
 data are tiny, so ``.load()`` them first.
 
-Each test is run in notebook 02, one statistic at a time: treat ERA5 and the
+Each test is run in notebook calc_03a, one statistic at a time: treat ERA5 and the
 members alike, compute the statistic for each, then ``locate`` ERA5 among the
 members. Every result has the layout ``locate`` gives it, so the notebook can
 put several along a ``statistic`` dim and ``plots.era5_evaluation`` can draw them.
@@ -323,7 +323,7 @@ class Diagnostic:
 
     ``low`` and ``high`` say what it means for the *model* when ERA5 falls
     significantly below or above the members; the plots print them as the
-    verdict. ``treatment`` is the values notebook 02 computes it on, printed
+    verdict. ``treatment`` is the values notebook calc_03a computes it on, printed
     when a result does not carry its own ``treatment`` coordinate.
     """
 

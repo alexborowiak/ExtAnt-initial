@@ -7,7 +7,7 @@ them, as everywhere (``charts``). Two kinds:
   member-block permutation test of the mean change, and the probability ratio with the share of it the shift of the
   mean gives. Their axes come from ``schematic_axes``: a panel (a), an arrow with the step it stands for, nine
   example trials (b), another arrow, and every trial (c). Each is given the test's own pieces at one point, as
-  notebook 03 makes them, and rebuilds its example trials from the test's draws, so every number on it is the test's
+  notebook calc_02 makes them, and rebuilds its example trials from the test's draws, so every number on it is the test's
   own. A bootstrap trial is one sample, so each of its example panels shows that sample alone; a permutation splits
   the members in two, so each of its panels shows both groups;
 - quick looks that follow the data through the notebooks: monthly to seasonal means, the year x season split, a

@@ -5,17 +5,19 @@
 The sections that need JASMIN (the cluster, the raw-data conversion, the
 full-data opening sections) are skipped: those named in ``JASMIN_SECTIONS``, by
 notebook, and any whose heading still says (JASMIN). So the notebooks run on the
-sample in tests/data instead; notebook 10, which has no sample section, is
+sample in tests/data instead; ensemble_size, which has no sample section, is
 skipped whole (``JASMIN_NOTEBOOKS``). IPython magics, shell lines and help lines
 (``pr.thresholds?``) are dropped. Everything the notebooks save goes to a
 temporary folder: the scratch folder they write out as a plain path is replaced
 by a temporary scratch folder, and this repository's figures folder
-(``Path('../figures')``) by a temporary figures folder. So notebooks 04a-08b
-read what 02a, 02c, 03 and 09a saved, just as they do on JASMIN; 02c runs
-straight after 02a, so that 02b can draw its results, and 09a straight after 03.
-Cells run in order in one namespace per notebook, as in Jupyter, from the
-notebooks folder; a failing cell is reported and the run carries on. Resampling cells use at most ``--trials`` trials (default 500),
-and figures are drawn and closed. The whole run takes a few minutes.
+(``Path('../figures')``) by a temporary figures folder. So the plot_ and
+fingerprinting_02 notebooks read what the calc_ and fingerprinting_01 ones saved,
+just as they do on JASMIN. The notebooks run in the order of their names, which
+is that order: calc_01 to calc_04, ensemble_size, fingerprinting_01 and _02, then
+plot_01 to plot_06. Cells run in order in one namespace per notebook, as in
+Jupyter, from the notebooks folder; a failing cell is reported and the run
+carries on. Resampling cells use at most ``--trials`` trials (default 500), and
+figures are drawn and closed. The whole run takes a few minutes.
 
 Exits with 1 if any cell failed.
 """
@@ -47,42 +49,43 @@ NOTEBOOKS = REPO / "notebooks"
 JASMIN = "(JASMIN)"
 
 #(t): The sections that need JASMIN, by notebook (headings no longer say so): the cluster, the raw data and the
-#(t): full-data opening sections, notebook 01's conversion, test sample and SAM index, and the year-to-year correlation
-#(t): (which needs the full seasonal temperature) where it is made (09a) and drawn (09b, 04c)
+#(t): full-data opening sections, calc_01's conversion, test sample and SAM index, and the year-to-year correlation
+#(t): (which needs the full seasonal temperature) where it is made (calc_04) and drawn (plot_02, plot_03c)
 JASMIN_SECTIONS = {
-    "01_process_data": {"Dask Cluster", "1. LESFMIP Files to Monthly Stores", "2. ERA5 Hourly Files to Monthly Means",
-                        "Full data", "Save", "4. Test Sample", "6. SAM Index"},
-    "02a_era5_evaluation_calculations": {"Full data"},
-    "02b_era5_evaluation_figures": {"Full data"},
-    "02c_observed_change_calculations": {"Full data"},
-    "03_forced_response": {"Dask Cluster", "Full data"},
-    "09a_sea_ice_calculations": {"Dask cluster", "Daily values to monthly means", "What is on CEDA", "Example processing",
-                                 "Processing full data and saving", "Opening Data", "Year-to-year correlation"},
-    "09b_sea_ice_figures": {"Full data", "Year-to-year correlation"},
-    "04a_mean_and_signal_to_noise": {"Full data"},
-    "04b_quantiles_and_width": {"Full data"},
-    "04c_distribution_additivity_zonal": {"Full data", "7.6 Sea ice itself", "7.8 Year-to-year correlation"},
-    "04d_probability_ratios": {"Full data"},
-    "05_slide_figures": {"Full data"},
-    "06_paper_figures": {"Full data"},
-    "07_figure_candidates": {"Full data", "D2 and D4", "Layouts with sea ice"},
-    "08a_optimal_fingerprinting_calculations": {"Full data"},
-    "08b_optimal_fingerprinting_figures": {"Full data"},
+    "calc_01_process_data": {"Dask Cluster", "1. LESFMIP Files to Monthly Stores",
+                             "2. ERA5 Hourly Files to Monthly Means", "Full data", "Save", "4. Test Sample",
+                             "6. SAM Index"},
+    "calc_02_forced_response": {"Dask Cluster", "Full data"},
+    "calc_03a_era5_evaluation": {"Full data"},
+    "calc_03b_observed_change": {"Full data"},
+    "calc_04_sea_ice": {"Dask cluster", "Daily values to monthly means", "What is on CEDA", "Example processing",
+                        "Processing full data and saving", "Opening Data", "Year-to-year correlation"},
+    "fingerprinting_01_calculations": {"Full data"},
+    "fingerprinting_02_figures": {"Full data"},
+    "plot_01_era5_evaluation": {"Full data"},
+    "plot_02_sea_ice": {"Full data", "Year-to-year correlation"},
+    "plot_03a_mean_and_signal_to_noise": {"Full data"},
+    "plot_03b_quantiles_and_width": {"Full data"},
+    "plot_03c_distribution_additivity_zonal": {"Full data", "7.6 Sea ice itself", "7.8 Year-to-year correlation"},
+    "plot_03d_probability_ratios": {"Full data"},
+    "plot_04_slides": {"Full data"},
+    "plot_05_paper": {"Full data"},
+    "plot_06_figure_candidates": {"Full data", "D2 and D4", "Layouts with sea ice"},
 }
 
-#(t): A section inside one of those that runs on the sample too: 09a's look at what was opened, either way
+#(t): A section inside one of those that runs on the sample too: calc_04's look at what was opened, either way
 SAMPLE_TOO = {"What was opened"}
 
-#(t): Notebooks that need JASMIN throughout: 10 opens the full seasonal store from its first cells, with no sample
-#(t): section
-JASMIN_NOTEBOOKS = {"10_ensemble_size"}
+#(t): Notebooks that need JASMIN throughout: ensemble_size opens the full seasonal store from its first cells, with no
+#(t): sample section
+JASMIN_NOTEBOOKS = {"ensemble_size"}
 
 #(t): IPython's help on a name, e.g. ``pr.thresholds?`` (or ``??`` for its source): a line of its own
 HELP_LINE = re.compile(r"\s*[\w.]+\?{1,2}\s*")
 
 #(t): The scratch folder on JASMIN as the notebooks write it out; here it is EXTANT_SCRATCH
 JASMIN_SCRATCH = "Path('/work/scratch-pw4/aborow/ExtAnt')"
-#(t): This repository's figures folder, as notebooks 05-07 write it out (from the notebooks folder); here it is
+#(t): This repository's figures folder, as notebooks plot_04 to plot_06 write it out (from the notebooks folder); here it is
 #(t): EXTANT_FIGURES, so a test run never writes into the repository
 REPO_FIGURES = "Path('../figures')"
 
@@ -93,7 +96,7 @@ TRIAL_CAPS = {"n_trials=10_000": "n_trials={}", "N_TRIALS = 1000": "N_TRIALS = {
 
 
 def stand_in_modules():
-    """Empty modules for the JASMIN-only imports that are not installed here, and ipywidgets' sliders (09a)."""
+    """Empty modules for the JASMIN-only imports that are not installed here, and ipywidgets' sliders (calc_04)."""
     missing = [name for name in ("nc_time_axis", "zarr", "distributed", "dask_gateway")
                if importlib.util.find_spec(name) is None]
     for name in missing:
@@ -140,10 +143,10 @@ def needs_jasmin(name, headings):
     """Whether a cell needs JASMIN: one of its headings says (JASMIN), or is one of ``JASMIN_SECTIONS[name]``.
 
     Args:
-        name (str): The notebook's name, e.g. '09a_sea_ice_calculations'.
+        name (str): The notebook's name, e.g. 'calc_04_sea_ice'.
         headings (list[str]): The headings the cell sits under, outermost first.
 
-    Example: under 09a's "Opening Data", a cell in "ERA5" needs JASMIN, one in "What was opened" does not.
+    Example: under calc_04's "Opening Data", a cell in "ERA5" needs JASMIN, one in "What was opened" does not.
     """
     if headings and headings[-1] in SAMPLE_TOO:
         return False
@@ -210,15 +213,8 @@ def main():
     if args.notebooks:
         notebooks = [p.resolve() for p in args.notebooks]
     else:
-        #(c): In order, but 02c straight after 02a, as 02b draws its results too; and 09a straight after 03: it reads
-        #(c): notebook 03's results, and 04a-04c read its sea ice
-        notebooks = sorted(NOTEBOOKS.glob("[0-9]*.ipynb"))
-        observed_change = NOTEBOOKS / "02c_observed_change_calculations.ipynb"
-        notebooks.remove(observed_change)
-        notebooks.insert(notebooks.index(NOTEBOOKS / "02a_era5_evaluation_calculations.ipynb") + 1, observed_change)
-        sea_ice = NOTEBOOKS / "09a_sea_ice_calculations.ipynb"
-        notebooks.remove(sea_ice)
-        notebooks.insert(notebooks.index(NOTEBOOKS / "03_forced_response.ipynb") + 1, sea_ice)
+        #(c): In the order of their names: every calc_ notebook before the plot_ ones that read what it saved
+        notebooks = sorted(NOTEBOOKS.glob("*.ipynb"))
     #(c): The notebooks put '..' on the path, relative to the notebooks folder
     os.chdir(NOTEBOOKS)
     failures = []

@@ -79,7 +79,7 @@ def test_record_curves(world):
 
 
 def _trend_test(ensemble, obs):
-    """ERA5's trend among the members, as notebook 02 tests it."""
+    """ERA5's trend among the members, as notebook calc_03a tests it."""
     members, era5 = ev.align(ensemble, obs)
     return ev.locate(ev.trend(members), ev.trend(era5))
 

@@ -1,4 +1,4 @@
-"""The paper's panels (notebooks 04d, 06, 07) and the fingerprinting panels (08) draw, on the axes of ``charts``."""
+"""The paper's panels (notebooks plot_03d, plot_05, plot_06) and the fingerprinting panels (fingerprinting_02) draw, on the axes of ``charts``."""
 
 import matplotlib
 

@@ -1,7 +1,7 @@
-"""The JASMIN-only path of notebook 01, on fake raw files: member files -> monthly stores -> seasonal means -> saved.
+"""The JASMIN-only path of notebook calc_01, on fake raw files: member files -> monthly stores -> seasonal means -> saved.
 
 Built from the sample, laid out as on JASMIN (one netCDF file per member under
-<raw>/<experiment>/<model>/), and run as notebook 01 writes it out: the files
+<raw>/<experiment>/<model>/), and run as notebook calc_01 writes it out: the files
 listed, opened together (convert.open_members), saved with to_zarr, the stores
 listed and opened into a DataTree. Everything but the Dask Gateway cluster and
 the xesmf regridding runs as it does there.
@@ -47,7 +47,7 @@ def test_member_labels():
 def test_raw_files_to_seasonal_means(raw_dir, tmp_path):
     monthly_dir, scratch_dir = tmp_path / "monthly", tmp_path / "scratch"
 
-    #(c): Notebook 01, section 1: each model's member files for each experiment, opened together and saved
+    #(c): Notebook calc_01, section 1: each model's member files for each experiment, opened together and saved
     for model in MODELS:
         for experiment in EXPERIMENTS:
             member_paths = sorted((raw_dir / experiment / model).rglob(f"*_{config.GROUP}.nc"))

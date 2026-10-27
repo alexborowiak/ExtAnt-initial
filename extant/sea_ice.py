@@ -65,7 +65,7 @@ CONTINENT_LAT_MAX = -60.0
 #(t): The cell areas of the grid each sea-ice variable is on: the ocean model's (Ofx) and the atmosphere model's (fx)
 AREA_VARIABLES = {"siconc": "areacello", "siconca": "areacella"}
 
-#(t): The grid of every LESFMIP store (notebook 01), south of config.LAT_MAX: cell centres every 2.5°, from 87.5°S
+#(t): The grid of every LESFMIP store (notebook calc_01), south of config.LAT_MAX: cell centres every 2.5°, from 87.5°S
 #(t): to 40°S and from 180°W to 177.5°E, so each cell reaches 1.25° either side of its centre
 GRID_LAT = np.arange(-87.5, config.LAT_MAX + 1.25, 2.5)
 GRID_LON = np.arange(-180.0, 180.0, 2.5)
@@ -141,7 +141,7 @@ def to_grid(da, boxes, area, grid_lat=GRID_LAT, grid_lon=GRID_LON):
     point with a value is missing: on the 2.5° grid, land is where every point
     of the field's own grid in that cell is land. Where the field's points are
     much smaller than the 2.5° cells (an ocean model's 1° grid, ERA5's 0.25°),
-    this is the conservative regridding notebook 01 does for ERA5's
+    this is the conservative regridding notebook calc_01 does for ERA5's
     temperature, give or take the points that straddle a cell edge.
 
     Args:
@@ -404,7 +404,7 @@ def edge_latitude(extents, years=WINDOW):
 
     Args:
         extents (xr.DataTree): Each member's seasonal ``extent`` and its model's ``continent_area`` (km²),
-            /<model>/<experiment>, as notebook 09 makes them.
+            /<model>/<experiment>, as notebook calc_04 makes them.
         years (int): Final years.
 
     Returns:
@@ -417,7 +417,7 @@ def edge_latitude(extents, years=WINDOW):
 
 
 def extent_summary(extents, quantiles=(0.05, 0.95)):
-    """Ensemble mean and spread of the extent in every year, for the extent figures of notebooks 09b and 04c.
+    """Ensemble mean and spread of the extent in every year, for the extent figures of notebooks plot_02 and plot_03c.
 
     Returns:
         xr.Dataset: ``mean``, ``low`` and ``high`` (the ``quantiles`` across members) on
@@ -484,7 +484,7 @@ def monthly_cycle(ds, years=None):
 # 4. Against ERA5
 # ---------------------------------------------------------------------------
 
-#(t): How the figures label ERA5's tests of the extent (notebook 09, section 4.4), and what each means for the model
+#(t): How the figures label ERA5's tests of the extent (notebook calc_04, section 4.4), and what each means for the model
 #(t): when ERA5 falls below (low) or above (high) its members: the mean of the extent, the year-to-year spread of
 #(t): the detrended extent, and the linear trend
 ERA5_DIAGNOSTICS = {

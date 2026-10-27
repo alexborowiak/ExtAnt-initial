@@ -32,7 +32,7 @@ import xarray as xr
 #(t): Where the tables and the sample are written
 OUT_DIR = Path("/work/scratch-pw4/aborow/ExtAnt/sea_ice_sample")
 
-#(t): The models analysed (notebook 01's member counts) and their experiments. The ozone run is hist-totalO3 in
+#(t): The models analysed (notebook calc_01's member counts) and their experiments. The ozone run is hist-totalO3 in
 #(t): some models and hist-stratO3 in others, so both are looked for
 MODELS = ["CanESM5", "GISS-E2-1-G", "HadGEM3-GC31-LL", "MIROC6", "MPI-ESM1-2-LR", "NorESM2-LM"]
 EXPERIMENTS = ["hist-nat", "hist-aer", "hist-GHG", "hist-totalO3", "hist-stratO3", "historical"]
