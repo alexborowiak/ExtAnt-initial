@@ -37,7 +37,7 @@ What is in `extant/`:
 
 | Module | |
 |---|---|
-| `config` | experiments, window length, example point, thresholds, and the variables with their units |
+| `config` | experiments, window length, the years shared with ERA5 (`SATELLITE_YEAR_RANGE`), example point, thresholds, and the variables with their units |
 | `convert` | opening one model's raw member files together, a month of ERA5, and the inventory of CEDA's sea ice (the file lists, loops, saves and regridding are in notebooks 01 and 09a) |
 | `preprocessing` | monthly to seasonal means, and ERA5 onto the model grid |
 | `quantiles` | rolling quantiles and LOWESS (numba) |

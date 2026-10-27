@@ -40,6 +40,10 @@ LAST_MONTH = "2014-12"
 #(t): ERA5 is only trustworthy over Antarctica from 1979 (the satellite era)
 ERA5_START_YEAR = 1979
 
+#(t): The years ERA5 and LESFMIP share, for every comparison with ERA5: from ERA5_START_YEAR to LESFMIP's last whole
+#(t): season, DJF 2013 (historical ends in December 2014, so DJF 2014 is not complete)
+SATELLITE_YEAR_RANGE = slice(ERA5_START_YEAR, 2013)
+
 #(t): Southern edge of the stored data: everything south of 40°S
 LAT_MAX = -40
 

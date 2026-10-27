@@ -10,7 +10,8 @@ is extant/plots/charts.py's, every map's antarctica.py's, and their text sizes t
 # Seasons
 # --------------------------------------------------------------------------
 
-SEASONS = ("DJF", "MAM", "JJA", "SON")
+#(c): A list, not a tuple: xarray takes a list in .sel(season=SEASONS), but a tuple as one label
+SEASONS = ["DJF", "MAM", "JJA", "SON"]
 
 SEASON_COLORS = {
     "DJF": "#1f77b4",
