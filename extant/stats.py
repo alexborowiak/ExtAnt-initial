@@ -29,6 +29,10 @@ def nan_quantile(da, q, dim):
     interpolating between order statistics gives identical results (numpy's
     default 'linear' method) in one vectorised step.
 
+    Example: [3.0, NaN, 1.0, 2.0] sorts to [1.0, 2.0, 3.0, NaN], 3 of them
+    valid, so q = 0.25 is at position (3 - 1) * 0.25 = 0.5, halfway from the
+    1st value to the 2nd: 1.5, as ``np.nanquantile`` gives.
+
     Args:
         da (xr.DataArray): Data.
         q (float | Sequence[float]): Quantile level(s).
@@ -62,6 +66,11 @@ def weighted_member_sums(values, weights):
     dask's einsum splits every block into hundreds of small ones (about 2,500
     tasks for one full-size node instead of 5), which a whole tree of them
     turns into more tasks than the scheduler can hold.
+
+    Example: values [8, 10, 9, 12, 14] (one per member) and the weights
+    [[0, 1, 0, 0, 1], [0.25, 0, 0.5, 0.25, 0]] give [10 + 14, 0.25 * 8 + 0.5 * 9 + 0.25 * 12] = [24, 9.5]:
+    the first row adds up the two members a trial drew, the second averages four
+    draws with replacement (member 2 drawn twice).
 
     Args:
         values (xr.DataArray | xr.Dataset): On (member, ...).

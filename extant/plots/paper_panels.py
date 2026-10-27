@@ -250,7 +250,7 @@ def plot_regional_rank_histogram(ranks_ds, ax=None):
 
     Args:
         ranks_ds (xr.Dataset): ``obs_frequency``, ``pseudo_lower``, ``pseudo_upper`` on (rank), and ``percentile``,
-            ``verdict`` on (statistic), e.g. one region, experiment, treatment, model and season of notebook calc_03a's
+            ``verdict`` on (statistic), e.g. one region, experiment, treatment, model and season of notebook calc_03b's
             ``regional_ranks``.
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.
 

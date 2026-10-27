@@ -149,10 +149,16 @@ def resample_weights(n_members, n_trials, rng):
     times the members' values is then the mean of the members drawn, so every
     trial is one matrix product.
 
+    Example: 4 members, and a trial draws members [2, 0, 2, 3]: member 2 twice,
+    0 and 3 once, 1 never, so its row is [1, 0, 2, 1] / 4 = [0.25, 0, 0.5, 0.25].
+    Notebook calc_02 (section 10) checks trial 0.
+
     Returns:
         np.ndarray: (n_trials, n_members); every row sums to 1.
     """
+    #(c): Each trial's members drawn, with replacement: (trial, draw)
     draws = rng.integers(0, n_members, size=(n_trials, n_members))
+    #(c): Each draw compared with every member, (trial, draw, member), and the matches added up over the draws
     counts = (draws[:, :, None] == np.arange(n_members)).sum(axis=1)
     return counts / n_members
 

@@ -13,8 +13,8 @@ Sections
                         with the uncertainty from a perfect-model test
 
 ERA5's trend among each experiment's members (consistency and detection) is
-worked out in notebook calc_03a with era5_evaluation: ``ev.align`` for common
-samples, ``ev.locate`` for where ERA5 falls among the members.
+worked out in notebooks calc_03a (section 9) and calc_03c with era5_evaluation:
+``ev.align`` for common samples, ``ev.locate`` for where ERA5 falls among the members.
 """
 
 import numpy as np
@@ -182,6 +182,12 @@ def scaling_factors(ensembles, obs, signals="ANT + NAT", pseudo="historical", ye
            ERA5's interval is β minus the 5-95% range of those deviations
            from their median. The median itself shows any bias of the method
            (1 if unbiased).
+
+    Example of step 4: the members' β_ANT have a median of 1.0 and run from
+    0.4 to 1.7 (5% to 95%), deviations of -0.6 to +0.7. ERA5's β_ANT of 1.5
+    then has the interval 1.5 - 0.7 = 0.8 to 1.5 + 0.6 = 2.1: it excludes 0
+    (detected) and includes 1 (consistent). Notebook calc_03c (section 4) goes
+    through every step for one model and region.
 
     Reading the result:
         detected     the interval excludes 0: the signal is in the observations

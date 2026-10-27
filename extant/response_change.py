@@ -84,11 +84,18 @@ def permutation_weights(n_permutations, n_exp, n_nat, rng):
     -1/n_nat on the rest, so ``weights @ member_means`` is each relabelling's
     difference in means. The experiment's members come first in the pool.
 
+    Example: 3 experiment members and 2 hist-nat ones, pooled. The random
+    numbers [0.6, 0.2, 0.9, 0.1, 0.4] sort to the order [3, 1, 4, 0, 2], so
+    pooled members 3, 1 and 4 are relabelled as the experiment:
+    [-1/2, 1/3, -1/2, 1/3, 1/3]. Notebook calc_02 (section 4) checks the first row.
+
     Returns:
         np.ndarray: (n_permutations, n_exp + n_nat).
     """
+    #(c): One random number per pooled member; their order shuffles the members
     order = np.argsort(rng.random((n_permutations, n_exp + n_nat)), axis=1)
     weights = np.full((n_permutations, n_exp + n_nat), -1 / n_nat)
+    #(c): The first n_exp members of each shuffle are relabelled as the experiment
     np.put_along_axis(weights, order[:, :n_exp], 1 / n_exp, axis=1)
     return weights
 

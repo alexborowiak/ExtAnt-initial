@@ -86,6 +86,12 @@ def resample_members(da, n_trials, rng, n_samples=None, replace=True, member_dim
 # those values for every trial, each grid point's pool is sorted once, and each
 # trial reads its quantiles off it by walking in from the nearer end and counting
 # only its own members' values: a few dozen steps for Q05 and Q95 instead of a sort.
+#
+# Example: a trial of 10 members x 21 years has 210 values, so np.quantile puts
+# Q05 at position 209 * 0.05 = 10.45, between the trial's 11th and 12th smallest
+# values. Walking up the sorted pool and counting only the trial's values, the
+# walk stops at the 12th. Q95, at 198.55, is the 11th and 12th largest, so that
+# walk starts from the top. Notebook calc_02 (section 2) goes through it on one trial.
 
 @njit
 def _sorted_pool(block, values, members, counts):
@@ -117,12 +123,15 @@ def _group_quantile(values, members, n_valid, in_group, n_group, q, from_top):
     Gives np.quantile's number for those values alone. Walks from the top for
     high quantiles and from the bottom for low ones, counting only the group.
     """
+    #(c): np.quantile's position among the group's n values: Q05 of 210 values is at 10.45, between values 10 and 11
     position = (n_group - 1) * q
     k = int(np.floor(position))
     low = high = np.nan
+    #(c): How many of the group's values the walk has passed, less one: 0 at the first of them
     count = -1
     if from_top:
         #(c): Counting down from the largest, value k is number n_group - 1 - k and value k + 1 the one before it
+        #(c): (Q95 of 210 is at 198.55: values 198 and 199 from the bottom are numbers 11 and 10 from the top)
         for i in range(n_valid - 1, -1, -1):
             if in_group[members[i]]:
                 count += 1
@@ -203,6 +212,11 @@ def bootstrap_draws(n_hist_nat_members, n_members=N_BOOTSTRAP_MEMBERS, n_trials=
 
     Returns:
         np.ndarray: ``selected``, (trial, member) True for each trial's members.
+
+    Example: 5 members and 2 per trial. A trial's random numbers
+    [0.7, 0.1, 0.5, 0.9, 0.3] are smallest at members 1 and 4, so its row is
+    [False, True, False, False, True]: every pair as likely as any other, and
+    no member twice. Notebook calc_02 (section 2) shows trial 0's members.
     """
     if n_members > n_hist_nat_members:
         raise ValueError("n_members cannot exceed the hist-nat members available.")
@@ -263,6 +277,12 @@ def bootstrap_mean(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, n_trials=1000, seed=
     ``bootstrap_draws(..., seed=seed)`` picks. A trial's mean is the sum of its
     members' values over how many there are, so each member's sum and count
     over the years are added up for every trial at once. Every grid point uses the same draws.
+
+    Example: a trial of members 1 and 4, whose member sums are 10 and 14 over
+    21 years each. Its row of the draws, [0, 1, 0, 0, 1], times the sums
+    [8, 10, 9, 12, 14] is 24, times the counts [21, 21, 21, 21, 21] is 42, so
+    its mean is 24 / 42 = 0.57; one matrix product gives every row at once. Notebook
+    calc_02 (section 4) goes through it on trial 0.
 
     Args:
         hist_nat (xr.DataArray | xr.Dataset): hist-nat over the years compared, on (member, year, ...).

@@ -20,11 +20,22 @@ from .stats import nan_quantile
 
 
 def _centred_sums(x, window):
-    """Sums over centred ``window``-long windows along the last axis, shortened at the ends."""
+    """Sums over centred ``window``-long windows along the last axis, shortened at the ends.
+
+    From one running total: a window's sum is the total to its last value minus
+    the total before its first.
+
+    Example: x = [2, 3, 1, 4] and window = 3 have the running totals
+    [0, 2, 5, 6, 10]. The window centred on the third value runs from the second
+    to the fourth: 10 - 2 = 8 (3 + 1 + 4). Centred on the first it is cut short
+    to the first two: 5 - 0 = 5. Notebook calc_02 (section 5) goes through it.
+    """
     half = window // 2
     n = x.shape[-1]
+    #(c): cumulative[i] is the sum of the first i values, so cumulative[0] = 0 is the total before the first
     cumulative = np.concatenate([np.zeros_like(x[..., :1]), np.cumsum(x, axis=-1)], axis=-1)
     position = np.arange(n)
+    #(c): Each window's last value is half after its centre and its first half before, both kept inside the record
     return cumulative[..., np.minimum(position + half + 1, n)] - cumulative[..., np.maximum(position - half, 0)]
 
 
@@ -32,11 +43,14 @@ def _rolling_std_block(x, window):
     """Standard deviation (ddof=0) of every member's values in each centred window; x is (..., member, year)."""
     valid = np.isfinite(x)
     x = np.where(valid, x, 0.0).astype(np.float64)
+    #(c): Each window's count, sum and sum of squares, from each year's over the members (axis -2)
     count = _centred_sums(valid.sum(axis=-2).astype(np.float64), window)
     mean = _centred_sums(x.sum(axis=-2), window)
     square = _centred_sums((x * x).sum(axis=-2), window)
     with np.errstate(invalid="ignore", divide="ignore"):
         mean /= count
+        #(c): The variance is the mean square minus the squared mean: [1, 2, 3] gives 14 / 3 - 2² = 0.67
+        #(c): (rounding can take it a hair below 0, hence the maximum)
         variance = np.maximum(square / count - mean * mean, 0.0)
     return np.where(count > 0, np.sqrt(variance), np.nan)
 

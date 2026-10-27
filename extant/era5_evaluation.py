@@ -39,10 +39,12 @@ seasons at once, or a whole map. ``obs`` is ERA5 in practice, but nothing here
 is ERA5-specific. Works on numpy- or dask-backed data; at a single point the
 data are tiny, so ``.load()`` them first.
 
-Each test is run in notebook 02, one statistic at a time: treat ERA5 and the
-members alike, compute the statistic for each, then ``locate`` ERA5 among the
-members. Every result has the layout ``locate`` gives it, so the notebook can
-put several along a ``statistic`` dim and ``plots.era5_evaluation`` can draw them.
+Each test is run in notebooks calc_03a (the moment test and the other
+statistics) and calc_03b (the rank histograms), one statistic at a time: treat
+ERA5 and the members alike, compute the statistic for each, then ``locate``
+ERA5 among the members. Every result has the layout ``locate`` gives it, so the
+notebooks can put several along a ``statistic`` dim and ``plots.era5_evaluation``
+can draw them.
 """
 
 from dataclasses import dataclass
@@ -323,8 +325,8 @@ class Diagnostic:
 
     ``low`` and ``high`` say what it means for the *model* when ERA5 falls
     significantly below or above the members; the plots print them as the
-    verdict. ``treatment`` is the values notebook 02 computes it on, printed
-    when a result does not carry its own ``treatment`` coordinate.
+    verdict. ``treatment`` is the values notebook calc_03a or calc_03b computes
+    it on, printed when a result does not carry its own ``treatment`` coordinate.
     """
 
     label: str
@@ -407,6 +409,16 @@ def locate(members, observed, member_dim=MEMBER_DIM, alpha=ALPHA):
 
     With N members the smallest two-sided p-value is 2 / (N + 1), so at
     alpha = 0.1 an ensemble needs at least 20 members to show anything.
+
+    Example::
+
+        members [1.0, 2.0, 3.0, 5.0], ERA5 = 3.0    2 less than ERA5, 1 equal: percentile 100 * (2 + 0.5) / 4 = 62.5
+        20 members, all less than ERA5              with ERA5 as one more member, 21 values; only ERA5 is at or
+                                                    greater than ERA5: upper tail (20 - 20 + 1) / 21 = 0.048,
+                                                    p = 2 * 0.048 = 0.095 < 0.1, so the verdict is +1
+        19 members, all less than ERA5              p = 2 / 20 = 0.1, not less than 0.1: nothing can be flagged
+
+    Notebook calc_03a goes through these steps one at a time, after the mean test.
 
     Only the members with a value count, so several models can sit side by
     side on one ``member`` dim, each padded with NaN to the largest ensemble
@@ -502,6 +514,18 @@ def field_test(result, dims=("lat", "lon"), member_dim=MEMBER_DIM, alpha=ALPHA):
     members and the verdicts averaged, as in ``leave_one_out_counts``, so ERA5
     and the pseudo-observations face exactly the same test.
 
+    Example::
+
+        50 members, ERA5 greater than 48 of them at a grid point
+        leave out one of the 48 (48 of the 50 ways)   ERA5 greater than 47 of 49, 2 greater than it:
+                                                      p = 2 * (2 + 1) / 50 = 0.12, not flagged
+        leave out one of the other 2 (2 of 50 ways)   ERA5 greater than 48 of 49, 1 greater than it:
+                                                      p = 2 * (1 + 1) / 50 = 0.08, flagged
+        so the point counts 2 / 50 = 0.04 towards ERA5's flagged area
+        3 of 50 pseudo-observations flagged over at least ERA5's area: field_pvalue = (3 + 1) / (50 + 1) = 0.078
+
+    Notebook calc_03a goes through these steps one at a time, on one model's standard deviation.
+
     Args:
         result (xr.Dataset): ``locate`` results (e.g. the four moments along a ``statistic``
             dim) on a lat/lon grid, still with ``members``.
@@ -523,6 +547,8 @@ def field_test(result, dims=("lat", "lon"), member_dim=MEMBER_DIM, alpha=ALPHA):
     members = result["members"]
     n = members.notnull().sum(member_dim)
     below = (members < result["era5"]).sum(member_dim)
+    #(c): Leaving out one of the ``below`` members less than ERA5 (below / n of the time) leaves below - 1 of n - 1
+    #(c): less than it; leaving out one of the others leaves ``below`` of n - 1. Each is flagged or not, and weighted
     era5_flagged = ((below / n) * _flagged(below - 1, n - 1, alpha)
                     + ((n - below) / n) * _flagged(below, n - 1, alpha))
     pseudo_below = xr.apply_ufunc(_rank_among_others, members, input_core_dims=[[member_dim]],
@@ -617,6 +643,7 @@ def pseudo_observation_ranks(ensemble, member_dim=MEMBER_DIM):
     return ranks.transpose(*ensemble.dims)
 
 def _rank_bins(n_ranks, rank_dim):
+    """The ranks 0 to n_ranks - 1 along ``rank_dim``, so a rank can be compared with every bin at once ([0, 1, 2, 3])."""
     return xr.DataArray(np.arange(n_ranks), dims=rank_dim, coords={rank_dim: np.arange(n_ranks)})
 
 
@@ -642,6 +669,12 @@ def leave_one_out_counts(obs_rank, n_members, dims, rank_dim="rank"):
     r lowers its rank to r - 1, and leaving out one of the other N - r keeps
     it at r. So each sample adds r / N to bin r - 1 and (N - r) / N to bin r.
 
+    Example: 4 members, 3 of them less than ERA5 (r = 3). Leaving out one of
+    those 3 gives rank 2, which happens for 3 of the 4 members left out, so
+    bin 2 is given 0.75; leaving out the other one keeps rank 3, so bin 3 is
+    given 0.25: [0, 0, 0.75, 0.25] for that year, which adds up to 1. Notebook
+    calc_03b goes through these steps one at a time.
+
     Args:
         obs_rank (xr.DataArray): ``ensemble_rank`` output, 0 to N.
         n_members (int): N.
@@ -651,8 +684,12 @@ def leave_one_out_counts(obs_rank, n_members, dims, rank_dim="rank"):
         xr.DataArray: Expected sample count in each rank bin 0 to N - 1.
     """
     bins = _rank_bins(n_members, rank_dim)
+    #(c): Leaving out one of the r members less than ERA5, r / N of the ways: r / N to bin r - 1 only
+    #(c): (obs_rank - 1 == bins is [0, 0, 1, 0] for r = 3 and 4 bins)
     moved_down = (obs_rank / n_members) * (obs_rank - 1 == bins)
+    #(c): Leaving out one of the other N - r, (N - r) / N of the ways: that to bin r only
     stayed = ((n_members - obs_rank) / n_members) * (obs_rank == bins)
+    #(c): Each sample's two shares add up to 1; the histogram is their sum over the samples
     return (moved_down + stayed).sum(dims)
 
 
@@ -666,6 +703,15 @@ def rank_statistics(counts, rank_dim="rank"):
             mean_rank     mean rank scaled to 0-1; 0.5 when ERA5 is centred in the ensemble
             dispersion    variance of the scaled rank relative to a flat histogram:
                           1 flat, > 1 U-shaped (too little spread), < 1 dome-shaped (too much)
+
+    Example, on 4 ranks (M = 3), scaled to [0, 1/3, 2/3, 1]::
+
+        flat     shares [0.25, 0.25, 0.25, 0.25]   mean 0.5, variance 0.25 * (0.25 + 0.028 + 0.028 + 0.25) = 0.139,
+                                                   which is (M + 2) / (12 M) = 5 / 36: dispersion 1
+        U shape  shares [0.5, 0, 0, 0.5]           every year 0.5 from the mean: variance 0.25, dispersion 1.8
+        dome     shares [0, 0.5, 0.5, 0]           every year 1/6 from the mean: variance 0.028, dispersion 0.2
+
+    Notebook calc_03b goes through these steps one at a time, on ERA5's histogram.
     """
     frequency = counts / counts.sum(rank_dim)
     n_top = counts.sizes[rank_dim] - 1
@@ -751,7 +797,9 @@ def rank_histogram_test(ensemble, obs, treatment="anomaly", pool_dims=(SAMPLE_DI
     pseudo_summary = rank_statistics(pseudo_counts)
 
     #(t): Rank trend: does ERA5 drift through the ensemble over time?
-    #(c): r / N is ERA5's leave-one-out expected scaled rank, matching r / (N - 1) for a pseudo-observation
+    #(c): r / N is ERA5's leave-one-out expected scaled rank, matching r / (N - 1) for a pseudo-observation: leaving out
+    #(c): one of the r members less than ERA5 gives rank r - 1, one of the others r, so its expected rank among N - 1
+    #(c): is (r / N)(r - 1) + ((N - r) / N) r = r (N - 1) / N, which scaled by N - 1 is r / N (4 members, r = 3: 0.75)
     obs_scaled = obs_rank / n_members
     pseudo_scaled = pseudo_rank / (n_members - 1)
     obs_summary["rank_trend"] = trend(obs_scaled, pool_dims)
@@ -824,12 +872,23 @@ def regroup_ranks(frequency, n_bins=10, rank_dim="rank"):
     histogram stays exactly flat whatever N is. This lets ensembles of
     different sizes be drawn on one axis.
 
+    Example, 3 ranks into 2 bins, [0, 0.5) and [0.5, 1]::
+
+        rank 0, [0, 1/3)      inside bin 0: all of it to bin 0
+        rank 1, [1/3, 2/3)    1/6 in each bin, half its width of 1/3: half to each
+        rank 2, [2/3, 1]      inside bin 1: all of it to bin 1
+        frequencies [30, 40, 30] %  ->  [30 + 0.5 * 40, 0.5 * 40 + 30] = [50, 50] %
+
+    Notebook calc_03b goes through these steps one at a time, on one model's histogram.
+
     Returns:
         xr.DataArray: Frequencies on a ``rank_dim`` of bin centres, from 1/(2 n_bins) to 1 - 1/(2 n_bins).
     """
     n_ranks = frequency.sizes[rank_dim]
     rank_edges = np.linspace(0, 1, n_ranks + 1)
     bin_edges = np.linspace(0, 1, n_bins + 1)
+    #(c): Each rank's overlap with each bin, (rank, bin): the smaller right edge minus the larger left edge, 0 if they
+    #(c): do not overlap, as a share of the rank's width 1 / n_ranks ([:, None] puts the ranks down, [None, :] the bins across)
     overlap = np.clip(
         np.minimum(rank_edges[1:, None], bin_edges[None, 1:])
         - np.maximum(rank_edges[:-1, None], bin_edges[None, :-1]),
@@ -1218,6 +1277,15 @@ def period_comparison(whole, early, late, alpha=PERIOD_ALPHA):
       gives the test its power: each edge alone has only a few years.
     - ERA5 too often in the middle: its years in the central 75% are tested
       for being shared between the periods in proportion to their lengths.
+
+    Example: 18 early and 17 late years; ERA5 above every member in 3 years
+    and below every member in 5. Spread evenly, an above year would be early
+    18 / 35 of the time and a below year late 17 / 35 of the time, so
+    (3 * 18 + 5 * 17) / (35 * 8) = 0.50 of the 8 would fit "too much warming"
+    by chance. If all 8 fit (3 above early, 5 below late), the two-sided
+    binomial p-value is about 2 * 0.5 ** 8 = 0.008 < 0.1: the problem changes
+    between the periods, so it is the forced response. Notebook calc_03b goes
+    through these steps one at a time, at one point.
 
     Args:
         whole, early, late (xr.Dataset): ``spatial_evaluation`` of the whole

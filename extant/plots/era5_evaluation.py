@@ -719,7 +719,7 @@ def plot_scorecard(table, statistics=None, ax=None):
 
     Args:
         table (xr.Dataset): ``percentile``, ``verdict`` (and ``testable``) on (model, statistic, season)
-            at one point, e.g. notebook calc_03a's ``eval_table_ds``.
+            at one point, e.g. notebook calc_03b's ``eval_table_ds``.
         statistics (Sequence[str] | None): Subset and order of the column groups.
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.
 
@@ -790,7 +790,7 @@ def plot_signal_noise(table, season, x="trend", y="std", ax=None):
 
     Args:
         table (xr.Dataset): ``percentile``, ``verdict`` (and ``testable``) on (model, statistic, season)
-            at one point, e.g. notebook calc_03a's ``eval_table_ds``.
+            at one point, e.g. notebook calc_03b's ``eval_table_ds``.
         season (str): The season drawn.
         x, y (str): Statistics on each axis.
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.

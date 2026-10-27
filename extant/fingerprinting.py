@@ -215,6 +215,12 @@ def ledoit_wolf(samples):
     samples themselves (the same numbers as
     ``sklearn.covariance.ledoit_wolf(samples, assume_centered=True)``).
 
+    Example: λ = 0.2 and S's eigenvalues [4, 1, 0.01], whose mean is μ = 1.67,
+    give 0.8 * [4, 1, 0.01] + 0.2 * 1.67 = [3.53, 1.13, 0.34]: the smallest is
+    lifted from 0.01 to 0.34, so its weight in the fit drops from 100 to 3. If
+    S is 2 from μ I (delta) and 0.5 of that is sampling noise (beta), λ = 0.25.
+    Notebook fingerprinting_01 (section 5) goes through it on the first half.
+
     Args:
         samples (np.ndarray): (s, n): s samples of n entries, each already with a mean of zero.
 
@@ -274,6 +280,11 @@ def fit_tls(y, X, covariance, n_eff):
        orthogonal to the smallest right singular vector v of Z = [X̃ₛ, ỹ]:
        βₛ = -v[:k] / v[k].
     4. Undo the scaling: βᵢ = βₛ,ᵢ √n_eff,ᵢ.
+
+    Example: 2 entries, one fingerprint, and y = 2 x exactly, so Z = [[1, 2], [2, 4]].
+    Z times [2, -1] is [0, 0]: Z has no extent in that direction, so it is the
+    smallest singular vector, v = [2, -1] / √5, and βₛ = -(2 / √5) / (-1 / √5) = 2.
+    Notebook fingerprinting_01 (section 7) goes through the steps on the real fit.
 
     Args:
         y (np.ndarray): (n,) the observations.
