@@ -39,7 +39,7 @@ def tree():
 
 @pytest.fixture(scope="module")
 def width(tree):
-    """The zonal width test as notebook calc_02 runs it: zonal means of the map change and of the bootstrap trials."""
+    """The zonal width test as notebook calc_02a runs it: zonal means of the map change and of the bootstrap trials."""
     final_tree = tree.isel(year=slice(-YEARS_TESTED, None))
     final_qrange = datatree.reduce_to_dataset(final_tree, qc.quantile_range).tas
     hist_nat_qrange = final_qrange.sel(experiment="hist-nat", drop=True)

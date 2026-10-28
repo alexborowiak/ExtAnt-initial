@@ -99,7 +99,7 @@ def plot_probability_ratios(ratios_ds, ax=None, shift_only=False):
 
     Args:
         ratios_ds (xr.Dataset): ``pr``, ``pr_lower``, ``pr_upper`` (and ``pr_shift_only`` for ``shift_only``) on
-            (model, experiment), e.g. one region, chance, tail and season of notebook calc_02's
+            (model, experiment), e.g. one region, chance, tail and season of notebook calc_02c's
             ``probability_ratio_regional``.
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.
         shift_only (bool): Also draw the shift-only ratios (open markers).

@@ -11,7 +11,7 @@ than its 5th (a cold one), hist-nat's members and years pooled. hist-nat has a
 halves it. Each probability is the share of an ensemble's member-years beyond
 the percentile, averaged member by member (``member_exceedance``).
 
-The shift-only ratio (notebook calc_02, section 11) asks how much of the ratio the
+The shift-only ratio (notebook calc_02c, section 3) asks how much of the ratio the
 shift of the mean alone gives: hist-nat's own seasons, every one moved by the
 experiment's change in the mean, against the same percentiles. Moving the
 seasons up by the change is the same as moving the percentile down by it,
@@ -24,7 +24,7 @@ each ensemble (``bootstrap_member_mean``). The thresholds stay fixed: each
 trial asks how often the resampled members go beyond the same levels, so the
 spread is how well the two ensembles pin down the chance of one defined event.
 
-By SAM phase (notebook calc_02, sections 10 and 11), the events and thresholds are
+By SAM phase (notebook calc_02c, sections 2 and 3), the events and thresholds are
 the same, and the chance is of a season beyond them among the seasons of one
 phase. Members then have different numbers of seasons, so the chance is pooled:
 every member's count of seasons beyond the threshold (``member_beyond``) over
@@ -151,7 +151,7 @@ def resample_weights(n_members, n_trials, rng):
 
     Example: 4 members, and a trial draws members [2, 0, 2, 3]: member 2 twice,
     0 and 3 once, 1 never, so its row is [1, 0, 2, 1] / 4 = [0.25, 0, 0.5, 0.25].
-    Notebook calc_02 (section 10) checks trial 0.
+    Notebook calc_02c (section 2) checks trial 0.
 
     Returns:
         np.ndarray: (n_trials, n_members); every row sums to 1.

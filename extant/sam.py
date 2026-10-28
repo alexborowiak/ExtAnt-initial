@@ -5,7 +5,7 @@ SAM index for every LESFMIP member (notebook calc_01's ``SAM_RAW_DIR``, the file
 archive/draft_current_DAILY.ipynb opened): the zonal-mean index of Gong & Wang
 (1999), the difference between standardised zonal means at 40°S and 65°S, one
 file per member with ``SAM`` on (time_mm, level). Notebook calc_01 (section 6) turns
-it into seasonal means; notebook calc_02 (*SAM Phases*) cuts it into phases:
+it into seasonal means; notebook calc_02a (*SAM Phases*) cuts it into phases:
 
     negative   the index below hist-nat's lower tercile
     neutral    between hist-nat's two terciles
@@ -14,7 +14,7 @@ it into seasonal means; notebook calc_02 (*SAM Phases*) cuts it into phases:
 hist-nat's terciles over the final years, per model and season, members and
 years pooled, and the same for every experiment of the model: hist-nat has a
 third of its seasons in each phase, and an experiment whose SAM has shifted
-has more in one. Each section of notebook calc_02 then has a *By SAM phase*
+has more in one. Each section of notebooks calc_02a to calc_02c then has a *By SAM phase*
 subsection that redoes its result with the seasons of one phase alone.
 
 Sections

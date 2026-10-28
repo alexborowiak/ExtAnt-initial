@@ -1,6 +1,6 @@
 """Where and how each forcing changes the mean and the variability of temperature.
 
-Notebook calc_02 calculates each part of the forced change step by step, with the
+Notebooks calc_02a to calc_02c calculate each part of the forced change step by step, with the
 pieces here; this module also puts the results side by side, each
 experiment's final ``WINDOW`` years against hist-nat, so the figures can
 answer the combined question: where has the mean shifted, where has the
@@ -13,7 +13,7 @@ both happened.
 
 Sections
 --------
-1. Internal variability   the forced response, which notebook calc_02 removes from every member
+1. Internal variability   the forced response, which notebook calc_02a removes from every member
 2. The mean response      the member-block permutation test of the change in the mean
 3. One summary dataset    every change and test on (model, experiment, season, lat, lon), and its
                           split into mean, low and high extremes and width (``extreme_changes``);
@@ -87,7 +87,7 @@ def permutation_weights(n_permutations, n_exp, n_nat, rng):
     Example: 3 experiment members and 2 hist-nat ones, pooled. The random
     numbers [0.6, 0.2, 0.9, 0.1, 0.4] sort to the order [3, 1, 4, 0, 2], so
     pooled members 3, 1 and 4 are relabelled as the experiment:
-    [-1/2, 1/3, -1/2, 1/3, 1/3]. Notebook calc_02 (section 4) checks the first row.
+    [-1/2, 1/3, -1/2, 1/3, 1/3]. Notebook calc_02b (section 1) checks the first row.
 
     Returns:
         np.ndarray: (n_permutations, n_exp + n_nat).
@@ -173,7 +173,7 @@ def change_summary(mean_change, mean_pvalue, signal_to_noise, qrange_change, tai
         signal_to_noise (xr.DataArray): S/N against hist-nat at the year of interest (``sn_final``).
         qrange_change (xr.Dataset): ``qrange_change_ds``, with ``qrange_change`` and ``qrange_pvalue``
             (final years against hist-nat's final years, tested by the hist-nat bootstrap).
-        tails (xr.Dataset | None): Notebook calc_02's ``tails_ds``: upper_tail_change, lower_tail_change,
+        tails (xr.Dataset | None): Notebook calc_02a's ``tails_ds``: upper_tail_change, lower_tail_change,
             width_change, tail_asymmetry and q05/q50/q95_change.
         alpha (float): Significance level for the mean test and the width test.
         sn_threshold (float): |S/N| at which a mean change counts as emerged.
@@ -367,7 +367,7 @@ def additivity(changes, parts=ADDITIVE_PARTS, total="historical", min_total=0.25
     """Does the historical change equal the sum of the single-forcing changes?
 
     Args:
-        changes (xr.DataArray): Each experiment's change from its own baseline, notebook calc_02's ``own_changes_da``.
+        changes (xr.DataArray): Each experiment's change from its own baseline, notebook calc_02b's ``own_changes_da``.
         parts (Sequence[str]): Single-forcing experiments to add up.
         total (str): The all-forcing experiment.
         min_total (float): Fractions of the historical change are only given

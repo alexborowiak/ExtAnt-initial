@@ -2,7 +2,7 @@
 
 All resampling works on whole members, so each member's time series stays intact.
 
-The width test and the mean test (notebook calc_02, sections 2 and 4) compare an
+The width test and the mean test (notebook calc_02a, section 2, and calc_02b, section 1) compare an
 experiment's final years with hist-nat's over the same years. Their null is a
 bootstrap of hist-nat alone: each trial is 10 different hist-nat members, all
 the years given pooled (``bootstrap_draws``). ``bootstrap_qrange`` gives each
@@ -91,7 +91,7 @@ def resample_members(da, n_trials, rng, n_samples=None, replace=True, member_dim
 # Q05 at position 209 * 0.05 = 10.45, between the trial's 11th and 12th smallest
 # values. Walking up the sorted pool and counting only the trial's values, the
 # walk stops at the 12th. Q95, at 198.55, is the 11th and 12th largest, so that
-# walk starts from the top. Notebook calc_02 (section 2) goes through it on one trial.
+# walk starts from the top. Notebook calc_02a (section 2) goes through it on one trial.
 
 @njit
 def _sorted_pool(block, values, members, counts):
@@ -216,7 +216,7 @@ def bootstrap_draws(n_hist_nat_members, n_members=N_BOOTSTRAP_MEMBERS, n_trials=
     Example: 5 members and 2 per trial. A trial's random numbers
     [0.7, 0.1, 0.5, 0.9, 0.3] are smallest at members 1 and 4, so its row is
     [False, True, False, False, True]: every pair as likely as any other, and
-    no member twice. Notebook calc_02 (section 2) shows trial 0's members.
+    no member twice. Notebook calc_02a (section 2) shows trial 0's members.
     """
     if n_members > n_hist_nat_members:
         raise ValueError("n_members cannot exceed the hist-nat members available.")
@@ -282,7 +282,7 @@ def bootstrap_mean(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, n_trials=1000, seed=
     21 years each. Its row of the draws, [0, 1, 0, 0, 1], times the sums
     [8, 10, 9, 12, 14] is 24, times the counts [21, 21, 21, 21, 21] is 42, so
     its mean is 24 / 42 = 0.57; one matrix product gives every row at once. Notebook
-    calc_02 (section 4) goes through it on trial 0.
+    calc_02b (section 1) goes through it on trial 0.
 
     Args:
         hist_nat (xr.DataArray | xr.Dataset): hist-nat over the years compared, on (member, year, ...).

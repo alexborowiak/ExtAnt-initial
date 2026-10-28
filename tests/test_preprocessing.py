@@ -158,7 +158,7 @@ def test_era5_sample_lines_up_with_the_models(season_tree, era5_seasonal):
 
 
 def test_hist_nat_bootstrap_on_the_sample(season_tree):
-    """The bootstrap mapped over every model's hist-nat, as notebook calc_02 runs it."""
+    """The bootstrap mapped over every model's hist-nat, as notebooks calc_02a and calc_02b run it."""
     trials = datatree.reduce_to_dataset(season_tree.match("*/hist-nat"), partial(sig.bootstrap_qrange, n_trials=200))
     assert set(trials.dims) == {"model", "experiment", "trial", "season", "lat", "lon"}
     assert trials.tas.notnull().all()

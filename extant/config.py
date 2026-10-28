@@ -70,7 +70,7 @@ PLOT_SEL = dict(model="CanESM5", experiment="historical")
 #(t): Quantiles for the rolling-quantile analysis: the median and three symmetric pairs
 QUANTILES = np.array([0.01, 0.05, 0.1, 0.5, 0.9, 0.95, 0.99])
 
-#(t): The significance level of every test of the forced response (notebook calc_02, and the figures drawn from it)
+#(t): The significance level of every test of the forced response (notebooks calc_02a to calc_02c, and their figures)
 ALPHA = 0.05
 
 #(t): Multi-model agreement thresholds (IPCC AR6 advanced approach)
@@ -125,7 +125,7 @@ class Variable:
 #(c): CMIP6 (calc_04's ``CEDA_DIRS``, table SImon), each model on its own grid, and puts it on the 2.5° grid. ERA5's
 #(c): sea-ice cover (code ci) is a fraction from 0 to 1; notebook calc_04 stores it in % like the models.
 #(c): sam is the Southern Annular Mode index, already standardised, from notebook calc_01's ``SAM_RAW_DIR`` rather than the
-#(c): LESFMIP files (``sam.open_index``); it sorts the seasons into SAM phases (notebook calc_02, *SAM Phases*).
+#(c): LESFMIP files (``sam.open_index``); it sorts the seasons into SAM phases (notebook calc_02a, *SAM Phases*).
 VARIABLES = {
     "tas": Variable("tas", "Near-surface air temperature", "°C", offset=-273.15, era5_code="2t", era5_name="t2m"),
     "pr": Variable("pr", "Precipitation", "mm day⁻¹", scale=86400.0),

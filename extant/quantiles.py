@@ -28,7 +28,7 @@ def _centred_sums(x, window):
     Example: x = [2, 3, 1, 4] and window = 3 have the running totals
     [0, 2, 5, 6, 10]. The window centred on the third value runs from the second
     to the fourth: 10 - 2 = 8 (3 + 1 + 4). Centred on the first it is cut short
-    to the first two: 5 - 0 = 5. Notebook calc_02 (section 5) goes through it.
+    to the first two: 5 - 0 = 5. Notebook calc_02b (section 2) goes through it.
     """
     half = window // 2
     n = x.shape[-1]

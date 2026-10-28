@@ -8,7 +8,7 @@ the sea-ice edge marked (``sea_ice``). What differs here:
 - every model on its own; the paper averages five;
 - the changes are this project's: each experiment's final ``WINDOW`` years
   against hist-nat, split as in ``response_change.extreme_changes``;
-- the zonal mean is tested, with the same tests as the maps (notebook calc_02, section 8).
+- the zonal mean is tested, with the same tests as the maps (notebook calc_02a, section 5, and calc_02b, section 4).
 
 A latitude's value is the mean over longitude of the change at each grid
 point. So the zonal-mean width is the average of the local widths (how much a
@@ -47,8 +47,8 @@ def zonal_summary(summary, mean_tested=None, width_tested=None):
 
     Args:
         summary (xr.Dataset): ``rc.change_summary`` output, made with ``tails``.
-        mean_tested (xr.Dataset | None): Notebook calc_02's ``zonal_mean_ds``, with ``pvalue``.
-        width_tested (xr.Dataset | None): Notebook calc_02's ``zonal_width_ds``, with ``width_pvalue``,
+        mean_tested (xr.Dataset | None): Notebook calc_02b's ``zonal_mean_ds``, with ``pvalue``.
+        width_tested (xr.Dataset | None): Notebook calc_02a's ``zonal_width_ds``, with ``width_pvalue``,
             ``hist_nat_width``, ``null_lower`` and ``null_upper``.
 
     Returns:
