@@ -14,6 +14,15 @@ import numpy as np
 
 #(t): The experiments analysed. hist-nat is the counterfactual every other experiment is compared with
 MAIN_EXPERIMENTS = ["hist-nat", "hist-aer", "hist-totalO3", "hist-GHG", "historical"]
+
+# Just the models that have more than 5 protocals
+MAIN_MODELS = ['CanESM5',
+ 'GISS-E2-1-G',
+ 'HadGEM3-GC31-LL',
+ 'MIROC6',
+ 'MPI-ESM1-2-LR',
+ 'NorESM2-LM']
+
 #(t): The experiments compared with hist-nat, in the order of every figure
 FORCED_EXPERIMENTS = ["hist-GHG", "hist-aer", "hist-totalO3", "historical"]
 

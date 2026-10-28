@@ -76,6 +76,7 @@ def open_members(files, variable, open_kwargs=None):
     """
     ds = xr.open_mfdataset(files, preprocess=partial(preprocess_member, variable=variable),
                            **(open_kwargs or OPEN_KWARGS))
+    
     return ds.chunk({"time": -1, "lat": max(ds.sizes["lat"] // 2, 1), "lon": -1, "member": 5})
 
 
