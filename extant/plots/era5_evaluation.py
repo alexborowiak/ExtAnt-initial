@@ -25,7 +25,7 @@ Sections
 5. Rank histograms (Suarez-Gutierrez et al., 2021)
 6. Multi-model summaries: scorecard and signal-noise diagram
 7. Method demonstration on synthetic ensembles
-8. Spatial evaluation: the classes and colours of its maps (drawn in notebook plot_01)
+8. Spatial evaluation: the classes and colours of its maps (drawn in notebook plot_01c)
 """
 
 import matplotlib.pyplot as plt
@@ -408,7 +408,7 @@ def member_strips_grid(result, row_dim, axes=None, statistics=None):
     time.
 
     Args:
-        result (xr.Dataset): ``ev.locate`` results along a ``statistic`` dim (e.g. notebook plot_01's moment test) at one
+        result (xr.Dataset): ``ev.locate`` results along a ``statistic`` dim (e.g. notebook plot_01b's moment test) at one
             point, with ``row_dim`` (e.g. 'season').
         row_dim (str): The dim down the rows, in the order of its values.
         axes (np.ndarray | None): The panels, rows × columns, e.g. ``fig.add_gridspec(4, 3).subplots()``. A new
@@ -604,7 +604,7 @@ def anatomy_years(result):
 def plot_rank_counting(ensemble, obs, years, ax=None):
     """How ERA5's rank is counted: in each of ``years``, the members (dots) below ERA5 (dark) and above it (light).
 
-    The second step of how the rank-histogram test works (notebook plot_01); its first is the members and ERA5 through
+    The second step of how the rank-histogram test works (notebook plot_01b); its first is the members and ERA5 through
     time with ``years`` highlighted, and its last the histogram (``plot_grouped_rank_histogram``).
 
     Args:
@@ -645,7 +645,7 @@ def plot_rank_counting(ensemble, obs, years, ax=None):
 def plot_rank_through_time(result, years=(), ax=None):
     """ERA5's rank / N through the record, with its trend; a drift means the model's forced response differs.
 
-    The third step of how the rank-histogram test works (notebook plot_01). Shaded: outside the ensemble.
+    The third step of how the rank-histogram test works (notebook plot_01b). Shaded: outside the ensemble.
 
     Args:
         result (xr.Dataset): ``ev.rank_histogram_test`` output with ``obs_rank`` on (year).
@@ -844,7 +844,7 @@ def plot_percentile_ladder(tests, anomaly_ranks, detrended_ranks, alpha=ev.ALPHA
     """ERA5's percentile for each statistic of a test and the rank tests, one row each: green inside the members'
     central range (the grey band), a red cross where flagged.
 
-    The last column of the toy-ensemble demonstration (notebook plot_01): one scenario, one season.
+    The last column of the toy-ensemble demonstration (notebook plot_01b): one scenario, one season.
 
     Args:
         tests (xr.Dataset): ``ev.locate`` results on (statistic) for one scenario and season.

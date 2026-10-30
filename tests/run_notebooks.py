@@ -14,7 +14,7 @@ by a temporary scratch folder, and this repository's figures folder
 fingerprinting_02 notebooks read what the calc_ and fingerprinting_01 ones saved,
 just as they do on JASMIN. The notebooks run in the order of their names, which
 is that order: calc_01 to calc_04, ensemble_size, fingerprinting_01 and _02, then
-plot_01 to plot_06. Cells run in order in one namespace per notebook, as in
+plot_01a to plot_06. Cells run in order in one namespace per notebook, as in
 Jupyter, from the notebooks folder; a failing cell is reported and the run
 carries on. Resampling cells use at most ``--trials`` trials (default 500), and
 figures are drawn and closed. The whole run takes a few minutes.
@@ -65,7 +65,10 @@ JASMIN_SECTIONS = {
                         "Processing full data and saving", "Opening Data", "Year-to-year correlation"},
     "fingerprinting_01_calculations": {"Full data"},
     "fingerprinting_02_figures": {"Full data"},
-    "plot_01_era5_evaluation": {"Full data"},
+    "plot_01a_era5_distributions_and_plumes": {"Full data"},
+    "plot_01b_era5_point_tests": {"Full data"},
+    "plot_01c_era5_maps": {"Full data"},
+    "plot_01d_observed_change": {"Full data"},
     "plot_02_sea_ice": {"Full data", "Year-to-year correlation"},
     "plot_03a_mean_and_signal_to_noise": {"Full data"},
     "plot_03b_quantiles_and_width": {"Full data"},

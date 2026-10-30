@@ -136,7 +136,7 @@ def test_summaries(point, tests):
     #(c): An unknown statistic (an experiment, say) is its own label
     evp.plot_scorecard(table.sel(statistic=["mean"]).assign_coords(statistic=["hist-nat"]))
 
-    #(c): The toy scenarios: one row, as notebook plot_01 draws each
+    #(c): The toy scenarios: one row, as notebook plot_01b draws each
     demo = xr.concat([xr.Dataset(dict(zip(("members", "era5"), ev.simulate_ensemble(n_members=20, **kwargs))))
                       for kwargs in ev.SCENARIOS.values()], dim=xr.Variable("scenario", list(ev.SCENARIOS)))
     detrended = demo.map(ev.detrend)

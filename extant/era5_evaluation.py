@@ -42,7 +42,7 @@ data are tiny, so ``.load()`` them first.
 Notebook calc_03a works out each statistic (the moment test and the other
 statistics) for ERA5 and every member alike, one statistic at a time, and saves
 the values as they are. ``locate`` then places ERA5 among the members where the
-values are used: notebooks plot_01 and plot_06, and calc_03b's table, beside
+values are used: notebooks plot_01a to plot_01c and plot_06, and calc_03b's table, beside
 calc_03b's rank histograms. Every result has the layout ``locate`` gives it, so
 the notebooks can put several along a ``statistic`` dim and
 ``plots.era5_evaluation`` can draw them.
@@ -419,7 +419,7 @@ def locate(members, observed, member_dim=MEMBER_DIM, alpha=ALPHA):
                                                     p = 2 * 0.048 = 0.095 < 0.1, so the verdict is +1
         19 members, all less than ERA5              p = 2 / 20 = 0.1, not less than 0.1: nothing can be flagged
 
-    Notebook plot_01 goes through these steps one at a time, in *Where ERA5 Falls among the Members*.
+    Notebook plot_01b goes through these steps one at a time, in *Where ERA5 Falls among the Members*.
 
     Only the members with a value count, so several models can sit side by
     side on one ``member`` dim, each padded with NaN to the largest ensemble
@@ -525,7 +525,7 @@ def field_test(result, dims=("lat", "lon"), member_dim=MEMBER_DIM, alpha=ALPHA):
         so the point counts 2 / 50 = 0.04 towards ERA5's flagged area
         3 of 50 pseudo-observations flagged over at least ERA5's area: field_pvalue = (3 + 1) / (50 + 1) = 0.078
 
-    Notebook plot_01 goes through these steps one at a time, on one model's standard deviation (section 7).
+    Notebook plot_01c goes through these steps one at a time, on one model's standard deviation (section 7).
 
     Args:
         result (xr.Dataset): ``locate`` results (e.g. the four moments along a ``statistic``
