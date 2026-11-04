@@ -95,12 +95,12 @@ def separation_scale(label="|S/N|", step=0.25):
     year-to-year noise: below 1 they overlap heavily, above 2 they barely do.
     It is not a test, so there is no threshold, only bands.
     """
-    levels = _from_zero(3, step)
+    levels = np.arange(0, 3 + step / 2, step)
     per_band = int(round(1 / step))
     #(c): One more colour than bands, for the values above 3 (extend="max")
     colors = ListedColormap([*_ramp("YlOrRd", 0.0, 0.2, per_band), *_ramp("Oranges", 0.4, 0.7, per_band),
                              *_ramp("Reds", 0.6, 0.95, per_band), plt.get_cmap("Reds")(1.0)])
-    return Scale(levels, colors, label, norm=BoundaryNorm(levels, colors.N, extend="max"), ticks=_from_zero(3, 0.5),
+    return Scale(levels, colors, label, norm=BoundaryNorm(levels, colors.N, extend="max"), ticks=np.arange(0, 3.1, 0.5),
                  extend="max")
 
 
@@ -200,50 +200,27 @@ class Scales:
     joint: Scale
 
 
-#(t): The range of each colour scale, per variable, as (end, step): the values (start, stop, step, tick step), the
-#(t): largest change, standard deviation, spread and change in spread shown, and the step between colours.
-#(c): About a dozen colours per scale: more cannot be told apart in a small printed panel, and every level also
-#(c): gets a contour line. Check them on the real data with ``saturation`` (notebook plot_05)
-RANGES = {
-    "tas": dict(values=(-60, 10, 5, 15), change=(3, 0.5), noise=(4, 0.5), spread=(12, 1), spread_change=(1, 0.25)),
-}
-
-
-def _symmetric(end, step):
-    """Levels from -end to end every step, exactly (no 0.30000000000000004)."""
-    n = int(round(end / step))
-    return np.round(np.arange(-n, n + 1) * step, 10)
-
-
-def _from_zero(end, step):
-    """Levels from 0 to end every step, exactly."""
-    return np.round(np.arange(int(round(end / step)) + 1) * step, 10)
-
-
 def colour_scales(variable, alpha=0.05):
     """One colour scale per quantity for ``variable``, shared by every figure that shows that quantity.
 
     Args:
-        variable (str): Key of ``config.VARIABLES`` and of ``RANGES``.
+        variable (str): Key of ``config.VARIABLES``, for the labels and units.
         alpha (float): Significance level, for the p-value scale.
 
     Returns:
         Scales
     """
-    if variable not in RANGES:
-        raise KeyError(f"no colour ranges for {variable}: add them to forced_response.RANGES")
     var = config.VARIABLES[variable]
-    ranges = RANGES[variable]
-    start, stop, step, tick = ranges["values"]
     units = var.units
+    #(c): About a dozen colours per scale: more cannot be told apart in a small printed panel, and every level also
+    #(c): gets a contour line. Check them on the real data with ``saturation`` (notebook plot_05)
     return Scales(
-        temperature=Scale(np.arange(start, stop + step / 2, step), "RdBu_r", var.label,
-                          ticks=np.arange(start, stop + step / 2, tick)),
-        change=Scale(_symmetric(*ranges["change"]), "RdBu_r", f"Change ({units})"),
-        noise=Scale(_from_zero(*ranges["noise"]), "viridis", f"Standard deviation ({units})", extend="max"),
-        spread=Scale(_from_zero(*ranges["spread"]), "viridis", f"Spread ({units})", extend="max"),
-        spread_change=Scale(_symmetric(*ranges["spread_change"]), "RdBu_r", f"Change in spread ({units})"),
-        tail=Scale(_symmetric(*ranges["spread_change"]), "RdBu_r", f"Upper-tail minus lower-tail change ({units})"),
+        temperature=Scale(np.arange(-60, 11, 5), "RdBu_r", var.label, ticks=np.arange(-60, 11, 15)),
+        change=Scale(np.arange(-3, 3.1, 0.5), "RdBu_r", f"Anomaly ({units})"),
+        noise=Scale(np.arange(0, 4.1, 0.5), "viridis", f"Standard deviation ({units})", extend="max"),
+        spread=Scale(np.arange(0, 13, 1), "viridis", f"Spread ({units})", extend="max"),
+        spread_change=Scale(np.arange(-1, 1.1, 0.25), "RdBu_r", f"Change in spread ({units})"),
+        tail=Scale(np.arange(-1, 1.1, 0.25), "RdBu_r", f"Upper-tail minus lower-tail change ({units})"),
         sn=separation_scale(),
         pvalue=pvalue_scale(alpha),
         classes=class_scale(["neither", "mean only", "width only", "both"], ["white", "#fdb863", "#b2abd2", "#5e3c99"],
@@ -291,9 +268,9 @@ PAPER = Style(
 
 #(t): On a slide: big text, read from the back of a room
 SLIDES = Style(
-    {**EVAL_RC, "font.size": 12, "axes.titlesize": 13, "figure.titlesize": 15, "axes.labelsize": 12,
-     "xtick.labelsize": 11, "ytick.labelsize": 11, "legend.fontsize": 11},
-    label_size=13, title_size=15, tick_size=11, cbar_label_size=12, tag_size=11,
+    {**EVAL_RC, "font.size": 16, "axes.titlesize": 18, "figure.titlesize": 15, "axes.labelsize": 16,
+     "xtick.labelsize": 14, "ytick.labelsize": 14, "legend.fontsize": 11},
+    label_size=14, title_size=16, tick_size=11, cbar_label_size=12, tag_size=11,
 )
 
 
@@ -308,8 +285,8 @@ def saturation(da, scale):
     """The share of a field's values beyond either end of its colour scale, which the map cannot tell apart.
 
     Shown as the end colours (and arrows on the colour bar); a few percent is
-    fine, much more means the scale's range (``RANGES``) is too narrow for
-    the data. Grid points count equally, wherever they are.
+    fine, much more means the scale's levels (in ``colour_scales``) are too
+    narrow for the data. Grid points count equally, wherever they are.
 
     Args:
         da (xr.DataArray): Any field.

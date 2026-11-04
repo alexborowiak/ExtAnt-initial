@@ -15,6 +15,9 @@ from extant.plots import forced_response as fr
 # Legend entries of the maps
 # --------------------------------------------------------------------------
 
+
+experiment_plotting_ordre = ['historical', 'hist-GHG', 'hist-aer', 'hist-totalO3']
+
 #(t): The dots where a change is not significant (p ≥ config.ALPHA)
 not_significant_handle = plt.Line2D([], [], color='k', marker='.', linestyle='none',
                                     label=f'Not significant (p ≥ {config.ALPHA:g})')
@@ -24,8 +27,8 @@ not_robust_handle = plt.Line2D([], [], color='k', marker='.', linestyle='none',
                                label='Not robust (fewer than two-thirds\nof the models significant with one sign)')
 
 #(t): The two ice edges: hist-nat's dashed, the experiment's solid
-hist_nat_edge_handle = plt.Line2D([], [], color='k', linestyle='dashed', label="hist-nat's ice edge")
-experiment_edge_handle = plt.Line2D([], [], color='k', label="The experiment's ice edge")
+hist_nat_edge_handle = plt.Line2D([], [], color='k', linestyle='dashed', label="Hist-nat ice edge")
+experiment_edge_handle = plt.Line2D([], [], color='k', label="Protocal ice edge")
 
 # --------------------------------------------------------------------------
 # Legend entries of the charts

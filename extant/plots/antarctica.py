@@ -204,24 +204,52 @@ def key_axis_below(axes):
 EXTENT = [-180, 180, -90, -40]
 
 
-def style_antarctic_ax(ax):
+def style_antarctic_ax(ax, add_lat_lon:bool=False):
     """The style of every map of Antarctica: a round edge, the coastlines and light gridlines.
 
     Args:
         ax (cartopy.mpl.geoaxes.GeoAxes): A South Polar Stereographic axis.
     """
+
     ax.set_extent(EXTENT, crs=ccrs.PlateCarree())
-    #(c): The map's edge: a circle round the pole (the axis runs from 0 to 1 each way)
+
+    # Circular boundary
     angles_arr = np.linspace(0, 2 * np.pi, 200)
-    circle = mpath.Path(np.column_stack([np.cos(angles_arr), np.sin(angles_arr)]) * 0.5 + 0.5)
+    circle = mpath.Path(
+        np.column_stack([np.cos(angles_arr), np.sin(angles_arr)]) * 0.5 + 0.5
+    )
     ax.set_boundary(circle, transform=ax.transAxes)
+
+    # Coastlines
     coastlines = ax.coastlines(linewidth=0.6)
-    #(c): Light, so they don't compete with the field; drawn in 90 steps each, so the latitude circles come out round
-    gridlines = ax.gridlines(crs=ccrs.PlateCarree(), color='0.5', alpha=0.45, linewidth=0.4, linestyle='--')
-    gridlines.n_steps = 90
-    #(c): Both stay inside the map's circle, so a constrained layout needn't measure them: skipping them makes a big
-    #(c): figure of maps several times faster to draw
     coastlines.set_in_layout(False)
+
+    # Gridlines
+    gridlines = ax.gridlines(
+        crs=ccrs.PlateCarree(),
+        draw_labels=add_lat_lon,
+        color='0.65',
+        alpha=0.5,
+        linewidth=0.5,
+        linestyle='-',
+        xlocs=np.arange(-180, 180, 30),
+        ylocs=np.arange(-80, -49, 10),
+    )
+
+    gridlines.n_steps = 180
+
+    if add_lat_lon:
+        gridlines.top_labels = True
+        gridlines.bottom_labels = True
+        gridlines.left_labels = True
+        gridlines.right_labels = True
+
+        gridlines.xlabel_style = {'size': 9, 'color': '0.3'}
+        gridlines.ylabel_style = {'size': 9, 'color': '0.3'}
+
+        gridlines.xpadding = 5
+        gridlines.ypadding = 5
+
     gridlines.set_in_layout(False)
 
 

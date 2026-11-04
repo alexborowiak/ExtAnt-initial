@@ -53,10 +53,13 @@ def round_ticks(levels, most):
     return levels[::next((step for step in fitting if round_spacing(step)), fitting[0])]
 
 
-def count_colormap(n_models, base_cmap="Purples"):
+def count_colormap(n_models, base_cmap="Purples", add_white=True):
     """Discrete colormap for a number of models: white for none, one step per model."""
     base = plt.get_cmap(base_cmap)
-    cmap = ListedColormap(["white", *[base(x) for x in np.linspace(0.3, 1, n_models)]])
+    length = n_models if add_white else (n_models+1)
+    colors = [base(x) for x in np.linspace(0, 1, length)]
+    if add_white: colors = ['white', *colors]
+    cmap = ListedColormap(colors)
     return cmap, BoundaryNorm(np.arange(-0.5, n_models + 1.5), cmap.N)
 
 
