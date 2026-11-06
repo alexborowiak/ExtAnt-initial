@@ -1142,60 +1142,21 @@ def _perfect_model_thresholds(ensemble, present, member_dim, sample_dim, quantil
 
 def spatial_evaluation(ensemble, obs, reference=None, period=None, thresholds="fixed",
                        sample_dim=SAMPLE_DIM, member_dim=MEMBER_DIM):
-    """The grid-point evaluation of Suarez-Gutierrez et al. (2021), at every grid point (and season) at once.
-
-    1-2. Anomalies: each member and ERA5 minus its own mean over ``reference``
-         (all the years by default). The constant offset is gone; the forced
-         change and the variability are left.
-    3.   Only years ERA5 has (``align`` has already masked the rest, in ERA5
-         and every member); with fewer than ``MIN_YEARS``, a point is untested.
-    4.   Each year, is ERA5 below every member (rank 0) or above every member (rank N)?
-    5.   % of years below, % above, and % inside the members' central 75% (12.5-87.5%).
-    6.   Compare with a perfect model: ``thresholds="fixed"`` uses the paper's
-         10%, 10% and 80%; ``"perfect_model"`` (not in the paper) treats each
-         member in turn as ERA5 against the other N - 1 and flags a percentage
-         above the 95th percentile of theirs.
-    7.   Diagnose (``DIAGNOSES``), using when the edge years fall: in the first
-         or the second half of the period. ERA5 below the members late, or
-         above them early, means the model warms too much (anomalies are
-         relative to the whole record, so a model that warms too fast looks too
-         warm late and too cold early, relative to ERA5); the reverse, too
-         little. Both edges throughout means too little variability; too often
-         in the middle, too much; one edge throughout, a tail of the wrong length.
-
-    Step 8 is ``period_comparison``; step 9 (the area score and the model
-    count) is ``adequate_area`` and ``adequate_count``.
-
-    Args:
-        ensemble (xr.DataArray): Members with ``member_dim`` and ``sample_dim``, from ``align``.
-        obs (xr.DataArray): ERA5 from ``align``.
-        reference (slice | None): Years whose mean is removed from every series (all if None).
-        period (slice | None): Years to evaluate, after the anomalies are taken, for step 8.
-        thresholds (str): "fixed" (the paper) or "perfect_model".
-        sample_dim, member_dim (str): Dimension names.
-
-    Returns:
-        xr.Dataset on the remaining dims (season, lat, lon):
-            below, above, central                   % of years
-            below_late, above_late                  share of those below / above years in the second half
-            below_threshold, ...                    the thresholds used (step 6)
-            below_flag, above_flag, central_flag    each beyond its threshold (1/0, NaN if untested)
-            diagnosis                               key of ``DIAGNOSES`` (NaN if untested)
-            adequate                                1 adequate, 0 not, NaN untested
-            n_years, n_members
-    """
+    """Evaluate ensemble agreement with observations, including independent signal and noise biases."""
     if thresholds not in ("fixed", "perfect_model"):
         raise ValueError(f"thresholds must be 'fixed' or 'perfect_model', got {thresholds!r}")
+
     ensemble = treat(ensemble, "anomaly", sample_dim, reference)
     obs = treat(obs, "anomaly", sample_dim, reference)
     if period is not None:
         ensemble, obs = ensemble.sel({sample_dim: period}), obs.sel({sample_dim: period})
 
-    #(t): Steps 3-5
+    #(t): Steps 3-5: ensemble exceedances and central range
     present = obs.notnull()
     n_years = present.sum(sample_dim)
     n_members = ensemble.sizes[member_dim]
     central_range = nan_quantile(ensemble, list(CENTRAL_RANGE), member_dim)
+
     flags = {
         "below": (obs < ensemble.min(member_dim)).where(present),
         "above": (obs > ensemble.max(member_dim)).where(present),
@@ -1203,31 +1164,41 @@ def spatial_evaluation(ensemble, obs, reference=None, period=None, thresholds="f
                     & (obs <= central_range.isel(quantile=1, drop=True))).where(present),
     }
     percent = {name: 100 * flag.mean(sample_dim) for name, flag in flags.items()}
+
     years = obs[sample_dim]
     late = years > (years.min() + years.max()) / 2
-    late_share = {name: flags[name].where(late, 0).sum(sample_dim) / flags[name].sum(sample_dim)
-                  for name in ("below", "above")}
+    late_share = {
+        name: flags[name].where(late, 0).sum(sample_dim) / flags[name].sum(sample_dim)
+        for name in ("below", "above")
+    }
 
-    #(t): Step 6
+    #(t): Step 6: determine which frequencies exceed their thresholds
     if thresholds == "fixed":
         limit = {"below": EDGE_THRESHOLD, "above": EDGE_THRESHOLD, "central": CENTRAL_THRESHOLD}
-        beyond = {"below": percent["below"] >= EDGE_THRESHOLD, "above": percent["above"] >= EDGE_THRESHOLD,
-                  "central": percent["central"] > CENTRAL_THRESHOLD}
+        beyond = {
+            "below": percent["below"] >= EDGE_THRESHOLD,
+            "above": percent["above"] >= EDGE_THRESHOLD,
+            "central": percent["central"] > CENTRAL_THRESHOLD,
+        }
         testable = (n_years >= MIN_YEARS) & (n_members >= MIN_MEMBERS)
     else:
         limit = _perfect_model_thresholds(ensemble, present, member_dim, sample_dim)
         beyond = {name: percent[name] > limit[name] for name in percent}
         testable = n_years >= MIN_YEARS
 
-    #(t): Step 7, each later rule overriding the earlier ones, so a timed edge (the forced response) wins
+    #(t): Step 7: original, mutually exclusive diagnosis
     below, above = beyond["below"], beyond["above"]
     both = below & above
-    below_late, below_early = late_share["below"] >= TIMING_SHARE, late_share["below"] <= 1 - TIMING_SHARE
-    above_late, above_early = late_share["above"] >= TIMING_SHARE, late_share["above"] <= 1 - TIMING_SHARE
-    #(c): With both edges beyond, both must point the same way: a few edge years bunching in one half by chance
-    #(c): is common, and too little variability would otherwise often pass for a forced-response error
-    too_much = xr.where(both, below_late & above_early, (below & below_late) | (above & above_early))
-    too_little = xr.where(both, above_late & below_early, (above & above_late) | (below & below_early))
+    below_late = late_share["below"] >= TIMING_SHARE
+    below_early = late_share["below"] <= 1 - TIMING_SHARE
+    above_late = late_share["above"] >= TIMING_SHARE
+    above_early = late_share["above"] <= 1 - TIMING_SHARE
+
+    too_much = xr.where(both, below_late & above_early,
+                        (below & below_late) | (above & above_early))
+    too_little = xr.where(both, above_late & below_early,
+                          (above & above_late) | (below & below_early))
+
     diagnosis = xr.zeros_like(n_years, dtype=float)
     diagnosis = xr.where(beyond["central"], 4, diagnosis)
     diagnosis = xr.where(below ^ above, 5, diagnosis)
@@ -1235,85 +1206,90 @@ def spatial_evaluation(ensemble, obs, reference=None, period=None, thresholds="f
     diagnosis = xr.where(too_little, 2, diagnosis)
     diagnosis = xr.where(too_much, 1, diagnosis)
 
+    #(t): Independent signal test: compare linear temperature trends
+    signal = locate(trend(ensemble, sample_dim), trend(obs, sample_dim), member_dim)
+    signal_testable = testable & (signal["testable"] == 1)
+
+
+    #(t): Independent noise test: compare detrended standard deviations
+    noise = locate(
+        detrend(ensemble, sample_dim).std(sample_dim, ddof=1),
+        detrend(obs, sample_dim).std(sample_dim, ddof=1), member_dim)
+    noise_testable = testable & (noise["testable"] == 1)
+
     def tested(da):
         return da.astype(float).where(testable)
 
     return xr.Dataset({
         **{name: value.where(testable) for name, value in percent.items()},
         **{f"{name}_late": share.where(testable) for name, share in late_share.items()},
-        **{f"{name}_threshold": xr.full_like(n_years, value, dtype=float) if np.isscalar(value) else value
-           for name, value in limit.items()},
+        **{f"{name}_threshold": xr.full_like(n_years, value, dtype=float)
+           if np.isscalar(value) else value for name, value in limit.items()},
         **{f"{name}_flag": tested(flag) for name, flag in beyond.items()},
         "diagnosis": diagnosis.where(testable),
         "adequate": tested(diagnosis == 0),
         "n_years": n_years,
         "n_members": n_members,
+        "signal_bias": (-signal["verdict"]).where(signal_testable),
+        "noise_bias": (-noise["verdict"]).where(noise_testable),
+        "signal_pvalue": signal["pvalue"].where(signal_testable),
+        "noise_pvalue": noise["pvalue"].where(noise_testable),
     }, attrs={"thresholds": thresholds})
 
 
 def _binomial_pvalue(k, n, share):
-    """Two-sided binomial p-value of k successes in n trials with success probability ``share``."""
+    """Two-sided binomial p-value of k successes in n trials with success probability share."""
     lower = scipy.stats.binom.cdf(k, n, share)
     upper = scipy.stats.binom.sf(k - 1, n, share)
     return np.minimum(1, 2 * np.minimum(lower, upper))
 
 
 def period_comparison(whole, early, late, alpha=PERIOD_ALPHA):
-    """Step 8: is a problem over the whole record the same in an early and a late period?
-
-    A model's variability changes little over time, but the forcing does: a
-    problem from the variability shows up as often in both periods, one from
-    the forced response appears, grows or flips between them. Each period is
-    short (~17 years per season), so which thresholds it crosses on its own is
-    largely chance (in 17 years a perfect model is in the central 75% more than
-    80% of the time in about a third of cases). So each problem the whole
-    record flags is tested for an uneven split between the periods instead,
-    with a two-sided binomial test (p < ``alpha``: the forced response):
-
-    - ERA5 beyond the edges: a forced-response error puts ERA5 above the
-      members in one period and below them in the other (or beyond one edge in
-      one period only). So of all the years beyond either edge, the share that
-      fits "too much warming" (above early, below late) is tested against what
-      an even spread over the two periods gives. Pooling both edges is what
-      gives the test its power: each edge alone has only a few years.
-    - ERA5 too often in the middle: its years in the central 75% are tested
-      for being shared between the periods in proportion to their lengths.
-
-    Example: 18 early and 17 late years; ERA5 above every member in 3 years
-    and below every member in 5. Spread evenly, an above year would be early
-    18 / 35 of the time and a below year late 17 / 35 of the time, so
-    (3 * 18 + 5 * 17) / (35 * 8) = 0.50 of the 8 would fit "too much warming"
-    by chance. If all 8 fit (3 above early, 5 below late), the two-sided
-    binomial p-value is about 2 * 0.5 ** 8 = 0.008 < 0.1: the problem changes
-    between the periods, so it is the forced response. Notebook calc_03b goes
-    through these steps one at a time, at one point.
-
-    Args:
-        whole, early, late (xr.Dataset): ``spatial_evaluation`` of the whole
-            record and of each period, with the same ``reference``.
-        alpha (float): Significance level of the split tests.
-
-    Returns:
-        xr.DataArray: Key of ``PERIOD_DIAGNOSES``; NaN where untested.
-    """
+    """Determine whether historical ensemble biases change between early and late periods."""
     n_early, n_late = early["n_years"], late["n_years"]
-    count = {(name, when): np.round(period[name] * period["n_years"] / 100)
-             for name in ("below", "above", "central") for when, period in (("early", early), ("late", late))}
-    above, below = count["above", "early"] + count["above", "late"], count["below", "early"] + count["below", "late"]
-    #(c): Under an even spread an edge year is early with probability n_early / n
-    expected = (above * n_early + below * n_late) / ((n_early + n_late) * (above + below))
-    edge_p = xr.apply_ufunc(_binomial_pvalue, count["above", "early"] + count["below", "late"], above + below, expected)
-    central_p = xr.apply_ufunc(_binomial_pvalue, count["central", "late"],
-                               count["central", "early"] + count["central", "late"], n_late / (n_early + n_late))
+    count = {
+        (name, when): np.round(period[name] * period["n_years"] / 100)
+        for name in ("below", "above", "central")
+        for when, period in (("early", early), ("late", late))
+    }
+
+    above = count["above", "early"] + count["above", "late"]
+    below = count["below", "early"] + count["below", "late"]
+
+    expected = (above * n_early + below * n_late) / (
+        (n_early + n_late) * (above + below)
+    )
+    edge_p = xr.apply_ufunc(
+        _binomial_pvalue, count["above", "early"] + count["below", "late"],
+        above + below, expected
+    )
+    central_p = xr.apply_ufunc(
+        _binomial_pvalue, count["central", "late"],
+        count["central", "early"] + count["central", "late"],
+        n_late / (n_early + n_late)
+    )
+
     edge_problem = (whole["below_flag"] == 1) | (whole["above_flag"] == 1)
-    changed = (edge_problem & (edge_p < alpha)) | ((whole["central_flag"] == 1) & (central_p < alpha))
+    changed = (edge_problem & (edge_p < alpha)) | (
+        (whole["central_flag"] == 1) & (central_p < alpha)
+    )
+
     out = xr.where(whole["adequate"] == 1, 0, xr.where(changed, 2, 1))
     return out.where(whole["adequate"].notnull()).rename("period_diagnosis")
 
 
 def adequate_area(result, lat="lat", lon="lon"):
-    """Step 9: % of the tested area (cos-latitude weighted) where the model has no problem."""
+    """Percentage of tested area where the model has no flagged bias."""
     return 100 * area_mean(result["adequate"], lat=lat, lon=lon)
+
+
+def adequate_count(results, model_dim="model"):
+    """Count adequate and tested models."""
+    return xr.Dataset({
+        "n_adequate": (results["adequate"] == 1).sum(model_dim),
+        "n_tested": results["adequate"].notnull().sum(model_dim),
+    })
+
 
 
 def adequate_count(results, model_dim="model"):
