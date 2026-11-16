@@ -152,9 +152,37 @@ def tree_to_dataset(dt: xr.DataTree, dims: list[str], **concat_kwargs) -> xr.Dat
 
     # Split the MultiIndex into real dimensions (model, experiment). Combinations
     # the tree doesn't contain (a model missing an experiment) become NaN.
-    return ds.unstack("_stacked")
+    ds = ds.unstack("_stacked")
 
+    # unstack returns string labels as object dtype, which .plot() refuses; make them plain str.
+    # inferred_type is 'string' only for text labels, so cftime dates and numbers are left alone.
+    return ds.assign_coords({name: ds[name].astype(str) for name in ds.indexes
+                             if ds.indexes[name].inferred_type == "string"})
 
+def streamline_tree(tree):
+    """Drop tree levels that have one name and dimensions of size 1.
+
+    Example: the gradient tree has paths like 'GISS-E2-1-G/historical'. Every
+    path has 'historical' at level 1, so the paths become 'GISS-E2-1-G'.
+    variable has size 1 ('tas'), so it becomes a scalar coordinate:
+    fit (variable, member, lat, lon, season, year) -> fit (member, lat, lon, season, year),
+    and fit.variable is still 'tas'.
+    """
+    path_parts_list = [leaf.relative_to(tree).split("/") for leaf in tree.leaves]
+
+    # Levels where the leaves have more than one name ('historical' is the only experiment, so it goes)
+    kept_levels = [i for i in range(len(path_parts_list[0]))
+                   if len({parts[i] for parts in path_parts_list}) > 1]
+
+    streamlined_tree = DataTree.from_dict({
+        "/".join(parts[i] for i in kept_levels): leaf.to_dataset()
+        for parts, leaf in zip(path_parts_list, tree.leaves)
+    })
+
+    # Size-1 dimensions become scalar coordinates, so the values stay readable
+    return streamlined_tree.map_over_datasets(lambda ds: ds.squeeze())
+
+    
 def reduce_to_dataset(dt: xr.DataTree, func, dims=("model", "experiment"), **concat_kwargs) -> xr.Dataset:
     """Apply a member-reducing function to every node and collapse the result into one Dataset.
 

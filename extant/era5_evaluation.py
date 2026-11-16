@@ -54,7 +54,7 @@ import numpy as np
 import scipy.stats
 import xarray as xr
 
-from .quantiles import lowess_matrix_xarray
+from .trend import lowess_matrix_xarray
 from .significance import area_mean
 from .stats import nan_quantile
 
@@ -124,74 +124,44 @@ def align(ensemble, obs, years=None, member_dim=MEMBER_DIM, sample_dim=SAMPLE_DI
 # ---------------------------------------------------------------------------
 
 #(t): The three ways of treating each series before comparing, and what each one tests
-TREATMENTS = {
-    "raw": "Raw values",
-    "anomaly": "Anomalies",
-    "detrended": "Detrended anomalies",
-}
+# TREATMENTS = {
+#     "raw": "Raw values",
+#     "anomaly": "Anomalies",
+#     "detrended": "Detrended anomalies",
+# }
 
 
-def anomalies(da, sample_dim=SAMPLE_DIM, reference=None):
-    """Subtract each series' own mean over the ``reference`` samples (all of them if None).
+# def anomalies(da, sample_dim=SAMPLE_DIM, reference=None):
+#     """Subtract each series' own mean over the ``reference`` samples (all of them if None).
 
-    Every member and ERA5 are each measured from their own climatology, so a
-    mean-state bias disappears while the forced trend and the variability
-    remain.
-    """
-    base = da if reference is None else da.sel({sample_dim: reference})
-    return da - base.mean(sample_dim)
-
-
-def linear_fit(da, dim=SAMPLE_DIM, x=None):
-    """Least-squares straight line through each series, ignoring missing samples.
-
-    Args:
-        da (xr.DataArray): Data to fit.
-        dim (str | Sequence[str]): Dimension(s) holding the samples, e.g. "year",
-            or ("year", "season") for one line through all four seasons.
-        x (xr.DataArray | None): The regressor. Defaults to the "year"
-            coordinate (or the coordinate of the first of ``dim``).
-
-    Returns:
-        tuple[xr.DataArray, xr.DataArray]: ``(slope, fitted)``, the slope per unit
-        of ``x`` with ``dim`` reduced, and the fitted line on ``da``'s shape.
-    """
-    dims = [dim] if isinstance(dim, str) else list(dim)
-    if x is None:
-        x = da[SAMPLE_DIM if SAMPLE_DIM in dims else dims[0]]
-
-    #(c): Mask x wherever y is missing, so both means use the same samples
-    x = x.astype(float).broadcast_like(da).where(da.notnull())
-    dx = x - x.mean(dims)
-    dy = da - da.mean(dims)
-    slope = (dx * dy).sum(dims) / (dx**2).sum(dims)
-    return slope, da.mean(dims) + slope * dx
+#     Every member and ERA5 are each measured from their own climatology, so a
+#     mean-state bias disappears while the forced trend and the variability
+#     remain.
+#     """
+#     base = da if reference is None else da.sel({sample_dim: reference})
+#     return da - base.mean(sample_dim)
 
 
-def detrend(da, sample_dim=SAMPLE_DIM):
-    """Subtract each series' own least-squares line, leaving only year-to-year variability."""
-    _, fitted = linear_fit(da, sample_dim)
-    return da - fitted
 
 
-def treat(da, treatment, sample_dim=SAMPLE_DIM, reference=None):
-    """Apply one of ``TREATMENTS`` to every series (each member and ERA5 separately).
+# def treat(da, treatment, sample_dim=SAMPLE_DIM, reference=None):
+#     """Apply one of ``TREATMENTS`` to every series (each member and ERA5 separately).
 
-    raw        unchanged. A mean-state bias dominates any comparison.
-    anomaly    minus the series' own mean over ``reference``. The bias is gone;
-               the forced trend (signal) and the variability (noise) remain.
-    detrended  minus the series' own least-squares line. Only the noise remains.
+#     raw        unchanged. A mean-state bias dominates any comparison.
+#     anomaly    minus the series' own mean over ``reference``. The bias is gone;
+#                the forced trend (signal) and the variability (noise) remain.
+#     detrended  minus the series' own least-squares line. Only the noise remains.
 
-    Treating ERA5 and the members identically is what keeps every test fair:
-    each series loses the same things, with the same sampling noise.
-    """
-    if treatment == "raw":
-        return da
-    if treatment == "anomaly":
-        return anomalies(da, sample_dim, reference)
-    if treatment == "detrended":
-        return detrend(da, sample_dim)
-    raise ValueError(f"treatment must be one of {list(TREATMENTS)}, got {treatment!r}")
+#     Treating ERA5 and the members identically is what keeps every test fair:
+#     each series loses the same things, with the same sampling noise.
+#     """
+#     if treatment == "raw":
+#         return da
+#     if treatment == "anomaly":
+#         return anomalies(da, sample_dim, reference)
+#     if treatment == "detrended":
+#         return detrend(da, sample_dim)
+#     raise ValueError(f"treatment must be one of {list(TREATMENTS)}, got {treatment!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -218,10 +188,7 @@ def excess_kurtosis(da, dim=SAMPLE_DIM):
     return _standardised_moment(da, dim, 4) - 3
 
 
-def trend(da, dim=SAMPLE_DIM):
-    """Least-squares trend, per decade."""
-    slope, _ = linear_fit(da, dim)
-    return 10 * slope
+
 
 
 def lag1_autocorrelation(da, dim=SAMPLE_DIM):

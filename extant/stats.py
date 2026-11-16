@@ -3,6 +3,10 @@ import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
 
+
+
+
+
 def _sorted_quantiles(values, q, n_dims=1):
     """Linear-interpolation quantiles over the last ``n_dims`` axes, ignoring NaN, for every series at once."""
     values = values.reshape(*values.shape[:values.ndim - n_dims], -1)
@@ -279,3 +283,70 @@ def fast_kde_xr(da, x, dim="time", bandwidth="scott"):
     result = result.assign_coords(x=x)
 
     return result
+
+
+
+from scipy.stats import norm
+
+
+def mk_S(y, i, j):
+    """Mann-Kendall S statistic along the last axis.
+
+    S = sum_{k<l} sign(y_l - y_k), as a broadcast pairwise difference
+    over precomputed upper-triangle index pairs.
+
+    Parameters
+    ----------
+    y : np.ndarray
+        Shape (..., n); leading axes treated as independent cells.
+    i, j : np.ndarray
+        Upper-triangle index pairs from np.triu_indices(n, k=1).
+
+    Returns
+    -------
+    np.ndarray
+        S with shape y.shape[:-1].
+    """
+    return np.sign(y[..., j] - y[..., i]).sum(axis=-1)
+
+
+def grid_mk(da, dim='time', alpha=0.05):
+    """Per-cell Mann-Kendall test, lazy over dask.
+
+        Var(S) = n(n-1)(2n+5) / 18          no-ties form
+        Z      = (S -/+ 1) / sqrt(Var)      continuity-corrected, 0 if S = 0
+        p      = 2 * P(N(0,1) > |Z|)
+
+    apply_ufunc moves `dim` to the last axis, which is what mk_S expects.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Input; `dim` is the time axis, other dims treated as cells.
+    dim : str
+        Dimension to test along.
+    alpha : float
+        Threshold for the significance mask.
+
+    Returns
+    -------
+    xr.Dataset
+        S, Z, p (two-sided), sig (bool, p < alpha).
+    """
+    n = da.sizes[dim]
+    i, j = np.triu_indices(n, k=1)
+    var = n * (n - 1) * (2 * n + 5) / 18.0
+
+    S = xr.apply_ufunc(
+        lambda y: mk_S(y, i, j),
+        da,
+        input_core_dims=[[dim]],
+        dask='parallelized', output_dtypes=[float]
+        )
+
+    Z = xr.where(S > 0, (S - 1) / np.sqrt(var),
+        xr.where(S < 0, (S + 1) / np.sqrt(var), 0.0))
+    p = xr.apply_ufunc(lambda z: 2 * norm.sf(np.abs(z)), Z,
+                       dask='parallelized', output_dtypes=[float])
+
+    return xr.Dataset({'S': S, 'Z': Z, 'p': p, 'sig': p < alpha})
