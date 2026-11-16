@@ -27,7 +27,7 @@ import numpy as np
 import xarray as xr
 
 from .config import WINDOW
-from .quantiles import lowess_matrix_xarray
+from .statistics.trend import lowess_matrix_xarray
 from .significance import area_mean, resample_members
 from .datatree import skip_empty
 

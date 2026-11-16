@@ -54,7 +54,7 @@ import numpy as np
 import scipy.stats
 import xarray as xr
 
-from .trend import lowess_matrix_xarray
+from .statistics.trend import lowess_matrix_xarray
 from .significance import area_mean
 from .stats import nan_quantile
 

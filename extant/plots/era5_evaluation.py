@@ -36,6 +36,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 
 from .. import era5_evaluation as ev
+from ..statistics import trend
 from . import charts
 from plotting_modules.constants import FORCING_COLORS, SEASONS
 
@@ -660,7 +661,7 @@ def plot_rank_through_time(result, years=(), ax=None):
     charts.style_chart_ax(ax)
     rank = result["obs_rank"]
     n_members = result.attrs["n_members"]
-    _, fitted = ev.linear_fit(rank, "year")
+    fitted = trend.linear_fit(rank, "year")["fit"]
     ax.axhspan(-0.04, 1 / n_members, color="#fbe3d9", lw=0, zorder=0)
     ax.axhspan(1 - 1 / n_members, 1.04, color="#fbe3d9", lw=0, zorder=0)
     ax.plot(rank["year"], rank, color=ERA5_COLOR, lw=0.8, marker="o", ms=4, zorder=3)

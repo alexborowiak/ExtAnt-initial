@@ -60,7 +60,7 @@ JASMIN_SECTIONS = {
     "calc_02c_probability_ratios": {"Dask Cluster", "Full data"},
     "calc_03a_era5_moment_test": {"Full data"},
     "calc_03b_era5_rank_histograms": {"Full data"},
-    "calc_03c_observed_change": {"Full data"},
+    "calc_03c_observed_change": {"Dask Cluster", "Full data"},
     "calc_04_sea_ice": {"Dask cluster", "Daily values to monthly means", "What is on CEDA", "Example processing",
                         "Processing full data and saving", "Opening Data", "Year-to-year correlation"},
     "fingerprinting_01_calculations": {"Full data"},

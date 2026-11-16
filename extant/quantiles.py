@@ -12,7 +12,6 @@ at once (nesting would also oversubscribe the workers' cores).
 import numpy as np
 import xarray as xr
 from numba import njit, prange
-from scipy import sparse
 
 from .config import WINDOW
 from .datatree import skip_empty
@@ -287,56 +286,3 @@ def quantile_range(da, quantiles=(0.05, 0.95), dims=("member", "year")):
     dims = tuple(d for d in dims if d in da.dims)
     q_da = nan_quantile(da, list(quantiles), dims)
     return q_da.isel(quantile=1, drop=True) - q_da.isel(quantile=0, drop=True)
-
-
-# ---------------------------------------------------------------------------
-# LOWESS smoothing
-# ---------------------------------------------------------------------------
-
-@njit
-def _lowess_pass(x, y, k, robustness, fit, weights):
-    """One pass of local linear fits with tricube x weights (times ``robustness``), as statsmodels does it."""
-    n = x.size
-    left, right = 0, k
-    for i in range(n):
-        xval = x[i]
-        #(c): Slide the k-point neighbourhood until x[i] is at (or just left of) its centre
-        while right < n and xval > (x[left] + x[right]) / 2.0:
-            left += 1
-            right += 1
-        radius = max(xval - x[left], x[right - 1] - xval)
-        total = 0.0
-        nonzero = 0
-        for j in range(left, right):
-            distance = abs(x[j] - xval) / radius
-            distance = 1.0 - distance * distance * distance
-            weights[j] = distance * distance * distance * robustness[j]
-            total += weights[j]
-            nonzero += weights[j] > 1e-12
-        if nonzero < 2:
-            fit[i] = y[i]
-            continue
-        mean_x = 0.0
-        for j in range(left, right):
-            weights[j] /= total
-            mean_x += weights[j] * x[j]
-        spread = 0.0
-        for j in range(left, right):
-            spread += weights[j] * (x[j] - mean_x) ** 2
-        spread = max(spread, 1e-12)
-        value = 0.0
-        for j in range(left, right):
-            value += weights[j] * (1.0 + (xval - mean_x) * (x[j] - mean_x) / spread) * y[j]
-        fit[i] = value
-
-
-@njit
-def _robustness_weights(y, fit, robustness):
-    """Bisquare weights of the residuals in units of 6 x their median absolute value, as statsmodels does it."""
-    residual = np.abs(y - fit)
-    median = np.median(residual)
-    for j in range(y.size):
-        scaled = (1.0 if residual[j] > 0 else 0.0) if median == 0 else residual[j] / (6.0 * median)
-        scaled = min(scaled, 1.0)
-        robustness[j] = (1.0 - scaled * scaled) ** 2
-

@@ -21,6 +21,7 @@ import numpy as np
 import xarray as xr
 
 from . import era5_evaluation as ev
+from .statistics import trend
 
 #(t): The observed period that ERA5 and LESFMIP historical share
 YEARS = slice(1979, 2014)
@@ -246,7 +247,7 @@ def scaling_factors(ensembles, obs, signals="ANT + NAT", pseudo="historical", ye
     spread_low, spread_high = np.quantile(pseudo_beta - centre, [alpha / 2, 1 - alpha / 2], axis=0)
     lower, upper = beta - spread_high, beta - spread_low
 
-    trends = np.array([float(ev.trend(prints[k], ("year", "season"))) for k in names])
+    trends = np.array([float(trend.trend(prints[k], ("year", "season"))) for k in names])
     attributable = np.stack([beta * trends, lower * trends, upper * trends])
     coords = {"signal": names}
     return xr.Dataset({
@@ -261,6 +262,6 @@ def scaling_factors(ensembles, obs, signals="ANT + NAT", pseudo="historical", ye
         "attributable_trend": ("signal", beta * trends),
         "attributable_lower": ("signal", attributable.min(axis=0)),
         "attributable_upper": ("signal", attributable.max(axis=0)),
-        "observed_trend": float(ev.trend(obs, ("year", "season"))),
+        "observed_trend": float(trend.trend(obs, ("year", "season"))),
         "n_samples": int(valid.sum()),
     }, coords=coords, attrs={"signals": str(signals), "pseudo": pseudo, "alpha": alpha})

@@ -1,13 +1,12 @@
 import numpy as np
 import xarray as xr
-from numba import njit
-from .datatree import skip_empty
+from numba import njit, prange
+
+from ..datatree import skip_empty
 from scipy import sparse
 
 
 SAMPLE_DIM='time'
-
-# def gradientS
 
 
 def linear_fit(da, dim=SAMPLE_DIM, x=None):
@@ -21,8 +20,8 @@ def linear_fit(da, dim=SAMPLE_DIM, x=None):
             coordinate (or the coordinate of the first of ``dim``).
 
     Returns:
-        tuple[xr.DataArray, xr.DataArray]: ``(slope, fitted)``, the slope per unit
-        of ``x`` with ``dim`` reduced, and the fitted line on ``da``'s shape.
+        xr.Dataset: ``fit``, the fitted line on ``da``'s shape, and ``gradient``,
+        the slope per unit of ``x`` with ``dim`` reduced.
     """
     dims = [dim] if isinstance(dim, str) else list(dim)
     if x is None:
@@ -37,11 +36,62 @@ def linear_fit(da, dim=SAMPLE_DIM, x=None):
     fit_da = xr.merge([fit_da.to_dataset(name='fit'), slope.to_dataset(name='gradient')])
     return fit_da
 
-# def trend(da, dim=SAMPLE_DIM):
-#     """Least-squares trend, per decade."""
-#     slope, _ = linear_fit(da, dim)
-#     return 10 * slope
+def trend(da, dim=SAMPLE_DIM):
+    """Least-squares trend, per decade: ``linear_fit``'s gradient (per year) times 10."""
+    return 10 * linear_fit(da, dim)['gradient']
 
+
+
+# ---------------------------------------------------------------------------
+# LOWESS smoothing
+# ---------------------------------------------------------------------------
+
+@njit
+def _lowess_pass(x, y, k, robustness, fit, weights):
+    """One pass of local linear fits with tricube x weights (times ``robustness``), as statsmodels does it."""
+    n = x.size
+    left, right = 0, k
+    for i in range(n):
+        xval = x[i]
+        #(c): Slide the k-point neighbourhood until x[i] is at (or just left of) its centre
+        while right < n and xval > (x[left] + x[right]) / 2.0:
+            left += 1
+            right += 1
+        radius = max(xval - x[left], x[right - 1] - xval)
+        total = 0.0
+        nonzero = 0
+        for j in range(left, right):
+            distance = abs(x[j] - xval) / radius
+            distance = 1.0 - distance * distance * distance
+            weights[j] = distance * distance * distance * robustness[j]
+            total += weights[j]
+            nonzero += weights[j] > 1e-12
+        if nonzero < 2:
+            fit[i] = y[i]
+            continue
+        mean_x = 0.0
+        for j in range(left, right):
+            weights[j] /= total
+            mean_x += weights[j] * x[j]
+        spread = 0.0
+        for j in range(left, right):
+            spread += weights[j] * (x[j] - mean_x) ** 2
+        spread = max(spread, 1e-12)
+        value = 0.0
+        for j in range(left, right):
+            value += weights[j] * (1.0 + (xval - mean_x) * (x[j] - mean_x) / spread) * y[j]
+        fit[i] = value
+
+
+@njit
+def _robustness_weights(y, fit, robustness):
+    """Bisquare weights of the residuals in units of 6 x their median absolute value, as statsmodels does it."""
+    residual = np.abs(y - fit)
+    median = np.median(residual)
+    for j in range(y.size):
+        scaled = (1.0 if residual[j] > 0 else 0.0) if median == 0 else residual[j] / (6.0 * median)
+        scaled = min(scaled, 1.0)
+        robustness[j] = (1.0 - scaled * scaled) ** 2
 
 
 def _lowess(y, frac, it, out):
