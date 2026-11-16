@@ -15,9 +15,48 @@ import scipy.special
 import xarray as xr
 from numba import njit, prange
 
-from .quantiles import numpy_lerp
-from .datatree import skip_empty
-from .stats import nan_quantile, weighted_member_sums
+from ..utils.datatree import skip_empty
+from .quantiles import nan_quantile, numpy_lerp
+
+
+# ---------------------------------------------------------------------------
+# Weighted sums over the members, for resampling
+# ---------------------------------------------------------------------------
+
+def _weighted_sums(values, weights):
+    return values @ weights.T
+
+
+def weighted_member_sums(values, weights):
+    """Each trial's weighted sum over the members: ``values`` (member, ...) and ``weights`` (trial, member).
+
+    One matrix product per dask block, so the result keeps the blocks of
+    ``values`` with the trials added. ``xr.dot`` gives the same numbers, but
+    dask's einsum splits every block into hundreds of small ones (about 2,500
+    tasks for one full-size node instead of 5), which a whole tree of them
+    turns into more tasks than the scheduler can hold.
+
+    Example: values [8, 10, 9, 12, 14] (one per member) and the weights
+    [[0, 1, 0, 0, 1], [0.25, 0, 0.5, 0.25, 0]] give [10 + 14, 0.25 * 8 + 0.5 * 9 + 0.25 * 12] = [24, 9.5]:
+    the first row adds up the two members a trial drew, the second averages four
+    draws with replacement (member 2 drawn twice).
+
+    Args:
+        values (xr.DataArray | xr.Dataset): On (member, ...).
+        weights (np.ndarray): (trial, member): row k is how much each member counts in trial k.
+
+    Returns:
+        The type of ``values``, with ``member`` replaced by ``trial`` (first, numbered from 0).
+    """
+    if values.chunks:
+        values = values.chunk({"member": -1})
+    out = xr.apply_ufunc(
+        _weighted_sums, values,
+        input_core_dims=[["member"]], output_core_dims=[["trial"]],
+        kwargs={"weights": weights}, dask="parallelized", output_dtypes=[np.float64],
+        dask_gufunc_kwargs={"output_sizes": {"trial": weights.shape[0]}},
+    )
+    return out.transpose("trial", ...).assign_coords(trial=np.arange(weights.shape[0]))
 
 
 # ---------------------------------------------------------------------------

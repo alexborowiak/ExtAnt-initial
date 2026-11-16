@@ -2,27 +2,16 @@ import numpy as np
 import xarray as xr
 from numba import njit, prange
 
-from ..datatree import skip_empty
+from ..utils.datatree import skip_empty
 from scipy import sparse
+from scipy.stats import norm
 
 
-SAMPLE_DIM='time'
+SAMPLE_DIM = 'year'
 
 
-def linear_fit(da, dim=SAMPLE_DIM, x=None):
-    """Least-squares straight line through each series, ignoring missing samples.
-
-    Args:
-        da (xr.DataArray): Data to fit.
-        dim (str | Sequence[str]): Dimension(s) holding the samples, e.g. "year",
-            or ("year", "season") for one line through all four seasons.
-        x (xr.DataArray | None): The regressor. Defaults to the "year"
-            coordinate (or the coordinate of the first of ``dim``).
-
-    Returns:
-        xr.Dataset: ``fit``, the fitted line on ``da``'s shape, and ``gradient``,
-        the slope per unit of ``x`` with ``dim`` reduced.
-    """
+def _slope_and_line(da, dim=SAMPLE_DIM, x=None):
+    """The least-squares slope and fitted line of each series (each variable of a Dataset too), ignoring missing samples."""
     dims = [dim] if isinstance(dim, str) else list(dim)
     if x is None:
         x = da[SAMPLE_DIM if SAMPLE_DIM in dims else dims[0]]
@@ -32,13 +21,42 @@ def linear_fit(da, dim=SAMPLE_DIM, x=None):
     dx = x - x.mean(dims)
     dy = da - da.mean(dims)
     slope = (dx * dy).sum(dims) / (dx**2).sum(dims)
-    fit_da = da.mean(dims) + slope * dx
-    fit_da = xr.merge([fit_da.to_dataset(name='fit'), slope.to_dataset(name='gradient')])
-    return fit_da
+    return slope, da.mean(dims) + slope * dx
+
+
+def linear_fit(da, dim=SAMPLE_DIM, x=None):
+    """Least-squares straight line through each series, ignoring missing samples.
+
+    Example: the series 1, 3, 2, 4 over the years 2000-2003 has the line 1.3 + 0.8 * (year - 2000): ``gradient`` 0.8
+    per year and ``fit`` 1.3, 2.1, 2.9, 3.7.
+
+    Args:
+        da (xr.DataArray): Data to fit (``trend`` and ``detrend`` take a Dataset too).
+        dim (str | Sequence[str]): Dimension(s) holding the samples, e.g. "year",
+            or ("year", "season") for one line through all four seasons.
+        x (xr.DataArray | None): The regressor. Defaults to the "year"
+            coordinate (or the coordinate of the first of ``dim``).
+
+    Returns:
+        xr.Dataset: ``fit``, the fitted line on ``da``'s shape, and ``gradient``,
+        the slope per unit of ``x`` with ``dim`` reduced.
+    """
+    slope, line = _slope_and_line(da, dim, x)
+    return line.to_dataset(name='fit').assign(gradient=slope)
+
 
 def trend(da, dim=SAMPLE_DIM):
-    """Least-squares trend, per decade: ``linear_fit``'s gradient (per year) times 10."""
-    return 10 * linear_fit(da, dim)['gradient']
+    """Least-squares trend, per decade: the gradient (per year) times 10, of a DataArray or each variable of a Dataset."""
+    slope, _ = _slope_and_line(da, dim)
+    return 10 * slope
+
+
+def detrend(da, dim=SAMPLE_DIM):
+    """Each series minus its own least-squares line (``linear_fit``'s fit), leaving only the year-to-year variability.
+
+    Takes a DataArray or a Dataset (each variable detrended on its own)."""
+    _, line = _slope_and_line(da, dim)
+    return da - line
 
 
 
@@ -238,3 +256,70 @@ def lowess_matrix_xarray(da, core_dims='year', window: int = 81):
         dask="parallelized",
         output_dtypes=[float],
     )
+
+
+# ---------------------------------------------------------------------------
+# Mann-Kendall trend test
+# ---------------------------------------------------------------------------
+
+def mk_S(y, i, j):
+    """Mann-Kendall S statistic along the last axis.
+
+    S = sum_{k<l} sign(y_l - y_k), as a broadcast pairwise difference
+    over precomputed upper-triangle index pairs.
+
+    Parameters
+    ----------
+    y : np.ndarray
+        Shape (..., n); leading axes treated as independent cells.
+    i, j : np.ndarray
+        Upper-triangle index pairs from np.triu_indices(n, k=1).
+
+    Returns
+    -------
+    np.ndarray
+        S with shape y.shape[:-1].
+    """
+    return np.sign(y[..., j] - y[..., i]).sum(axis=-1)
+
+
+def grid_mk(da, dim='time', alpha=0.05):
+    """Per-cell Mann-Kendall test, lazy over dask.
+
+        Var(S) = n(n-1)(2n+5) / 18          no-ties form
+        Z      = (S -/+ 1) / sqrt(Var)      continuity-corrected, 0 if S = 0
+        p      = 2 * P(N(0,1) > |Z|)
+
+    apply_ufunc moves `dim` to the last axis, which is what mk_S expects.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Input; `dim` is the time axis, other dims treated as cells.
+    dim : str
+        Dimension to test along.
+    alpha : float
+        Threshold for the significance mask.
+
+    Returns
+    -------
+    xr.Dataset
+        S, Z, p (two-sided), sig (bool, p < alpha).
+    """
+    n = da.sizes[dim]
+    i, j = np.triu_indices(n, k=1)
+    var = n * (n - 1) * (2 * n + 5) / 18.0
+
+    S = xr.apply_ufunc(
+        lambda y: mk_S(y, i, j),
+        da,
+        input_core_dims=[[dim]],
+        dask='parallelized', output_dtypes=[float]
+        )
+
+    Z = xr.where(S > 0, (S - 1) / np.sqrt(var),
+        xr.where(S < 0, (S + 1) / np.sqrt(var), 0.0))
+    p = xr.apply_ufunc(lambda z: 2 * norm.sf(np.abs(z)), Z,
+                       dask='parallelized', output_dtypes=[float])
+
+    return xr.Dataset({'S': S, 'Z': Z, 'p': p, 'sig': p < alpha})

@@ -9,11 +9,11 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from extant import datatree
+from extant.utils import datatree
 from extant import era5_evaluation as ev
 from extant import preprocessing as pp
-from extant import quantiles as qc
-from extant import significance as sig
+from extant.statistics import quantiles as qc
+from extant.statistics import significance as sig
 from extant.config import WINDOW
 
 RNG = np.random.default_rng(42)

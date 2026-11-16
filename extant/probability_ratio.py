@@ -41,8 +41,9 @@ Sections
 import numpy as np
 import xarray as xr
 
-from .datatree import skip_empty
-from .stats import nan_quantile, weighted_member_sums
+from .utils.datatree import skip_empty
+from .statistics.quantiles import nan_quantile
+from .statistics.significance import weighted_member_sums
 
 # ---------------------------------------------------------------------------
 # 1. The levels and the thresholds

@@ -209,12 +209,17 @@ def main():
     parser.add_argument("--trials", type=int, default=500, help="most resampling trials per test")
     parser.add_argument("--keep", action="store_true", help="keep the temporary output folder and print it")
     args = parser.parse_args()
+    #(c): The cells print °C, ✓ and the like; Windows' console encoding can't, so print UTF-8
+    sys.stdout.reconfigure(encoding="utf-8")
 
     output = Path(tempfile.mkdtemp(prefix="extant_notebooks_"))
     for variable in ("EXTANT_SCRATCH", "EXTANT_FIGURES"):
         os.environ[variable] = str(output / variable.split("_")[1].lower())
     sys.path[:0] = [str(REPO)]
     stand_in_modules()
+    #(c): The notebooks that take the scratch folder from src.paths get the temporary one too
+    import src.paths
+    src.paths.SCRATCH_DIR = Path(os.environ["EXTANT_SCRATCH"])
 
     if args.notebooks:
         notebooks = [p.resolve() for p in args.notebooks]

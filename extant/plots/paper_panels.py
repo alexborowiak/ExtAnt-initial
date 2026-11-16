@@ -192,7 +192,7 @@ def plot_ridgelines(densities, means, ridge_dim, height_scale, limit=3.0, value_
     with ``top`` the most any ridge reaches above its baseline (``height_scale`` × the highest density).
 
     Args:
-        densities (xr.DataArray): On (ridge_dim, x), e.g. ``stats.fast_kde_xr`` of anomalies in one season.
+        densities (xr.DataArray): On (ridge_dim, x), e.g. ``statistics.kde.fast_kde_xr`` of anomalies in one season.
         means (xr.DataArray): Each ridge's mean, on (ridge_dim): its colour and its number.
         ridge_dim (str): The ridges' dim, in the order of its values, top first.
         height_scale (float): The ridges' height per unit of density, the same in every panel so their areas compare:

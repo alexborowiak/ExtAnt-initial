@@ -3,8 +3,8 @@ from typing import Optional
 import numpy as np
 import xarray as xr
 
-from extant.datatree import skip_empty
-from extant.statistics import trend
+from ..utils.datatree import skip_empty
+from . import trend
 
 def linear_sn(input_da):
     '''S/N ratio from a straight line through each series (each member, or ERA5).
@@ -81,3 +81,31 @@ def emergence_surface_area_percent(da, thresholds):
     weights_da = np.cos(np.deg2rad(da['lat']))
     exceeds_da = (da > thresholds_da).astype(float)
     return 100 * exceeds_da.weighted(weights_da).mean(['lat', 'lon'])
+
+
+#(t): LOWESS window for the emergence statistic, in years (a ~35-year record cannot carry the 81 used elsewhere)
+EMERGENCE_WINDOW = 25
+
+
+def _last_minus_first(values):
+    """Last finite value minus the first, along the last axis."""
+    finite = np.isfinite(values)
+    first = np.argmax(finite, axis=-1)[..., None]
+    last = (values.shape[-1] - 1 - np.argmax(finite[..., ::-1], axis=-1))[..., None]
+    change = np.take_along_axis(values, last, -1)[..., 0] - np.take_along_axis(values, first, -1)[..., 0]
+    return np.where(finite.any(axis=-1), change, np.nan)
+
+
+def self_signal_to_noise(da, dim='year', window=EMERGENCE_WINDOW):
+    """S/N of a series against itself: how far it has moved relative to its own year-to-year noise.
+
+    signal   the change of its LOWESS-smoothed curve from the start of the record to the end
+    noise    the standard deviation of its deviations from that curve
+
+    ERA5 has no counterfactual, so this is the emergence measure that can be
+    computed for ERA5 and, identically, for every member.
+    """
+    smooth = trend.lowess_matrix_xarray(da, core_dims=dim, window=window)
+    signal = xr.apply_ufunc(_last_minus_first, smooth, input_core_dims=[[dim]], dask="parallelized",
+                            output_dtypes=[float])
+    return signal / (da - smooth).std(dim, ddof=1)

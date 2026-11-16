@@ -7,10 +7,10 @@ import pytest
 import scipy.stats
 import xarray as xr
 
-from extant import datatree
-from extant import quantiles as qc
+from extant.utils import datatree
+from extant.statistics import quantiles as qc
 from extant import response_change as rc
-from extant import significance as sig
+from extant.statistics import significance as sig
 
 RNG = np.random.default_rng(3)
 LAT = np.array([-80.0, -70.0, -50.0])
@@ -208,7 +208,7 @@ def test_width_parts_add_up_to_the_width():
 
 
 def test_joint_class_orders_the_nine_classes_as_the_key():
-    from extant import significance as sig
+    from extant.statistics import significance as sig
 
     change = xr.DataArray([-1.0, 2.0, 3.0, np.nan], dims="lat")
     significant = xr.DataArray([True, True, False, True], dims="lat")

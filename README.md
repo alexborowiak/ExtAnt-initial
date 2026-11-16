@@ -16,10 +16,10 @@ notebooks/
     calc_03b_era5_rank_histograms.ipynb      ... the rank histograms, the paper's grid-point evaluation, and every test in one table, saved
     calc_03c_observed_change.ipynb           is the observed change detectable, and which forcings is it consistent with? saved
     calc_04_sea_ice.ipynb                    the sea ice from CEDA onto the 2.5° grid, extent and edge, against ERA5, with the temperature changes
-    plot_01a_era5_distributions_and_plumes.ipynb   the figures of calc_03a to calc_03c, from the saved results: the bias maps, and the distributions and plumes at the point
-    plot_01b_era5_point_tests.ipynb          ... where ERA5 falls among the members, the toy ensembles, the moment test, rank histograms and scorecard at the point
+    plot_01a_era5_distributions_and_plumes.ipynb   the figures of calc_03a, from the saved results: the bias maps (the distributions and plumes at the point are drawn in calc_03a)
+    plot_01b_era5_point_tests.ipynb          ... the moment test, rank histograms and scorecard at the point (the step-by-step and toy-ensemble demonstrations are in calc_03b)
     plot_01c_era5_maps.ipynb                 ... the moment test maps with the field test, and the spatial evaluation
-    plot_01d_observed_change.ipynb           ... the observed change: consistency with each experiment, record rates, detection maps, scaling factors
+    plot_01d_observed_change.ipynb           ... the observed change: the detection maps (calc_03c draws its S/N and record figures itself)
     plot_02_sea_ice.ipynb                    the figures of calc_04, from the saved results
     plot_03a_mean_and_signal_to_noise.ipynb  the forced response figures, from calc_02a to calc_02c's results (four for every result, from what goes in to how many models agree): the mean change and S/N
     plot_03b_quantiles_and_width.ipynb       ... the quantile response, and the change in width and which tail
@@ -39,25 +39,28 @@ archive/                                      the old draft notebooks
 docs/images/                                  reference figures
 ```
 
-What is in `extant/`:
+What is in `extant/`, by how general it is: `statistics/` and `utils/` are used everywhere; the modules at the top are
+each one analysis's own; `plots/` draws them.
 
 | Module | |
 |---|---|
 | `config` | the settings every notebook shares: experiments (`MAIN_EXPERIMENTS`, `FORCED_EXPERIMENTS` in figure order), window length, the years shared with ERA5 (`SATELLITE_YEAR_RANGE`), the significance level (`ALPHA`), example point, thresholds, and the variables with their units (`VARIABLES`) |
+| `statistics/trend` | straight-line fits (`linear_fit`, `trend` per decade, `detrend`), LOWESS (numba, and as a sparse matrix) and the Mann-Kendall test |
+| `statistics/emergence` | signal-to-noise: the forced S/N against hist-nat, the linear S/N of one series, a series' S/N against itself, and the area where the S/N is past a threshold |
+| `statistics/quantiles` | quantiles ignoring NaN (`nan_quantile`), rolling quantiles and quantile ranges |
+| `statistics/significance` | the hist-nat bootstrap (10 hist-nat members over the same final years) of the width and of the mean, Welch t-test, multi-model agreement, area means |
+| `statistics/kde`, `statistics/records` | kernel density estimates of every series at once; record highs and lows |
+| `utils/datatree`, `utils/logger`, `utils/jasmin` | DataTree helpers; logging; starting the Dask cluster and sending this package to its workers |
 | `convert` | opening one model's raw member files together, a month of ERA5, and the inventory of CEDA's sea ice (the file lists, loops, saves and regridding are in notebooks calc_01 and calc_04) |
 | `preprocessing` | monthly to seasonal means, and ERA5 onto the model grid |
-| `quantiles` | rolling quantiles and LOWESS (numba) |
-| `significance` | the hist-nat bootstrap (10 hist-nat members over the same final years) of the width and of the mean, Welch t-test, multi-model agreement |
 | `response_change` | mean, width and tail changes, the member-block permutation test, additivity |
 | `probability_ratio` | how much more often a season beyond hist-nat's percentiles (warm or cold), the shift-only ratio, and the bootstrap of members |
 | `sam` | the SAM index files, the SAM phases (hist-nat's terciles) every result is split by, and a synthetic index for the sample |
 | `fingerprinting` | optimal fingerprinting: the vectors, fingerprints, noise covariance (Ledoit-Wolf), OLS and TLS fits, Monte Carlo ranges and the residual test |
 | `zonal` | zonal means of the change (mean, low and high extremes, width) and tests of them |
 | `sea_ice` | the sea ice onto the 2.5° grid (with each cell's ocean area), extent and the equivalent latitude of the ice edge, the test against ERA5, and the zones where the ice changed |
-| `era5_evaluation` | the ERA5 tests (Suarez-Gutierrez et al., 2021) |
-| `observed_change` | detection, consistency, records and scaling factors |
-| `datatree`, `stats` | DataTree helpers, fast quantiles and KDEs |
-| `jasmin` | starting the Dask cluster and sending this package to its workers |
+| `era5_evaluation` | the ERA5 tests (Suarez-Gutierrez et al., 2021): treatments, moments, where ERA5 falls among the members, rank histograms, the spatial evaluation |
+| `observed_change` | detection classes, record curves and scaling factors |
 | `plots/` | the figures. Every figure is made the same way: its axes first, then each layer drawn on them, then its labels. Maps take their axes from `antarctica` (`map_figure_size`, `map_axes`, then `colorbar_axis_below` for each colour bar, under the maps it is for, in a figure made with `layout='constrained'`), every other plot gets its size from `charts.chart_figure_size` and its axes from a GridSpec (`fig.add_gridspec(...).subplots()`, in a figure made with `layout='constrained'`); `charts` also has the layers shared by many plots (lines, bands, a marker per model, a point per model and forcing), each a one-axis `plot_...` that styles its panel and a `..._grid` over a DataTree or a DataArray. The other modules hold one-axis panels, `plot_...(data, ax=None)`, one module per analysis module, plus `forced_response` (the colour scales and the notebook, paper and slide styles), `methods` (the step-by-step method figures), `paper_panels` (the paper's panels), `slides` and `fingerprinting` (notebook fingerprinting_02) |
 
 ## Running it

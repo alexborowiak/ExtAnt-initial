@@ -19,7 +19,7 @@ import numpy as np
 import xarray as xr
 
 from . import config
-from .datatree import skip_empty
+from .utils.datatree import skip_empty
 
 #(t): Chunks for the seasonal means: whole time series (rolling windows and member resampling need them whole)
 #(c): and a few latitudes per chunk, so each chunk is a band of the map

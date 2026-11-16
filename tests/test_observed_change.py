@@ -5,6 +5,7 @@ import pytest
 import xarray as xr
 
 from extant import era5_evaluation as ev
+from extant.statistics import records, trend
 from extant import observed_change as oc
 
 RNG = np.random.default_rng(8)
@@ -72,16 +73,16 @@ def test_record_curves(world):
     ensembles, obs = world
     curves = oc.record_curves(ensembles, obs)
     final = curves["obs"].isel(year=-1)
-    np.testing.assert_allclose(final.sel(kind="highs"), float(ev.record_highs(obs).sum()))
-    np.testing.assert_allclose(final.sel(kind="lows"), float(ev.record_lows(obs).sum()))
-    np.testing.assert_allclose(curves["expected"].isel(year=-1), 4 * ev.expected_records(YEARS.size))
+    np.testing.assert_allclose(final.sel(kind="highs"), float(records.record_highs(obs).sum()))
+    np.testing.assert_allclose(final.sel(kind="lows"), float(records.record_lows(obs).sum()))
+    np.testing.assert_allclose(curves["expected"].isel(year=-1), 4 * records.expected_records(YEARS.size))
     assert set(curves["members"].experiment.values) == set(ensembles)
 
 
 def _trend_test(ensemble, obs):
     """ERA5's trend among the members, as notebook calc_03a tests it."""
     members, era5 = ev.align(ensemble, obs)
-    return ev.locate(ev.trend(members), ev.trend(era5))
+    return ev.locate(trend.trend(members), trend.trend(era5))
 
 
 def test_trend_among_each_experiment(world):

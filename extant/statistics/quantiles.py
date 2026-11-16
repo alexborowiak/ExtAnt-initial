@@ -13,9 +13,63 @@ import numpy as np
 import xarray as xr
 from numba import njit, prange
 
-from .config import WINDOW
-from .datatree import skip_empty
-from .stats import nan_quantile
+from ..config import WINDOW
+from ..utils.datatree import skip_empty
+
+
+# ---------------------------------------------------------------------------
+# Quantiles over several dims at once, ignoring NaN
+# ---------------------------------------------------------------------------
+
+def _sorted_quantiles(values, q, n_dims=1):
+    """Linear-interpolation quantiles over the last ``n_dims`` axes, ignoring NaN, for every series at once."""
+    values = values.reshape(*values.shape[:values.ndim - n_dims], -1)
+    ordered = np.sort(values, axis=-1)  # NaN sorts to the end
+    n = np.sum(~np.isnan(ordered), axis=-1, keepdims=True)
+    position = (n - 1) * q
+    lower = np.clip(np.floor(position), 0, None).astype(int)
+    upper = np.clip(lower + 1, None, np.maximum(n - 1, 0)).astype(int)
+    fraction = position - np.floor(position)
+    low_values = np.take_along_axis(ordered, lower, axis=-1)
+    high_values = np.take_along_axis(ordered, upper, axis=-1)
+    #(c): numpy's own interpolation (np.lib._function_base_impl._lerp), so the results match it bit for bit
+    difference = high_values - low_values
+    interpolated = np.where(fraction >= 0.5, high_values - difference * (1 - fraction),
+                            low_values + difference * fraction)
+    return np.where(n > 0, interpolated, np.nan)
+
+
+def nan_quantile(da, q, dim):
+    """Quantiles over ``dim`` ignoring NaN: the same numbers as ``da.quantile(q, dim)``, much faster on maps.
+
+    numpy's nanquantile, which xarray uses for float data, loops over every
+    series in Python, which takes minutes on a full grid. Sorting once and
+    interpolating between order statistics gives identical results (numpy's
+    default 'linear' method) in one vectorised step.
+
+    Example: [3.0, NaN, 1.0, 2.0] sorts to [1.0, 2.0, 3.0, NaN], 3 of them
+    valid, so q = 0.25 is at position (3 - 1) * 0.25 = 0.5, halfway from the
+    1st value to the 2nd: 1.5, as ``np.nanquantile`` gives.
+
+    Args:
+        da (xr.DataArray): Data.
+        q (float | Sequence[float]): Quantile level(s).
+        dim (str | Sequence[str]): Dimension(s) to reduce; several are pooled.
+
+    Returns:
+        xr.DataArray: With a ``quantile`` dim (last) if ``q`` is a sequence, without one if it is a scalar.
+    """
+    levels = np.atleast_1d(np.asarray(q, dtype=float))
+    dims = [dim] if isinstance(dim, str) else list(dim)
+    if da.chunks:
+        da = da.chunk({d: -1 for d in dims})
+    result = xr.apply_ufunc(
+        _sorted_quantiles, da,
+        input_core_dims=[dims], output_core_dims=[["quantile"]],
+        kwargs={"q": levels, "n_dims": len(dims)}, dask="parallelized", output_dtypes=[float],
+        dask_gufunc_kwargs={"output_sizes": {"quantile": levels.size}},
+    ).assign_coords(quantile=levels)
+    return result.isel(quantile=0, drop=True) if np.ndim(q) == 0 else result
 
 
 def _centred_sums(x, window):

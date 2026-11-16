@@ -84,7 +84,7 @@ def test_fingerprinting_panels():
 
 
 def test_ridgelines():
-    from extant.stats import fast_kde_xr
+    from extant.statistics.kde import fast_kde_xr
     rng = np.random.default_rng(5)
     values = xr.DataArray(rng.normal(size=(2, 3, 40, 2)) + np.array([0.0, 1.5])[:, None, None, None],
                           dims=("experiment", "model", "member", "season"),

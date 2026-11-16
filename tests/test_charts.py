@@ -9,7 +9,7 @@ import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 import xarray as xr  # noqa: E402
 
-from extant.datatree import skip_empty  # noqa: E402
+from extant.utils.datatree import skip_empty  # noqa: E402
 from extant.plots import charts  # noqa: E402
 
 

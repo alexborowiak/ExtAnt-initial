@@ -6,10 +6,10 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from extant import datatree
-from extant import quantiles as qc
+from extant.utils import datatree
+from extant.statistics import quantiles as qc
 from extant import response_change as rc
-from extant import significance as sig
+from extant.statistics import significance as sig
 from extant import zonal
 
 RNG = np.random.default_rng(5)

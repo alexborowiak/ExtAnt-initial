@@ -55,7 +55,7 @@ def test_by_phase_keeps_each_phase_s_seasons_and_the_years_both_have():
 
 def test_hist_nat_terciles_put_a_third_in_each_phase():
     from functools import partial
-    from extant import quantiles as qc
+    from extant.statistics import quantiles as qc
     rng = np.random.default_rng(3)
     index = xr.Dataset({"sam": (("member", "year", "season"), rng.normal(size=(30, 21, 4)))},
                        coords={"member": np.arange(30), "year": np.arange(21), "season": ["DJF", "JJA", "MAM", "SON"]})
@@ -81,7 +81,8 @@ def test_synthetic_index_matches_the_tree():
 
 def test_notebook_01_chain(tmp_path):
     #(c): Notebook calc_01, section 6, on fake files: open, cut where historical ends, seasonal means, year x season
-    from extant import datatree, preprocessing as pp
+    from extant import preprocessing as pp
+    from extant.utils import datatree
     times = xr.date_range("1850-01-16", "2020-12-16", freq="MS", calendar="360_day", use_cftime=True)
     for experiment in ("historical", "hist-nat"):
         folder = tmp_path / experiment / "MODEL"

@@ -21,7 +21,7 @@ import numpy as np
 import xarray as xr
 
 from . import era5_evaluation as ev
-from .statistics import trend
+from .statistics import records, trend
 
 #(t): The observed period that ERA5 and LESFMIP historical share
 YEARS = slice(1979, 2014)
@@ -127,7 +127,7 @@ def record_curves(ensembles, obs, years=YEARS, pool_seasons=True):
         and ``expected`` (year), with ``kind`` = ["highs", "lows"].
     """
     def curves(da):
-        both = xr.concat([ev.cumulative_records(da, high=True), ev.cumulative_records(da, high=False)],
+        both = xr.concat([records.cumulative_records(da, high=True), records.cumulative_records(da, high=False)],
                          dim=xr.Variable("kind", ["highs", "lows"]))
         return both.sum("season") if pool_seasons else both
 

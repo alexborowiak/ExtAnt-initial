@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from extant import significance as sig
-from extant.quantiles import quantile_range
+from extant.statistics import significance as sig
+from extant.statistics.quantiles import quantile_range
 
 RNG = np.random.default_rng(11)
 

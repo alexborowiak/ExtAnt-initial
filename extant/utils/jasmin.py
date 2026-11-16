@@ -6,7 +6,7 @@ import zipfile
 from pathlib import Path
 
 GATEWAY_URL = "https://dask-gateway.jasmin.ac.uk"
-PACKAGE = Path(__file__).resolve().parent
+PACKAGE = Path(__file__).resolve().parents[1]   # extant/, above utils/
 
 
 def connect(n_workers=20, wait_for=6, account="extant", worker_memory=16, qos="standard"):

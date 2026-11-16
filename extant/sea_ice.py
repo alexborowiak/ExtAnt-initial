@@ -42,7 +42,7 @@ import xarray as xr
 from . import config
 from . import era5_evaluation as ev
 from .config import WINDOW
-from .datatree import reduce_to_dataset
+from .utils.datatree import reduce_to_dataset
 from .preprocessing import to_analysis_units
 
 #(t): Mean radius of the Earth (km); areas are in km²
@@ -489,7 +489,7 @@ def monthly_cycle(ds, years=None):
 # 4. Against ERA5
 # ---------------------------------------------------------------------------
 
-#(t): How the figures label ERA5's tests of the extent (notebook calc_04, section 4.4), and what each means for the model
+#(t): How the figures label ERA5's tests of the extent (notebook calc_04, section 6), and what each means for the model
 #(t): when ERA5 falls below (low) or above (high) its members: the mean of the extent, the year-to-year spread of
 #(t): the detrended extent, and the linear trend
 ERA5_DIAGNOSTICS = {

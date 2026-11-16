@@ -5,8 +5,8 @@ import pytest
 import xarray as xr
 from statsmodels.nonparametric.smoothers_lowess import lowess
 
-from extant import quantiles as qc
-from extant.stats import nan_quantile
+from extant.statistics import quantiles as qc, trend
+from extant.statistics.quantiles import nan_quantile
 
 RNG = np.random.default_rng(5)
 
@@ -84,14 +84,14 @@ def test_lowess_equals_statsmodels(window, it):
     rows[5] = np.nan                            # an all-NaN series
     rows[6, 50] += 8                            # an outlier for the robustness passes
     rows[7] = 1.0                               # a constant series (zero residuals)
-    result = qc.lowess_xarray(xr.DataArray(rows, dims=("s", "year")), window=window, it=it)
+    result = trend.lowess_xarray(xr.DataArray(rows, dims=("s", "year")), window=window, it=it)
     np.testing.assert_allclose(result.values, _statsmodels_rows(rows, window, it), rtol=1e-9, atol=1e-12)
 
 
 def test_lowess_on_dask_equals_in_memory():
     da = _field(n_years=100).isel(member=0, drop=True)
-    in_memory = qc.lowess_xarray(da, window=31)
-    np.testing.assert_array_equal(qc.lowess_xarray(da.chunk({"lat": 1}), window=31).values, in_memory.values)
+    in_memory = trend.lowess_xarray(da, window=31)
+    np.testing.assert_array_equal(trend.lowess_xarray(da.chunk({"lat": 1}), window=31).values, in_memory.values)
 
 
 @pytest.mark.parametrize("dask", [False, True])

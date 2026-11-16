@@ -32,7 +32,7 @@ The low and high extremes have no test of their own.
 import xarray as xr
 
 from . import response_change as rc
-from .datatree import skip_empty
+from .utils.datatree import skip_empty
 
 
 def zonal_mean(obj, lon="lon"):

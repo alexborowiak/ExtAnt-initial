@@ -14,7 +14,7 @@ import pytest  # noqa: E402
 import xarray as xr  # noqa: E402
 
 from extant import config, preprocessing as pp, sea_ice  # noqa: E402
-from extant.datatree import skip_empty  # noqa: E402
+from extant.utils.datatree import skip_empty  # noqa: E402
 
 LAT = np.arange(-88.75, -40, 2.5)
 LON = np.arange(-180.0, 180.0, 2.5)

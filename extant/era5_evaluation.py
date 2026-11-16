@@ -54,9 +54,9 @@ import numpy as np
 import scipy.stats
 import xarray as xr
 
-from .statistics.trend import lowess_matrix_xarray
-from .significance import area_mean
-from .stats import nan_quantile
+from .statistics import trend
+from .statistics.quantiles import nan_quantile
+from .statistics.significance import area_mean
 
 MEMBER_DIM = "member"
 SAMPLE_DIM = "year"
@@ -124,44 +124,42 @@ def align(ensemble, obs, years=None, member_dim=MEMBER_DIM, sample_dim=SAMPLE_DI
 # ---------------------------------------------------------------------------
 
 #(t): The three ways of treating each series before comparing, and what each one tests
-# TREATMENTS = {
-#     "raw": "Raw values",
-#     "anomaly": "Anomalies",
-#     "detrended": "Detrended anomalies",
-# }
+TREATMENTS = {
+    "raw": "Raw values",
+    "anomaly": "Anomalies",
+    "detrended": "Detrended anomalies",
+}
 
 
-# def anomalies(da, sample_dim=SAMPLE_DIM, reference=None):
-#     """Subtract each series' own mean over the ``reference`` samples (all of them if None).
+def anomalies(da, sample_dim=SAMPLE_DIM, reference=None):
+    """Subtract each series' own mean over the ``reference`` samples (all of them if None).
 
-#     Every member and ERA5 are each measured from their own climatology, so a
-#     mean-state bias disappears while the forced trend and the variability
-#     remain.
-#     """
-#     base = da if reference is None else da.sel({sample_dim: reference})
-#     return da - base.mean(sample_dim)
-
-
+    Every member and ERA5 are each measured from their own climatology, so a
+    mean-state bias disappears while the forced trend and the variability
+    remain.
+    """
+    base = da if reference is None else da.sel({sample_dim: reference})
+    return da - base.mean(sample_dim)
 
 
-# def treat(da, treatment, sample_dim=SAMPLE_DIM, reference=None):
-#     """Apply one of ``TREATMENTS`` to every series (each member and ERA5 separately).
+def treat(da, treatment, sample_dim=SAMPLE_DIM, reference=None):
+    """Apply one of ``TREATMENTS`` to every series (each member and ERA5 separately).
 
-#     raw        unchanged. A mean-state bias dominates any comparison.
-#     anomaly    minus the series' own mean over ``reference``. The bias is gone;
-#                the forced trend (signal) and the variability (noise) remain.
-#     detrended  minus the series' own least-squares line. Only the noise remains.
+    raw        unchanged. A mean-state bias dominates any comparison.
+    anomaly    minus the series' own mean over ``reference``. The bias is gone;
+               the forced trend (signal) and the variability (noise) remain.
+    detrended  minus the series' own least-squares line (``statistics.trend.detrend``). Only the noise remains.
 
-#     Treating ERA5 and the members identically is what keeps every test fair:
-#     each series loses the same things, with the same sampling noise.
-#     """
-#     if treatment == "raw":
-#         return da
-#     if treatment == "anomaly":
-#         return anomalies(da, sample_dim, reference)
-#     if treatment == "detrended":
-#         return detrend(da, sample_dim)
-#     raise ValueError(f"treatment must be one of {list(TREATMENTS)}, got {treatment!r}")
+    Treating ERA5 and the members identically is what keeps every test fair:
+    each series loses the same things, with the same sampling noise.
+    """
+    if treatment == "raw":
+        return da
+    if treatment == "anomaly":
+        return anomalies(da, sample_dim, reference)
+    if treatment == "detrended":
+        return trend.detrend(da, sample_dim)
+    raise ValueError(f"treatment must be one of {list(TREATMENTS)}, got {treatment!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -186,9 +184,6 @@ def skewness(da, dim=SAMPLE_DIM):
 def excess_kurtosis(da, dim=SAMPLE_DIM):
     """Excess kurtosis: 0 for a normal distribution, > 0 for heavier tails."""
     return _standardised_moment(da, dim, 4) - 3
-
-
-
 
 
 def lag1_autocorrelation(da, dim=SAMPLE_DIM):
@@ -217,74 +212,6 @@ def upper_tail_width(da, dim=SAMPLE_DIM):
 def lower_tail_width(da, dim=SAMPLE_DIM):
     """Length of the cold tail, Q50 - Q05."""
     return _quantile(da, 0.5, dim) - _quantile(da, LOW_QUANTILE, dim)
-
-
-#(t): LOWESS window for the emergence statistic, in years (a ~35-year record cannot carry the 81 used elsewhere)
-EMERGENCE_WINDOW = 25
-
-
-def _last_minus_first(values):
-    """Last finite value minus the first, along the last axis."""
-    finite = np.isfinite(values)
-    first = np.argmax(finite, axis=-1)[..., None]
-    last = (values.shape[-1] - 1 - np.argmax(finite[..., ::-1], axis=-1))[..., None]
-    change = np.take_along_axis(values, last, -1)[..., 0] - np.take_along_axis(values, first, -1)[..., 0]
-    return np.where(finite.any(axis=-1), change, np.nan)
-
-
-def self_signal_to_noise(da, dim=SAMPLE_DIM, window=EMERGENCE_WINDOW):
-    """S/N of a series against itself: how far it has moved relative to its own year-to-year noise.
-
-    signal   the change of its LOWESS-smoothed curve from the start of the record to the end
-    noise    the standard deviation of its deviations from that curve
-
-    ERA5 has no counterfactual, so this is the emergence measure that can be
-    computed for ERA5 and, identically, for every member.
-    """
-    smooth = lowess_matrix_xarray(da, core_dims=dim, window=window)
-    signal = xr.apply_ufunc(_last_minus_first, smooth, input_core_dims=[[dim]], dask="parallelized",
-                            output_dtypes=[float])
-    return signal / (da - smooth).std(dim, ddof=1)
-
-
-def _record_flags(values, high=True):
-    """True in each year that beats every earlier year (the first year counts), along the last axis."""
-    x = np.where(np.isfinite(values), values if high else -values, -np.inf)
-    earlier_best = np.concatenate([np.full(x.shape[:-1] + (1,), -np.inf),
-                                   np.maximum.accumulate(x, axis=-1)[..., :-1]], axis=-1)
-    return (x > earlier_best) & np.isfinite(values)
-
-
-def _record_count(values, high=True):
-    return np.where(np.isfinite(values).any(axis=-1), _record_flags(values, high).sum(axis=-1), np.nan)
-
-
-def record_highs(da, dim=SAMPLE_DIM):
-    """Number of record highs: years warmer than every earlier year in the record (the first year counts)."""
-    return xr.apply_ufunc(_record_count, da, input_core_dims=[[dim]], kwargs={"high": True},
-                          dask="parallelized", output_dtypes=[float])
-
-
-def record_lows(da, dim=SAMPLE_DIM):
-    """Number of record lows: years colder than every earlier year in the record (the first year counts)."""
-    return xr.apply_ufunc(_record_count, da, input_core_dims=[[dim]], kwargs={"high": False},
-                          dask="parallelized", output_dtypes=[float])
-
-
-def cumulative_records(da, dim=SAMPLE_DIM, high=True):
-    """Running number of record highs (or lows) up to each year, for plotting record rates."""
-    return xr.apply_ufunc(lambda v: np.cumsum(_record_flags(v, high), axis=-1).astype(float), da,
-                          input_core_dims=[[dim]], output_core_dims=[[dim]], dask="parallelized",
-                          output_dtypes=[float])
-
-
-def expected_records(n_years):
-    """Expected number of records in n years of a stationary, independent series: 1 + 1/2 + ... + 1/n.
-
-    In year k every one of the k years so far is equally likely to be the
-    largest, so year k is a record with probability 1/k.
-    """
-    return float(np.sum(1 / np.arange(1, n_years + 1)))
 
 
 @dataclass(frozen=True)
@@ -386,7 +313,7 @@ def locate(members, observed, member_dim=MEMBER_DIM, alpha=ALPHA):
                                                     p = 2 * 0.048 = 0.095 < 0.1, so the verdict is +1
         19 members, all less than ERA5              p = 2 / 20 = 0.1, not less than 0.1: nothing can be flagged
 
-    Notebook plot_01b goes through these steps one at a time, in *Where ERA5 Falls among the Members*.
+    Notebook calc_03b goes through these steps one at a time, in section 2 (*Every Test in One Table*, Sample plots).
 
     Only the members with a value count, so several models can sit side by
     side on one ``member`` dim, each padded with NaN to the largest ensemble
@@ -770,8 +697,8 @@ def rank_histogram_test(ensemble, obs, treatment="anomaly", pool_dims=(SAMPLE_DI
     #(c): is (r / N)(r - 1) + ((N - r) / N) r = r (N - 1) / N, which scaled by N - 1 is r / N (4 members, r = 3: 0.75)
     obs_scaled = obs_rank / n_members
     pseudo_scaled = pseudo_rank / (n_members - 1)
-    obs_summary["rank_trend"] = trend(obs_scaled, pool_dims)
-    pseudo_summary["rank_trend"] = trend(pseudo_scaled, pool_dims)
+    obs_summary["rank_trend"] = trend.trend(obs_scaled, pool_dims)
+    pseudo_summary["rank_trend"] = trend.trend(pseudo_scaled, pool_dims)
 
     names = list(RANKS)
     results = [locate(pseudo_summary[name], obs_summary[name], member_dim, alpha) for name in names]
@@ -1174,14 +1101,14 @@ def spatial_evaluation(ensemble, obs, reference=None, period=None, thresholds="f
     diagnosis = xr.where(too_much, 1, diagnosis)
 
     #(t): Independent signal test: compare linear temperature trends
-    signal = locate(trend(ensemble, sample_dim), trend(obs, sample_dim), member_dim)
+    signal = locate(trend.trend(ensemble, sample_dim), trend.trend(obs, sample_dim), member_dim)
     signal_testable = testable & (signal["testable"] == 1)
 
 
     #(t): Independent noise test: compare detrended standard deviations
     noise = locate(
-        detrend(ensemble, sample_dim).std(sample_dim, ddof=1),
-        detrend(obs, sample_dim).std(sample_dim, ddof=1), member_dim)
+        trend.detrend(ensemble, sample_dim).std(sample_dim, ddof=1),
+        trend.detrend(obs, sample_dim).std(sample_dim, ddof=1), member_dim)
     noise_testable = testable & (noise["testable"] == 1)
 
     def tested(da):
@@ -1248,15 +1175,6 @@ def period_comparison(whole, early, late, alpha=PERIOD_ALPHA):
 def adequate_area(result, lat="lat", lon="lon"):
     """Percentage of tested area where the model has no flagged bias."""
     return 100 * area_mean(result["adequate"], lat=lat, lon=lon)
-
-
-def adequate_count(results, model_dim="model"):
-    """Count adequate and tested models."""
-    return xr.Dataset({
-        "n_adequate": (results["adequate"] == 1).sum(model_dim),
-        "n_tested": results["adequate"].notnull().sum(model_dim),
-    })
-
 
 
 def adequate_count(results, model_dim="model"):

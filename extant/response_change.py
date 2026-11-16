@@ -28,8 +28,8 @@ import xarray as xr
 
 from .config import WINDOW
 from .statistics.trend import lowess_matrix_xarray
-from .significance import area_mean, resample_members
-from .datatree import skip_empty
+from .statistics.significance import area_mean, resample_members
+from .utils.datatree import skip_empty
 
 #(t): How forced_response estimates the forced response across members before LOWESS smoothing:
 #(c): the median, as in draft_05's S/N, so what is removed is the shift of the middle (Q50)

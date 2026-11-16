@@ -11,7 +11,9 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 pytest.importorskip("plotting_modules")
 
-from extant import datatree, era5_evaluation as ev  # noqa: E402
+from extant import era5_evaluation as ev  # noqa: E402
+from extant.statistics import trend
+from extant.utils import datatree  # noqa: E402
 from extant.plots import charts, era5_evaluation as evp  # noqa: E402
 from extant import response_change as rc  # noqa: E402
 from extant.plots import response_change as rcp  # noqa: E402
@@ -50,7 +52,7 @@ def point():
 def tests(point):
     """The moment test and the other statistics of every model, on (model, statistic, season)."""
     point_ds = datatree.tree_to_dataset(point, dims=["model", "experiment"]).sel(experiment="historical", drop=True)
-    detrended_ds = point_ds.map(ev.detrend)
+    detrended_ds = point_ds.map(trend.detrend)
     moments = _tests({
         "mean": point_ds.mean("year"),
         "std": detrended_ds.std("year", ddof=1),
@@ -58,7 +60,7 @@ def tests(point):
         "kurtosis": detrended_ds.map(ev.excess_kurtosis),
     }).assign_coords(treatment=("statistic", ["raw", "detrended", "detrended", "detrended"]))
     others = _tests({
-        "trend": point_ds.map(ev.trend),
+        "trend": point_ds.map(trend.trend),
         "width": detrended_ds.map(ev.quantile_width),
     }).assign_coords(treatment=("statistic", ["raw", "detrended"]))
     return moments, others
@@ -139,7 +141,7 @@ def test_summaries(point, tests):
     #(c): The toy scenarios: one row, as notebook plot_01b draws each
     demo = xr.concat([xr.Dataset(dict(zip(("members", "era5"), ev.simulate_ensemble(n_members=20, **kwargs))))
                       for kwargs in ev.SCENARIOS.values()], dim=xr.Variable("scenario", list(ev.SCENARIOS)))
-    detrended = demo.map(ev.detrend)
+    detrended = demo.map(trend.detrend)
     demo_tests = _tests({"mean": demo.mean("year"), "std": detrended.std("year", ddof=1)})
     anomaly_ranks = ev.rank_histogram_test(demo["members"], demo["era5"], "anomaly", ("year", "season"))
     detrended_ranks = ev.rank_histogram_test(demo["members"], demo["era5"], "detrended", ("year", "season"))
@@ -205,8 +207,8 @@ def test_method_panels():
     """The step-by-step schematics and the small figures that follow the data, on synthetic ensembles."""
     import pandas as pd
 
-    from extant import quantiles as qc
-    from extant import significance as sig
+    from extant.statistics import quantiles as qc
+    from extant.statistics import significance as sig
     from extant.plots import methods
 
     rng = np.random.default_rng(1)
@@ -258,9 +260,9 @@ def test_method_panels():
     methods.plot_window(hist, 1950, 21)
     methods.plot_window_values(hist, 1950, 21)
     methods.plot_rolling_quantiles(rolling, 1950)
-    smooth = qc.lowess_matrix_xarray(rolling)
+    smooth = trend.lowess_matrix_xarray(rolling)
     methods.plot_smoothing(rolling, smooth)
-    both = xr.concat([smooth, qc.lowess_matrix_xarray(qc.centred_rolling_quantiles(nat, quantiles=[0.05, 0.5, 0.95]))],
+    both = xr.concat([smooth, trend.lowess_matrix_xarray(qc.centred_rolling_quantiles(nat, quantiles=[0.05, 0.5, 0.95]))],
                      dim="experiment").assign_coords(experiment=["historical", "hist-nat"])
     base = nat.quantile([0.05, 0.5, 0.95], dim=["member", "year"])
     methods.plot_smoothed_quantiles(both, base, "historical")

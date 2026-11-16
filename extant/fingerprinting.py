@@ -42,7 +42,7 @@ Sections
 import numpy as np
 import xarray as xr
 
-from .datatree import skip_empty
+from .utils.datatree import skip_empty
 
 # ---------------------------------------------------------------------------
 # 1. Vectors: the order of the entries

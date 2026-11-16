@@ -17,7 +17,8 @@ if __name__ == "__main__":
     import conftest  # noqa: F401  (sets the import path when run as a script)
 
 from extant import era5_evaluation as ev
-from extant.significance import pvalue_two_sided
+from extant.statistics import emergence, records, trend
+from extant.statistics.significance import pvalue_two_sided
 
 RNG = np.random.default_rng(42)
 
@@ -55,15 +56,15 @@ def test_linear_fit_and_detrend_match_polyfit_with_nan():
     da = xr.DataArray(y, dims="year", coords={"year": years})
     ok = ~np.isnan(y)
     slope, intercept = np.polyfit(years[ok], y[ok], 1)
-    np.testing.assert_allclose(ev.trend(da), 10 * slope)
-    residual = ev.detrend(da)
+    np.testing.assert_allclose(trend.trend(da), 10 * slope)
+    residual = trend.detrend(da)
     np.testing.assert_allclose(residual.values[ok], y[ok] - (slope * years[ok] + intercept))
     assert np.isnan(residual.values[3])
 
 
 def test_pooled_trend_uses_year_as_regressor():
     ens, _ = ev.simulate_ensemble(n_members=2, trend=0.5, noise=0.0)
-    np.testing.assert_allclose(ev.trend(ens, ("year", "season")), 0.5)
+    np.testing.assert_allclose(trend.trend(ens, ("year", "season")), 0.5)
 
 
 def test_moments_match_scipy():
@@ -101,10 +102,10 @@ def test_record_counts_match_brute_force_and_theory():
         row = row if high else -row
         return sum(True if i == 0 else row[i] > row[:i].max() for i in range(row.size))
 
-    np.testing.assert_array_equal(ev.record_highs(da).values, [brute(r) for r in x])
-    np.testing.assert_array_equal(ev.record_lows(da).values, [brute(r, False) for r in x])
-    np.testing.assert_allclose(float(ev.record_highs(da).mean()), ev.expected_records(35), atol=0.15)
-    np.testing.assert_array_equal(ev.cumulative_records(da).isel(year=-1).values, ev.record_highs(da).values)
+    np.testing.assert_array_equal(records.record_highs(da).values, [brute(r) for r in x])
+    np.testing.assert_array_equal(records.record_lows(da).values, [brute(r, False) for r in x])
+    np.testing.assert_allclose(float(records.record_highs(da).mean()), records.expected_records(35), atol=0.15)
+    np.testing.assert_array_equal(records.cumulative_records(da).isel(year=-1).values, records.record_highs(da).values)
 
 
 def test_self_signal_to_noise_of_a_known_trend():
@@ -113,7 +114,7 @@ def test_self_signal_to_noise_of_a_known_trend():
     noise = (noise - noise.mean()) / noise.std(ddof=1)
     series = xr.DataArray(0.1 * (years - years[0]) + noise, dims="year", coords={"year": years})
     # Signal ~ 0.1 x 34 years = 3.4 over unit noise.
-    np.testing.assert_allclose(float(ev.self_signal_to_noise(series)), 3.4, rtol=0.15)
+    np.testing.assert_allclose(float(emergence.self_signal_to_noise(series)), 3.4, rtol=0.15)
 
 
 def test_anomalies_reference_period():
@@ -148,7 +149,7 @@ def test_locate():
 def _moment_tests(ens, obs):
     """The moment test as notebook calc_03a runs it: each moment of the members and ERA5, then ``locate``."""
     ds = xr.Dataset({"members": ens, "era5": obs})
-    detrended = ds.map(ev.detrend)
+    detrended = ds.map(trend.detrend)
     moments = [ds.mean("year"), detrended.std("year", ddof=1), detrended.map(ev.skewness),
                detrended.map(ev.excess_kurtosis)]
     return xr.concat([ev.locate(moment["members"], moment["era5"]) for moment in moments],
@@ -158,15 +159,15 @@ def _moment_tests(ens, obs):
 def _statistic_tests(ens, obs):
     """The other statistics as notebook calc_03a runs them."""
     ds = xr.Dataset({"members": ens, "era5": obs})
-    detrended = ds.map(ev.detrend)
+    detrended = ds.map(trend.detrend)
     statistics = {
-        "trend": ds.map(ev.trend),
-        "emergence": ds.map(ev.self_signal_to_noise),
+        "trend": ds.map(trend.trend),
+        "emergence": ds.map(emergence.self_signal_to_noise),
         "width": detrended.map(ev.quantile_width),
         "lower_tail": detrended.map(ev.lower_tail_width),
         "upper_tail": detrended.map(ev.upper_tail_width),
-        "records_high": ds.map(ev.record_highs),
-        "records_low": ds.map(ev.record_lows),
+        "records_high": ds.map(records.record_highs),
+        "records_low": ds.map(records.record_lows),
         "lag1": detrended.map(ev.lag1_autocorrelation),
     }
     return xr.concat([ev.locate(values["members"], values["era5"]) for values in statistics.values()],
