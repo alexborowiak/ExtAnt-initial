@@ -50,8 +50,6 @@ def test_verification_panels():
     ranks["percentile"] = (("model", "season", "statistic"), rng.uniform(0, 100, (3, 2, 1)))
     ranks["verdict"] = (("model", "season", "statistic"), np.zeros((3, 2, 1)))
     ranks = ranks.assign_coords(statistic=["dispersion"])
-    ax = pp.plot_regional_rank_histogram(ranks.sel(model="A", season="DJF"))
-    assert len(ax.patches) == 10 and ax.texts[0].get_text().startswith("✓")
     assert len(pp.rank_histogram_legend_handles()) == 3
     percentile = xr.DataArray(rng.uniform(0, 100, (3, 2, 2)), dims=("model", "experiment", "season"),
                               coords=dict(model=MODELS, experiment=EXPERIMENTS, season=SEASONS))

@@ -131,8 +131,10 @@ def count_scale(n_models, label="Number of models with a significant decrease (b
     increases = [*_ramp("Reds", 0.3, 0.7, half), *_ramp("BrBG", 0.3, 0.0, n_models - half)]
     colors = ListedColormap([*decreases, "white", *increases])
     levels = np.arange(-n_models - 0.5, n_models + 1)
+    #(c): Beyond 8 models every other count is labelled (the even ones), so a bar under one column stays readable
+    step = 2 if n_models > 8 else 1
     return Scale(levels, colors, label, discrete=True,
-                 ticklabels=[str(abs(k)) for k in range(-n_models, n_models + 1)])
+                 ticklabels=[str(abs(k)) if k % step == 0 else '' for k in range(-n_models, n_models + 1)])
 
 
 def majority_scale(n_models, label="Number of models"):
@@ -143,8 +145,10 @@ def majority_scale(n_models, label="Number of models"):
     """
     half = n_models // 2
     colors = ListedColormap(["white", *_ramp("Greys", 0.2, 0.45, half), *_ramp("Greens", 0.55, 0.95, n_models - half)])
+    #(c): Beyond 8 models every other count is labelled, as in count_scale
+    step = 2 if n_models > 8 else 1
     return Scale(np.arange(-0.5, n_models + 1), colors, label, discrete=True,
-                 ticklabels=[str(k) for k in range(n_models + 1)])
+                 ticklabels=[str(k) if k % step == 0 else '' for k in range(n_models + 1)])
 
 
 def class_scale(classes, colors, label=""):

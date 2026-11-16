@@ -2,19 +2,18 @@
 
 The ERA5 evaluation asks whether ERA5 could be a member of the historical
 ensemble. Attribution asks more: could ERA5 have happened *without* human
-influence (hist-nat)? And how much of it does each forcing explain?
+influence (hist-nat)?
 
 Sections
 --------
-1. Regions              area-weighted regional means (more signal, less noise than a grid point)
+1. Regions              area-weighted means over named regions, the spatial units of the optimal fingerprinting
+                        (notebook fingerprinting_01); no other notebook uses regions
 2. Detection classes    ERA5 outside hist-nat's range (detected) and inside historical's (consistent)
 3. Record rates         how many record highs and lows ERA5 sets, against chance and the members
-4. Scaling factors      regression of ERA5 on the models' forced responses ("fingerprinting"),
-                        with the uncertainty from a perfect-model test
+4. Signal sets          the forcings each fingerprinting fit combines
 
-ERA5's trend among each experiment's members (consistency and detection) is
-worked out in notebooks plot_06 (V4, from calc_03a's regional trends) and calc_03c with era5_evaluation:
-``ev.align`` for common samples, ``ev.locate`` for where ERA5 falls among the members.
+ERA5's trend among each experiment's members (detection) is worked out in notebook calc_03c with
+era5_evaluation: ``ev.align`` for common samples, ``ev.locate`` for where ERA5 falls among the members.
 """
 
 import numpy as np
@@ -147,7 +146,7 @@ def record_curves(ensembles, obs, years=YEARS, pool_seasons=True):
 
 
 # ---------------------------------------------------------------------------
-# 4. Scaling factors (fingerprinting)
+# 4. Signal sets (fingerprinting)
 # ---------------------------------------------------------------------------
 
 #(t): Signal sets: name -> (experiment, experiment subtracted or None)
@@ -156,112 +155,3 @@ SIGNAL_SETS = {
     "GHG + AER + O3 + NAT": {"GHG": ("hist-GHG", None), "AER": ("hist-aer", None),
                              "O3": ("hist-totalO3", None), "NAT": ("hist-nat", None)},
 }
-
-
-def _anomalies(da):
-    """Each season measured from its own mean over the years, so only the time structure is fitted."""
-    return da - da.mean("year")
-
-
-def _least_squares(y, X):
-    """Coefficients of y on the columns of X over the rows where everything is finite."""
-    rows = np.isfinite(y) & np.isfinite(X).all(axis=1)
-    return np.linalg.lstsq(X[rows], y[rows], rcond=None)[0]
-
-
-def scaling_factors(ensembles, obs, signals="ANT + NAT", pseudo="historical", years=YEARS, alpha=ev.ALPHA):
-    """Regress ERA5 on the models' forced responses: ERA5 ≈ Σ β_k × signal_k + internal variability.
-
-    Method:
-        1. Each series becomes anomalies from its own mean in each season.
-        2. Each signal's fingerprint is an ensemble-mean anomaly (for ANT,
-           historical minus hist-nat).
-        3. β for ERA5 by least squares over every year and season.
-        4. Uncertainty from a perfect-model test: each ``pseudo`` member in
-           turn stands in for ERA5, regressed on fingerprints that leave it
-           out. Their β's show how far internal variability alone moves β;
-           ERA5's interval is β minus the 5-95% range of those deviations
-           from their median. The median itself shows any bias of the method
-           (1 if unbiased).
-
-    Example of step 4: the members' β_ANT have a median of 1.0 and run from
-    0.4 to 1.7 (5% to 95%), deviations of -0.6 to +0.7. ERA5's β_ANT of 1.5
-    then has the interval 1.5 - 0.7 = 0.8 to 1.5 + 0.6 = 2.1: it excludes 0
-    (detected) and includes 1 (consistent). Notebook calc_03c (section 4) goes
-    through every step for one model and region.
-
-    Reading the result:
-        detected     the interval excludes 0: the signal is in the observations
-        consistent   the interval includes 1: the model's response has the right size
-        attributable_trend   β times the fingerprint's trend: how much of the
-                     observed trend the signal explains
-
-    Args:
-        ensembles (dict[str, xr.DataArray]): Experiment -> members on (member, year, season),
-            e.g. regional means from ``regional_mean``.
-        obs (xr.DataArray): ERA5 on (year, season).
-        signals (str | dict): A key of ``SIGNAL_SETS``, or {name: (experiment, subtracted or None)}.
-        pseudo (str): Experiment whose members act as perfect-model observations.
-        years (slice): The shared period.
-        alpha (float): Two-sided level; 0.1 gives a 5-95% interval.
-
-    Returns:
-        xr.Dataset on ``signal``: beta, lower, upper, detected, consistent,
-        perfect_model_beta, pseudo_beta (member, signal), fingerprint_trend,
-        attributable_trend, attributable_lower, attributable_upper; and
-        scalars observed_trend and n_samples.
-    """
-    signals = SIGNAL_SETS[signals] if isinstance(signals, str) else signals
-    obs = obs.sel(year=years)
-    ensembles = {name: ensembles[name].sel(year=years) for name in
-                 {e for pair in signals.values() for e in pair if e} | {pseudo}}
-
-    #(c): One shared mask: a sample counts only if ERA5 and every member of every ensemble have it
-    valid = obs.notnull()
-    for ensemble in ensembles.values():
-        valid = valid & ensemble.notnull().all("member")
-    obs = _anomalies(obs.where(valid))
-    ensembles = {name: _anomalies(ensemble.where(valid)) for name, ensemble in ensembles.items()}
-
-    def fingerprints(leave_out=None):
-        means = {name: (ensemble.drop_isel(member=leave_out) if name == pseudo and leave_out is not None
-                        else ensemble).mean("member") for name, ensemble in ensembles.items()}
-        return {k: means[a] - (means[b] if b else 0) for k, (a, b) in signals.items()}
-
-    def as_vector(da):
-        return da.transpose("year", "season").values.ravel()
-
-    names = list(signals)
-    prints = fingerprints()
-    X = np.column_stack([as_vector(prints[k]) for k in names])
-    beta = _least_squares(as_vector(obs), X)
-
-    pseudo_members = ensembles[pseudo]
-    pseudo_beta = []
-    for m in range(pseudo_members.sizes["member"]):
-        loo = fingerprints(leave_out=m)
-        X_m = np.column_stack([as_vector(loo[k]) for k in names])
-        pseudo_beta.append(_least_squares(as_vector(pseudo_members.isel(member=m)), X_m))
-    pseudo_beta = np.array(pseudo_beta)
-    centre = np.median(pseudo_beta, axis=0)
-    spread_low, spread_high = np.quantile(pseudo_beta - centre, [alpha / 2, 1 - alpha / 2], axis=0)
-    lower, upper = beta - spread_high, beta - spread_low
-
-    trends = np.array([float(trend.trend(prints[k], ("year", "season"))) for k in names])
-    attributable = np.stack([beta * trends, lower * trends, upper * trends])
-    coords = {"signal": names}
-    return xr.Dataset({
-        "beta": ("signal", beta),
-        "lower": ("signal", lower),
-        "upper": ("signal", upper),
-        "detected": ("signal", (lower > 0) | (upper < 0)),
-        "consistent": ("signal", (lower <= 1) & (upper >= 1)),
-        "perfect_model_beta": ("signal", centre),
-        "pseudo_beta": (("member", "signal"), pseudo_beta),
-        "fingerprint_trend": ("signal", trends),
-        "attributable_trend": ("signal", beta * trends),
-        "attributable_lower": ("signal", attributable.min(axis=0)),
-        "attributable_upper": ("signal", attributable.max(axis=0)),
-        "observed_trend": float(trend.trend(obs, ("year", "season"))),
-        "n_samples": int(valid.sum()),
-    }, coords=coords, attrs={"signals": str(signals), "pseudo": pseudo, "alpha": alpha})

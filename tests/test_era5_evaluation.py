@@ -409,16 +409,6 @@ def calibration(n_worlds=100, n_members=40):
     return pd.DataFrame(table)
 
 
-def test_rank_histogram_summary():
-    #(c): Member-free, on 10 bins whatever the ensemble size, so models of different sizes stack
-    ensemble, obs = ev.align(*ev.simulate_ensemble(n_members=30, seed=1))
-    summary = ev.rank_histogram_summary(ensemble, obs, "anomaly", n_bins=10)
-    assert "member" not in summary.dims
-    assert summary.sizes["rank"] == 10
-    np.testing.assert_allclose(summary["obs_frequency"].sum("rank"), 100)
-    assert bool((summary["pseudo_lower"] <= summary["pseudo_upper"]).all())
-
-
 if __name__ == "__main__":
     worlds = int(sys.argv[1]) if len(sys.argv) > 1 else 100
     pd.set_option("display.width", 250)

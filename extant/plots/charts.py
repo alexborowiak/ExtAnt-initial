@@ -250,6 +250,27 @@ def model_shades(color, n_models):
             for lightness in np.linspace(0.75, 0.25, n_models)]
 
 
+#(t): One clearly different colour per model, for figures of one experiment (ERA5 stays black): the Okabe-Ito
+#(t): colour-blind-safe colours (without its yellow and black), then tab20's darker half for more models
+DISTINCT_MODEL_COLORS = ('#0072B2', '#D55E00', '#009E73', '#CC79A7', '#E69F00', '#56B4E9',
+                         '#8c564b', '#7f7f7f', '#bcbd22', '#17becf', '#9467bd', '#d62728', '#2ca02c', '#1f77b4')
+
+
+def model_colours(models):
+    """One clearly different colour per model (``DISTINCT_MODEL_COLORS``), for figures where every model shows the
+    same experiment; with several experiments on one panel, ``model_lines`` gives each model a shade of its
+    experiment's colour instead.
+
+    Args:
+        models (Sequence[str]): The models, in the order of the data (model k gets the k-th colour; the colours repeat
+            beyond 14 models).
+
+    Returns:
+        dict: model -> colour, e.g. ``{'CanESM5': '#0072B2', 'HadGEM3-GC31-LL': '#D55E00'}``.
+    """
+    return {str(model): DISTINCT_MODEL_COLORS[k % len(DISTINCT_MODEL_COLORS)] for k, model in enumerate(models)}
+
+
 def model_lines(experiment, models):
     """Each model's line among the other models of ``experiment``: its shade of the experiment's colour, its line
     style and width, and its name as the label.

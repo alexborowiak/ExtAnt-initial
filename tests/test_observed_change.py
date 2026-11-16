@@ -37,19 +37,6 @@ def world():
     return ensembles, obs
 
 
-def test_scaling_factors_recover_the_truth(world):
-    ensembles, obs = world
-    result = oc.scaling_factors(ensembles, obs, "ANT + NAT")
-    truth = {"ANT": 0.7, "NAT": 1.0}
-    for signal, value in truth.items():
-        row = result.sel(signal=signal)
-        assert float(row.lower) <= value <= float(row.upper), (signal, float(row.beta))
-    np.testing.assert_allclose(result.perfect_model_beta, 1.0, atol=0.1)
-    assert bool(result.detected.sel(signal="ANT")) and not bool(result.consistent.sel(signal="ANT"))
-    # The attributable trends add up to (roughly) the observed trend.
-    np.testing.assert_allclose(float(result.attributable_trend.sum()), float(result.observed_trend), atol=0.05)
-
-
 def test_detection_class():
     verdicts = xr.DataArray([0, 0, 1, 1], dims="point")
     historical = xr.Dataset({"verdict": xr.DataArray([0, 1, 0, 1], dims="point")})

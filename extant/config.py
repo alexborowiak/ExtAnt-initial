@@ -15,23 +15,15 @@ import numpy as np
 #(t): The experiments analysed. hist-nat is the counterfactual every other experiment is compared with
 MAIN_EXPERIMENTS = ["hist-nat", "hist-aer", "hist-totalO3", "hist-GHG", "historical"]
 
-# Just the models that have more than 5 protocals
-MAIN_MODELS = ['CanESM5',
- 'GISS-E2-1-G',
- 'HadGEM3-GC31-LL',
- 'MIROC6',
- 'MPI-ESM1-2-LR',
- 'NorESM2-LM']
+#(t): Every model with LESFMIP data is analysed except these, e.g. a model whose sea ice is too far from ERA5's (notebook
+#(t): calc_04). The analysis notebooks drop them as they open the data; calc_01 and calc_04 still process every model
+EXCLUDED_MODELS = []
 
 #(t): The experiments compared with hist-nat, in the order of every figure
 FORCED_EXPERIMENTS = ["hist-GHG", "hist-aer", "hist-totalO3", "historical"]
 
 #(t): Which version of the raw files to convert: 'interp' is every model on the common 2.5° grid
 GROUP = "interp"
-
-#(t): Models are only converted with at least MIN_EXPERIMENTS of the experiments; the N_MODELS with most are analysed
-MIN_EXPERIMENTS = 4
-N_MODELS = 6
 
 # ---------------------------------------------------------------------------
 # Periods and windows

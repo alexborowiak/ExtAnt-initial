@@ -239,45 +239,6 @@ def plot_ridgelines(densities, means, ridge_dim, height_scale, limit=3.0, value_
 # 4. Verification against ERA5
 # ---------------------------------------------------------------------------
 
-def plot_regional_rank_histogram(ranks_ds, ax=None):
-    """ERA5's rank histogram (Suarez-Gutierrez et al., 2021) for a regional mean, against the range a perfect model gives.
-
-    Bars are ERA5's rank frequencies on bins of scaled rank (0: below every member, 1: above every member); the grey
-    band is the pseudo-observations' central range, what the model itself gives when one member stands in for ERA5,
-    for this ensemble and record. Flat bars inside the band: ERA5 could be a member. A U shape: the model's spread is
-    too small; a dome: too large; a slope: its forced response differs. The corner gives ERA5's percentile for the
-    dispersion among the pseudo-observations', ✗ when beyond their range.
-
-    Args:
-        ranks_ds (xr.Dataset): ``obs_frequency``, ``pseudo_lower``, ``pseudo_upper`` on (rank), and ``percentile``,
-            ``verdict`` on (statistic), e.g. one region, experiment, treatment, model and season of notebook calc_03b's
-            ``regional_ranks``.
-        ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.
-
-    Returns:
-        matplotlib.axes.Axes: The axis.
-    """
-    if ax is None:
-        ax = charts.one_panel()
-    charts.style_chart_ax(ax)
-    rank = ranks_ds["rank"].values
-    step = rank[1] - rank[0]
-    #(c): Each bin's range drawn across the whole bin: its value repeated at both edges
-    edges = np.column_stack([rank - step / 2, rank + step / 2]).ravel()
-    ax.fill_between(edges, np.repeat(ranks_ds["pseudo_lower"].values, 2), np.repeat(ranks_ds["pseudo_upper"].values, 2),
-                    color="0.82", lw=0, zorder=1)
-    ax.bar(rank, ranks_ds["obs_frequency"], width=0.8 * step, color=RANK_BAR, edgecolor="#2a78d6", lw=0.4, zorder=2)
-    ax.axhline(100 / rank.size, color=PSEUDO_COLOR, lw=0.6, ls=(0, (3, 2)), zorder=3)
-    if "dispersion" in ranks_ds["statistic"].values and np.isfinite(float(ranks_ds["percentile"].sel(statistic="dispersion"))):
-        dispersion = ranks_ds.sel(statistic="dispersion")
-        flag = "✗" if float(dispersion["verdict"]) != 0 else "✓"
-        ax.text(0.97, 0.95, f"{flag} {float(dispersion['percentile']):.0f}", transform=ax.transAxes, ha="right",
-                va="top", fontsize="small")
-    ax.set_xlim(0, 1)
-    ax.set_xticks([0, 0.5, 1])
-    ax.grid(False)
-    return ax
-
 
 def rank_histogram_legend_handles():
     """The legend entries of ``plot_regional_rank_histogram``."""
