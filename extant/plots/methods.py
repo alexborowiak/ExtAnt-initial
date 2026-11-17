@@ -32,7 +32,7 @@ import numpy as np
 from matplotlib.lines import Line2D
 
 from . import charts
-from plotting_modules.constants import FORCING_COLORS, FORCING_LEGEND_LABELS, SEASON_COLORS, SEASONS
+from .constants import FORCING_COLORS, FORCING_LEGEND_LABELS, SEASON_COLORS, SEASONS
 
 REFERENCE_GREY = "0.55"
 

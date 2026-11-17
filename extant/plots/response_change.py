@@ -21,9 +21,10 @@ import xarray as xr
 from matplotlib.colors import BoundaryNorm, ListedColormap
 
 from .. import era5_evaluation as ev
+from ..statistics.kde import kde
 from . import charts
 from .era5_evaluation import INK, INK_2
-from plotting_modules.constants import FORCING_COLORS
+from .constants import FORCING_COLORS
 
 # ---------------------------------------------------------------------------
 # 1. Scales
@@ -105,7 +106,7 @@ def plot_point_distributions(samples, shift_ds, experiment, test_ds=None, units=
     grid = xr.DataArray(x, dims="x")
     peak = 0
     for name, sample in pooled.items():
-        density = ev.kde(sample, grid, "sample", bandwidth).values
+        density = kde(sample, grid, "sample", bandwidth).values
         peak = max(peak, density.max())
         colour = FORCING_COLORS.get(name, INK)
         ax.fill_between(x, density, color=colour, alpha=0.18, lw=0)

@@ -21,7 +21,7 @@ from matplotlib.lines import Line2D
 
 from . import charts
 from .era5_evaluation import INK, INK_2, MUTED
-from plotting_modules.constants import FORCING_COLORS, FORCING_LEGEND_LABELS
+from .constants import FORCING_COLORS, FORCING_LEGEND_LABELS
 
 # ---------------------------------------------------------------------------
 # 1. The build-up

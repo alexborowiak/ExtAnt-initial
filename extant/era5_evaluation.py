@@ -55,8 +55,9 @@ import scipy.stats
 import xarray as xr
 
 from .statistics import trend
+from .statistics.kde import kde, kde_bandwidth
 from .statistics.quantiles import nan_quantile
-from .statistics.significance import area_mean
+from .statistics.spatial import area_mean, area_weights
 
 MEMBER_DIM = "member"
 SAMPLE_DIM = "year"
@@ -452,7 +453,7 @@ def field_test(result, dims=("lat", "lon"), member_dim=MEMBER_DIM, alpha=ALPHA):
 
     #(c): A pseudo-observation has N - 1 others, so it can only be flagged if 2 / N < alpha
     present = result["era5"].notnull() & (2 / n < alpha)
-    weights = np.cos(np.deg2rad(result["lat"]))
+    weights = area_weights(result["lat"])
 
     def area(flagged):
         return 100 * flagged.astype(float).where(present).weighted(weights).mean(dims)
@@ -767,37 +768,6 @@ def regroup_ranks(frequency, n_bins=10, rank_dim="rank"):
 
 #(t): Quantile levels for Q-Q plots; ~35 samples cannot support levels further into the tails
 QQ_QUANTILES = np.round(np.arange(0.05, 0.951, 0.05), 2)
-
-
-def kde_bandwidth(ensemble, dim=SAMPLE_DIM, member_dim=MEMBER_DIM):
-    """One Gaussian-kernel bandwidth for ERA5 and all members: the members' median Scott's rule.
-
-    Scott's rule (std x n^(-1/5)) is scipy.stats.gaussian_kde's default. With
-    the same bandwidth for ERA5 and every member, a difference between curves
-    comes from the data rather than the smoothing, and the pooled ensemble
-    density is exactly the mean of the member densities.
-    """
-    return (ensemble.std(dim, ddof=1) * ensemble.count(dim) ** (-1 / 5)).median(member_dim)
-
-
-def kde(da, x, dim=SAMPLE_DIM, bandwidth=None):
-    """Gaussian kernel density estimate over ``dim``, evaluated at ``x``, ignoring NaN.
-
-    Args:
-        da (xr.DataArray): Samples.
-        x (xr.DataArray): Evaluation points, on their own dim (e.g. "x").
-        dim (str | Sequence[str]): Sample dimension(s).
-        bandwidth (float | xr.DataArray | None): Kernel standard deviation; may
-            vary over the broadcast dims (e.g. one per season). Scott's rule if None.
-
-    Returns:
-        xr.DataArray: Density at ``x``, integrating to 1 over ``x``.
-    """
-    if bandwidth is None:
-        bandwidth = da.std(dim, ddof=1) * da.count(dim) ** (-1 / 5)
-    z = (x - da) / bandwidth
-    kernel = np.exp(-0.5 * z**2) / (bandwidth * np.sqrt(2 * np.pi))
-    return kernel.sum(dim) / da.count(dim)
 
 
 def distribution_summary(ensemble, obs, treatments=("raw", "anomaly"), sample_dim=SAMPLE_DIM,

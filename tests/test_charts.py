@@ -123,7 +123,7 @@ def test_panel_letters_carry_on():
 
 def test_each_model_a_shade_of_its_experiments_colour_with_its_own_line():
     import matplotlib.colors as mcolors
-    from plotting_modules.constants import FORCING_COLORS
+    from extant.plots.constants import FORCING_COLORS
 
     models = [f"M{k}" for k in range(8)]
     shades = charts.model_shades(FORCING_COLORS["hist-GHG"], len(models))

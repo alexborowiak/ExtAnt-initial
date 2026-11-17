@@ -8,8 +8,8 @@ handle's look, so one handle can go in any number of legends.
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
-from extant import config, sam, sea_ice
-from extant.plots import forced_response as fr
+from .. import config, sam, sea_ice
+from . import forced_response as fr
 
 # --------------------------------------------------------------------------
 # Legend entries of the maps

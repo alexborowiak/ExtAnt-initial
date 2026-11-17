@@ -38,7 +38,7 @@ from matplotlib.patches import Patch, Rectangle
 from .. import era5_evaluation as ev
 from ..statistics import trend
 from . import charts
-from plotting_modules.constants import FORCING_COLORS, SEASONS
+from .constants import FORCING_COLORS, SEASONS
 
 
 # ---------------------------------------------------------------------------

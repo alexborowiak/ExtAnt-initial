@@ -17,7 +17,7 @@ if __name__ == "__main__":
     import conftest  # noqa: F401  (sets the import path when run as a script)
 
 from extant import era5_evaluation as ev
-from extant.statistics import emergence, records, trend
+from extant.statistics import emergence, kde, records, trend
 from extant.statistics.significance import pvalue_two_sided
 
 RNG = np.random.default_rng(42)
@@ -291,7 +291,7 @@ def test_kde_matches_scipy_and_integrates_to_one():
     da = xr.DataArray(samples, dims="year")
     x = xr.DataArray(np.linspace(-6, 6, 2001), dims="x")
     bandwidth = 0.4
-    ours = ev.kde(da, x, bandwidth=bandwidth)
+    ours = kde.kde(da, x, bandwidth=bandwidth)
     reference = scipy.stats.gaussian_kde(samples, bw_method=bandwidth / samples.std(ddof=1))(x.values)
     np.testing.assert_allclose(ours, reference, rtol=1e-10)
     np.testing.assert_allclose(np.trapezoid(ours, x), 1, rtol=1e-4)
@@ -302,7 +302,7 @@ def test_pooled_kde_is_the_member_mean_and_anomalies_are_centred():
     summary = ev.distribution_summary(ens, obs)
     raw = summary["raw"]
     np.testing.assert_allclose(raw.ensemble_kde, raw.member_kde.mean("member"))
-    pooled = ev.kde(ens, raw.x, ("year", "member"), raw.bandwidth)
+    pooled = kde.kde(ens, raw.x, ("year", "member"), raw.bandwidth)
     np.testing.assert_allclose(raw.ensemble_kde.transpose(*pooled.dims), pooled, rtol=1e-10)
     np.testing.assert_allclose(summary["anomaly"].obs.mean("year"), 0, atol=1e-12)
 

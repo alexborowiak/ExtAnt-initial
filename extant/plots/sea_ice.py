@@ -21,7 +21,7 @@ import pandas as pd
 import xarray as xr
 from matplotlib.colors import BoundaryNorm
 
-from plotting_modules.constants import FORCING_COLORS
+from .constants import FORCING_COLORS
 from .. import sea_ice
 from . import charts
 from .charts import MODEL_MARKERS

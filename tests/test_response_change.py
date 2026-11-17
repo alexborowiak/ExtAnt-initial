@@ -99,7 +99,7 @@ def test_strongest_joint_change_and_regional_fractions(summary):
     assert list(point) == ["season", "lat", "lon"]
     assert rc.strongest_joint_change(summary, "A", "historical", point["season"]) == {"lat": point["lat"],
                                                                                       "lon": point["lon"]}
-    regional = rc.regional_mean(summary, lat_max=-60)
+    regional = rc.area_summary(summary, lat_max=-60)
     fractions = sum(regional[f"fraction_{name.replace(' ', '_')}"] for name in rc.CHANGE_CLASSES.values())
     np.testing.assert_allclose(fractions, 1.0)
 

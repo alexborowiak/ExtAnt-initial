@@ -1,6 +1,5 @@
 import numpy as np
 import xarray as xr
-from numba import njit, prange
 
 from ..utils.datatree import skip_empty
 from scipy import sparse
@@ -59,131 +58,12 @@ def detrend(da, dim=SAMPLE_DIM):
     return da - line
 
 
-
 # ---------------------------------------------------------------------------
 # LOWESS smoothing
 # ---------------------------------------------------------------------------
 
-@njit
-def _lowess_pass(x, y, k, robustness, fit, weights):
-    """One pass of local linear fits with tricube x weights (times ``robustness``), as statsmodels does it."""
-    n = x.size
-    left, right = 0, k
-    for i in range(n):
-        xval = x[i]
-        #(c): Slide the k-point neighbourhood until x[i] is at (or just left of) its centre
-        while right < n and xval > (x[left] + x[right]) / 2.0:
-            left += 1
-            right += 1
-        radius = max(xval - x[left], x[right - 1] - xval)
-        total = 0.0
-        nonzero = 0
-        for j in range(left, right):
-            distance = abs(x[j] - xval) / radius
-            distance = 1.0 - distance * distance * distance
-            weights[j] = distance * distance * distance * robustness[j]
-            total += weights[j]
-            nonzero += weights[j] > 1e-12
-        if nonzero < 2:
-            fit[i] = y[i]
-            continue
-        mean_x = 0.0
-        for j in range(left, right):
-            weights[j] /= total
-            mean_x += weights[j] * x[j]
-        spread = 0.0
-        for j in range(left, right):
-            spread += weights[j] * (x[j] - mean_x) ** 2
-        spread = max(spread, 1e-12)
-        value = 0.0
-        for j in range(left, right):
-            value += weights[j] * (1.0 + (xval - mean_x) * (x[j] - mean_x) / spread) * y[j]
-        fit[i] = value
 
-
-@njit
-def _robustness_weights(y, fit, robustness):
-    """Bisquare weights of the residuals in units of 6 x their median absolute value, as statsmodels does it."""
-    residual = np.abs(y - fit)
-    median = np.median(residual)
-    for j in range(y.size):
-        scaled = (1.0 if residual[j] > 0 else 0.0) if median == 0 else residual[j] / (6.0 * median)
-        scaled = min(scaled, 1.0)
-        robustness[j] = (1.0 - scaled * scaled) ** 2
-
-
-def _lowess(y, frac, it, out):
-    """statsmodels' LOWESS (delta = 0, x = 0, 1, 2, ...) on every row of ``y``.
-
-    Like statsmodels, NaN are dropped before fitting (the neighbourhoods are
-    the k nearest valid points) and are NaN in the output.
-    """
-    n_points, n_all = y.shape
-    for s in prange(n_points):
-        x = np.empty(n_all)
-        values = np.empty(n_all)
-        where = np.empty(n_all, dtype=np.int64)
-        n = 0
-        for i in range(n_all):
-            if not np.isnan(y[s, i]):
-                x[n], values[n], where[n] = i, y[s, i], i
-                n += 1
-        out[s] = np.nan
-        if n == 0:
-            continue
-        x, values = x[:n], values[:n]
-        k = min(max(int(frac * n + 1e-10), 2), n)
-        robustness = np.ones(n)
-        fit = np.empty(n)
-        weights = np.empty(n)
-        for iteration in range(it + 1):
-            _lowess_pass(x, values, k, robustness, fit, weights)
-            if iteration < it:
-                _robustness_weights(values, fit, robustness)
-        for i in range(n):
-            out[s, where[i]] = fit[i]
-
-
-_lowess_serial = njit(nogil=True)(_lowess)
-_lowess_parallel = njit(parallel=True)(_lowess)
-
-
-def _lowess_block(y, frac, it, parallel):
-    rows = np.ascontiguousarray(y.reshape(-1, y.shape[-1]), dtype=float)
-    out = np.empty_like(rows)
-    (_lowess_parallel if parallel else _lowess_serial)(rows, frac, it, out)
-    return out.reshape(y.shape)
-
-
-def lowess_xarray(da, core_dims="year", window=81, it=3):
-    """Robust LOWESS along one dimension: statsmodels' algorithm (delta = 0), compiled with numba.
-
-    Gives statsmodels' numbers (to rounding) about 100x faster than calling it
-    series by series.
-
-    Parameters
-    ----------
-    da : DataArray to smooth
-    core_dims : str, dimension to smooth along
-    window : int, number of points in each local window
-    it : int, number of bisquare reweighting passes; 0 disables robustness
-    """
-    frac = float(np.clip(window / da.sizes[core_dims], 0.0, 1.0))
-    dims = da.dims
-    if da.chunks is not None:
-        da = da.chunk({core_dims: -1})
-    return xr.apply_ufunc(
-        _lowess_block,
-        da,
-        input_core_dims=[[core_dims]],
-        output_core_dims=[[core_dims]],
-        kwargs={"frac": frac, "it": it, "parallel": da.chunks is None},
-        dask="parallelized",
-        output_dtypes=[float],
-    ).transpose(*dims)
-
-
-def lowess_matrix(n, frac):
+def _lowess_weights(n, frac):
     """Sparse weight matrices for local linear regression with tricube weights."""
     r = max(int(np.ceil(frac * n)), 2)
     x = np.arange(n, dtype=float)
@@ -214,10 +94,32 @@ def lowess_matrix(n, frac):
 
 
 @skip_empty
-def lowess_matrix_xarray(da, core_dims='year', window: int = 81):
-    """Non-robust LOWESS as a sparse matrix product (fast); NaNs are dropped from each fit."""
+def lowess(da, core_dims='year', window: int = 81):
+    """LOWESS along ``core_dims``: each year's value is a straight line fitted to the ``window`` years around it,
+    nearer years weighted more (tricube weights), evaluated at that year.
+
+    The one smoother of the repository: the forced response (``response_change.forced_response``), the forced S/N
+    (``emergence.proper_sn``) and a series' S/N against itself (``emergence.self_signal_to_noise``) all use it. Not
+    robust: no second pass that down-weights outliers (an ensemble mean has few). Every series is smoothed at once,
+    as one sparse matrix product; missing years are left out of each fit and stay missing.
+
+    Example: a straight line comes back unchanged (a local straight-line fit of a straight line is the line). With
+    ``window=81`` over 1850-2014, 1900's value is the line fitted to 1860-1940; near the ends the 81 years shift
+    inwards (1850's uses 1850-1930).
+
+    Args:
+        da (xr.DataArray | xr.Dataset): Data with ``core_dims``.
+        core_dims (str): The dimension to smooth along.
+        window (int): Years in each local fit.
+
+    Returns:
+        The same type and shape, smoothed.
+    """
+    #(c): One block along the smoothed dimension, as each fit needs the whole series
+    if da.chunks:
+        da = da.chunk({core_dims: -1})
     frac = window / da.sizes[core_dims]
-    W, WU, WU2 = lowess_matrix(da.sizes[core_dims], frac=frac)
+    W, WU, WU2 = _lowess_weights(da.sizes[core_dims], frac=frac)
 
     def smooth(y):
         shape = y.shape

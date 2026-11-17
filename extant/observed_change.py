@@ -21,6 +21,7 @@ import xarray as xr
 
 from . import era5_evaluation as ev
 from .statistics import records, trend
+from .statistics.spatial import area_weights
 
 #(t): The observed period that ERA5 and LESFMIP historical share
 YEARS = slice(1979, 2014)
@@ -47,7 +48,7 @@ def regional_mean(obj, region):
 
     def average(ds):
         ds = ds.sel(selection)
-        return ds.weighted(np.cos(np.deg2rad(ds["lat"]))).mean(("lat", "lon"))
+        return ds.weighted(area_weights(ds["lat"])).mean(("lat", "lon"))
 
     if isinstance(obj, xr.DataTree):
         return obj.map_over_datasets(lambda ds: average(ds) if ds.data_vars else ds)

@@ -427,13 +427,6 @@ def robust_sign(change, significant, threshold=0.66, dim="model"):
     return (increase.astype(float) - decrease.astype(float)).where(n_models > 0)
 
 
-def area_mean(da, lat="lat", lon="lon"):
-    """Cos(latitude)-weighted mean over ``lat`` and ``lon`` of a DataArray or Dataset; booleans give the area fraction."""
-    if isinstance(da, xr.DataArray) and da.dtype == bool:
-        da = da.astype(float)
-    return da.weighted(np.cos(np.deg2rad(da[lat]))).mean((lat, lon))
-
-
 # ---------------------------------------------------------------------------
 # Parametric
 # ---------------------------------------------------------------------------

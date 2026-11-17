@@ -64,7 +64,7 @@ import numpy as np
 import xarray as xr
 from matplotlib.lines import Line2D
 
-from plotting_modules.constants import FORCING_COLORS
+from .constants import FORCING_COLORS
 
 # ---------------------------------------------------------------------------
 # 1. Layout

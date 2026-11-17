@@ -1,4 +1,4 @@
-"""Put the repository (the extant package and plotting_modules) on the import path."""
+"""Put the repository (the extant package) on the import path."""
 
 import sys
 import warnings

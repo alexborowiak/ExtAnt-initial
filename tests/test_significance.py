@@ -5,6 +5,7 @@ import pytest
 import xarray as xr
 
 from extant.statistics import significance as sig
+from extant.statistics import spatial
 from extant.statistics.quantiles import quantile_range
 
 RNG = np.random.default_rng(11)
@@ -132,7 +133,7 @@ def test_significant_counts_count_each_sign_and_skip_missing_models():
 def test_area_mean_of_a_dataset_matches_its_dataarrays():
     da = _ensemble(3).isel(member=0, year=0)
     ds = xr.Dataset({"a": da, "b": 2 * da})
-    xr.testing.assert_allclose(sig.area_mean(ds)["b"], sig.area_mean(2 * da))
+    xr.testing.assert_allclose(spatial.area_mean(ds)["b"], spatial.area_mean(2 * da))
 
 
 def test_robust_sign_needs_the_threshold_of_models_with_data():

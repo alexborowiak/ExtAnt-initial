@@ -9,7 +9,6 @@ matplotlib = pytest.importorskip("matplotlib")
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-pytest.importorskip("plotting_modules")
 
 from extant import era5_evaluation as ev  # noqa: E402
 from extant.statistics import trend
@@ -260,9 +259,9 @@ def test_method_panels():
     methods.plot_window(hist, 1950, 21)
     methods.plot_window_values(hist, 1950, 21)
     methods.plot_rolling_quantiles(rolling, 1950)
-    smooth = trend.lowess_matrix_xarray(rolling)
+    smooth = trend.lowess(rolling)
     methods.plot_smoothing(rolling, smooth)
-    both = xr.concat([smooth, trend.lowess_matrix_xarray(qc.centred_rolling_quantiles(nat, quantiles=[0.05, 0.5, 0.95]))],
+    both = xr.concat([smooth, trend.lowess(qc.centred_rolling_quantiles(nat, quantiles=[0.05, 0.5, 0.95]))],
                      dim="experiment").assign_coords(experiment=["historical", "hist-nat"])
     base = nat.quantile([0.05, 0.5, 0.95], dim=["member", "year"])
     methods.plot_smoothed_quantiles(both, base, "historical")

@@ -82,13 +82,13 @@ def test_fingerprinting_panels():
 
 
 def test_ridgelines():
-    from extant.statistics.kde import fast_kde_xr
+    from extant.statistics.kde import kde
     rng = np.random.default_rng(5)
     values = xr.DataArray(rng.normal(size=(2, 3, 40, 2)) + np.array([0.0, 1.5])[:, None, None, None],
                           dims=("experiment", "model", "member", "season"),
                           coords=dict(experiment=["hist-nat", "historical"], model=MODELS, season=SEASONS))
     x = np.linspace(-5, 6, 111)
-    densities = fast_kde_xr(values, x, dim=["model", "member"], bandwidth=0.3)
+    densities = kde(values, xr.DataArray(x, dims="x", coords={"x": x}), ("model", "member"), 0.3)
     means = values.mean(["model", "member"])
     lines = values.sel(experiment="hist-nat").quantile([0.05, 0.95], dim=["model", "member"])
     fig = plt.figure(figsize=charts.chart_figure_size(1, 2, n_legends=0, n_colorbars=1), layout="constrained")

@@ -11,7 +11,7 @@ layers: the time series and percentile curves (``charts.lines_grid``, ``charts.b
 the forcings' changes (``charts.model_dots_grid``).
 
 Colours are those of ``forced_response``: red and blue for up and down, and each forcing's colour from
-plotting_modules, with ``OTHER_COLORS`` for what is not a forcing. Nothing here computes a result; the notebook
+``constants``, with ``OTHER_COLORS`` for what is not a forcing. Nothing here computes a result; the notebook
 makes every array a panel is given.
 
 Sections
@@ -32,7 +32,7 @@ from matplotlib.colors import LinearSegmentedColormap, ListedColormap, Normalize
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-from plotting_modules.constants import FORCING_COLORS
+from .constants import FORCING_COLORS
 from . import charts, forced_response as fr
 from .charts import MODEL_MARKERS
 from .era5_evaluation import INK, PERCENTILE_EDGES, PSEUDO_COLOR, RANK_BAR, percentile_colormap
@@ -192,7 +192,7 @@ def plot_ridgelines(densities, means, ridge_dim, height_scale, limit=3.0, value_
     with ``top`` the most any ridge reaches above its baseline (``height_scale`` × the highest density).
 
     Args:
-        densities (xr.DataArray): On (ridge_dim, x), e.g. ``statistics.kde.fast_kde_xr`` of anomalies in one season.
+        densities (xr.DataArray): On (ridge_dim, x), e.g. ``statistics.kde.kde`` of anomalies in one season.
         means (xr.DataArray): Each ridge's mean, on (ridge_dim): its colour and its number.
         ridge_dim (str): The ridges' dim, in the order of its values, top first.
         height_scale (float): The ridges' height per unit of density, the same in every panel so their areas compare:

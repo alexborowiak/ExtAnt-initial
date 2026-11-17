@@ -1,4 +1,5 @@
-"""Rolling quantiles, smoothing and quantile ranges for seasonal LESFMIP analysis.
+"""Quantiles of every series at once, ignoring NaN: over any dims (``nan_quantile``, ``pooled_quantiles``,
+``quantile_range``) and in a window centred on each year (``centred_rolling_quantiles``, numba).
 
 Functions here run on dask workers, so send the package to the cluster
 (``cluster.upload_package(client)``) after editing it.
@@ -72,69 +73,6 @@ def nan_quantile(da, q, dim):
     return result.isel(quantile=0, drop=True) if np.ndim(q) == 0 else result
 
 
-def _centred_sums(x, window):
-    """Sums over centred ``window``-long windows along the last axis, shortened at the ends.
-
-    From one running total: a window's sum is the total to its last value minus
-    the total before its first.
-
-    Example: x = [2, 3, 1, 4] and window = 3 have the running totals
-    [0, 2, 5, 6, 10]. The window centred on the third value runs from the second
-    to the fourth: 10 - 2 = 8 (3 + 1 + 4). Centred on the first it is cut short
-    to the first two: 5 - 0 = 5. Notebook calc_02b (section 2) goes through it.
-    """
-    half = window // 2
-    n = x.shape[-1]
-    #(c): cumulative[i] is the sum of the first i values, so cumulative[0] = 0 is the total before the first
-    cumulative = np.concatenate([np.zeros_like(x[..., :1]), np.cumsum(x, axis=-1)], axis=-1)
-    position = np.arange(n)
-    #(c): Each window's last value is half after its centre and its first half before, both kept inside the record
-    return cumulative[..., np.minimum(position + half + 1, n)] - cumulative[..., np.maximum(position - half, 0)]
-
-
-def _rolling_std_block(x, window):
-    """Standard deviation (ddof=0) of every member's values in each centred window; x is (..., member, year)."""
-    valid = np.isfinite(x)
-    x = np.where(valid, x, 0.0).astype(np.float64)
-    #(c): Each window's count, sum and sum of squares, from each year's over the members (axis -2)
-    count = _centred_sums(valid.sum(axis=-2).astype(np.float64), window)
-    mean = _centred_sums(x.sum(axis=-2), window)
-    square = _centred_sums((x * x).sum(axis=-2), window)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        mean /= count
-        #(c): The variance is the mean square minus the squared mean: [1, 2, 3] gives 14 / 3 - 2² = 0.67
-        #(c): (rounding can take it a hair below 0, hence the maximum)
-        variance = np.maximum(square / count - mean * mean, 0.0)
-    return np.where(count > 0, np.sqrt(variance), np.nan)
-
-
-@skip_empty
-def rolling_std(da, window=WINDOW, dim="year", member_dim="member"):
-    """Standard deviation of every member's values in a centred ``window``-year window, for each year.
-
-    The same numbers as ``da.rolling(year=window, center=True).construct('window').std(['window', 'member'])``
-    (ddof=0; NaN skipped; windows shortened at the ends of the record), but
-    from running sums of x and x², so no copy of the data per window: the
-    construct version holds ``window`` copies of the data in memory at once.
-
-    Args:
-        da (xr.DataArray | xr.Dataset): With ``member_dim`` and ``dim``.
-        window (int): Window length in years.
-        dim, member_dim (str): The rolling and the pooled dimension.
-
-    Returns:
-        The same type, without ``member_dim``.
-    """
-    if da.chunks:
-        da = da.chunk({member_dim: -1, dim: -1})
-    out = xr.apply_ufunc(
-        _rolling_std_block, da,
-        input_core_dims=[[member_dim, dim]], output_core_dims=[[dim]],
-        kwargs={"window": window}, dask="parallelized", output_dtypes=[np.float64],
-    )
-    return out.transpose(dim, ...)
-
-
 def pooled_quantiles(ds, quantiles, dims=("member", "year")):
     """Quantiles of every variable over ``dims`` pooled, with ``stats.nan_quantile``.
 
@@ -142,17 +80,6 @@ def pooled_quantiles(ds, quantiles, dims=("member", "year")):
     path loops over every series in Python (minutes on a full grid).
     """
     return ds.map(nan_quantile, q=quantiles, dim=[d for d in dims if d in ds.dims])
-
-
-@skip_empty
-def rolling_quantile(da, rolling_dim, window, quantiles, extra_dims=None):
-    """Rolling quantiles via xarray's construct, keeping the shortened windows at either end (slow, memory-heavy).
-
-    Notebook plot_04's plumes use it to reach the ends of the record. The analysis
-    uses ``centred_rolling_quantiles``, where those years are NaN.
-    """
-    dims = ["window", *(extra_dims or [])]
-    return da.rolling({rolling_dim: window}, center=True).construct("window").quantile(quantiles, dim=dims)
 
 
 # ---------------------------------------------------------------------------

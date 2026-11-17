@@ -27,8 +27,9 @@ import numpy as np
 import xarray as xr
 
 from .config import WINDOW
-from .statistics.trend import lowess_matrix_xarray
-from .statistics.significance import area_mean, resample_members
+from .statistics.trend import lowess
+from .statistics.significance import resample_members
+from .statistics.spatial import area_mean
 from .utils.datatree import skip_empty
 
 #(t): How forced_response estimates the forced response across members before LOWESS smoothing:
@@ -70,7 +71,7 @@ def forced_response(members, window=81, centre=FORCED_CENTRE):
     forced = members.mean("member") if centre == "mean" else members.median("member")
     if forced.chunks:
         forced = forced.chunk({"year": -1})
-    return lowess_matrix_xarray(forced, core_dims="year", window=window)
+    return lowess(forced, core_dims="year", window=window)
 
 
 # ---------------------------------------------------------------------------
@@ -330,20 +331,20 @@ def joint_change_counts(summary, mean_test="robust", model_dim="model"):
     return xr.concat([wider, narrower], dim=xr.Variable("change", ["mean and wider", "mean and narrower"]))
 
 
-REGIONAL_VARIABLES = ("mean_change", "width_change", "upper_tail_change", "lower_tail_change", "tail_asymmetry")
+AREA_SUMMARY_VARIABLES = ("mean_change", "width_change", "upper_tail_change", "lower_tail_change", "tail_asymmetry")
 
 
-def regional_mean(summary, lat_max=-60.0, variables=REGIONAL_VARIABLES, mean_test="robust"):
+def area_summary(summary, lat_max=-60.0, variables=AREA_SUMMARY_VARIABLES, mean_test="robust"):
     """Cos(lat)-weighted means south of ``lat_max``, plus the fraction of that area in each change class.
 
     Args:
         summary (xr.Dataset): Output of ``change_summary``.
-        lat_max (float): Northern edge of the region.
+        lat_max (float): Northern edge of the area averaged.
         variables (Sequence[str]): Variables averaged.
         mean_test (str): Key of ``MEAN_TESTS``: which test decides that the mean changed, for the classes.
 
     Returns:
-        xr.Dataset: The regional-mean ``variables`` present in ``summary``, and
+        xr.Dataset: The area means of the ``variables`` present in ``summary``, and
         ``fraction_<class>`` for each of ``CHANGE_CLASSES``.
     """
     region = summary.sel(lat=slice(None, lat_max))

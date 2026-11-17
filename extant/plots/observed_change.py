@@ -15,7 +15,7 @@ from matplotlib.patches import Patch
 
 from . import charts
 from .era5_evaluation import ERA5_COLOR, INK, INK_2
-from plotting_modules.constants import FORCING_COLORS
+from .constants import FORCING_COLORS
 
 #(t): Detection classes (observed_change.DETECTION_CLASSES), validated as a categorical palette
 DETECTION_COLORS = ("#d9d8d4", "#2a78d6", "#eb6834", "#4a3aa7")
