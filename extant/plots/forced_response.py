@@ -88,25 +88,34 @@ def _ramp(cmap, start, stop, n):
     return list(plt.get_cmap(cmap)(np.linspace(start, stop, n)))
 
 
-def sn_scale(label="S/N", step=0.25):
-    """S/N from -3 to 3: greys from -1 to 1 (not emerged), then oranges and reds for an increase, light and
-    dark blues for a decrease; the darkest red above 3 and purple below -3.
+def sn_scale(label="S/N", step=0.25, grey_until=1, orange_until=2, red_until=3):
+    """S/N from -red_until to red_until: greys between ±grey_until (not emerged), then oranges up to orange_until and
+    reds up to red_until for an increase, light and dark blues the same distances below 0 for a decrease; the darkest
+    red above red_until and purple below -red_until.
 
     S/N says how far apart two distributions have moved, in units of their year-to-year noise, and its sign
     says which way: between -1 and 1 they overlap heavily, beyond ±2 they barely do. It is not a test, so
     there is no threshold, only bands.
+
+    The bounds must be multiples of ``step``. Example: ``sn_scale(grey_until=0.5, orange_until=1.5)`` has greys from
+    -0.5 to 0.5, oranges from 0.5 to 1.5 and reds from 1.5 to 3 (light blues from -1.5 to -0.5, dark blues from -3
+    to -1.5).
     """
-    levels = np.arange(-3, 3 + step / 2, step)
-    per_band = int(round(1 / step))
-    #(c): One more colour at each end than there are bands, for the values below -3 and above 3 (extend="both")
-    #(c): The greys mirror each other: palest at 0, a little darker towards -1 and 1
+    levels = np.arange(-red_until, red_until + step / 2, step)
+    #(c): How many steps of the levels each band covers: 1 to 2 in steps of 0.25 is 4
+    n_grey = int(round(grey_until / step))
+    n_orange = int(round((orange_until - grey_until) / step))
+    n_red = int(round((red_until - orange_until) / step))
+    #(c): One more colour at each end than there are bands, for the values beyond ±red_until (extend="both")
+    #(c): The greys mirror each other: palest at 0, a little darker towards ±grey_until
     colors = ListedColormap([plt.get_cmap("Purples")(0.85),
-                             *_ramp("Blues", 0.95, 0.7, per_band), *_ramp("Blues", 0.55, 0.3, per_band),
-                             *_ramp("Greys", 0.35, 0.1, per_band), *_ramp("Greys", 0.1, 0.35, per_band),
-                             *_ramp("Oranges", 0.3, 0.55, per_band), *_ramp("Reds", 0.7, 0.95, per_band),
+                             *_ramp("Blues", 0.95, 0.7, n_red), *_ramp("Blues", 0.55, 0.3, n_orange),
+                             *_ramp("Greys", 0.35, 0.1, n_grey), *_ramp("Greys", 0.1, 0.35, n_grey),
+                             *_ramp("Oranges", 0.3, 0.55, n_orange), *_ramp("Reds", 0.7, 0.95, n_red),
                              plt.get_cmap("Reds")(1.0)])
     return Scale(levels, colors, label, norm=BoundaryNorm(levels, colors.N, extend="both"),
-                 ticks=np.arange(-3, 3.1, 1), extend="both")
+                 ticks=[-red_until, -orange_until, -grey_until, 0, grey_until, orange_until, red_until],
+                 extend="both")
 
 
 def pvalue_scale(alpha=0.05, label=None):

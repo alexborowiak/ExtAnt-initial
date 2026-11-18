@@ -201,7 +201,7 @@ def key_axis_below(axes):
 # ---------------------------------------------------------------------------
 
 #(t): What every map shows: south of 40°S
-EXTENT = [-180, 180, -90, -40]
+EXTENT = [-180, 180, -90, -50]
 
 
 def style_antarctic_ax(ax, add_lat_lon:bool=False):

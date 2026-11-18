@@ -148,7 +148,7 @@ def emergence_surface_area_percent(da, thresholds):
     thresholds_da = xr.DataArray(np.atleast_1d(thresholds), dims='threshold')
     thresholds_da = thresholds_da.assign_coords(threshold=thresholds_da)
     weights_da = area_weights(da['lat'])
-    exceeds_da = (da > thresholds_da).astype(float)
+    exceeds_da = (da > thresholds_da).where(da.notnull())
     return 100 * exceeds_da.weighted(weights_da).mean(['lat', 'lon'])
 
 
