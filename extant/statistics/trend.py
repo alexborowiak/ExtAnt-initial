@@ -15,6 +15,10 @@ def _slope_and_line(da, dim=SAMPLE_DIM, x=None):
     if x is None:
         x = da[SAMPLE_DIM if SAMPLE_DIM in dims else dims[0]]
 
+    #(c): Datetime coordinates regress on the calendar year, giving a gradient per year
+    if np.issubdtype(x.dtype, np.datetime64):
+        x = x.dt.year
+
     #(c): Mask x wherever y is missing, so both means use the same samples
     x = x.astype(float).broadcast_like(da).where(da.notnull())
     dx = x - x.mean(dims)
@@ -40,6 +44,7 @@ def linear_fit(da, dim=SAMPLE_DIM, x=None):
         xr.Dataset: ``fit``, the fitted line on ``da``'s shape, and ``gradient``,
         the slope per unit of ``x`` with ``dim`` reduced.
     """
+    if isinstance(da, xr.Dataset): da = da.to_array()
     slope, line = _slope_and_line(da, dim, x)
     return line.to_dataset(name='fit').assign(gradient=slope)
 
@@ -47,7 +52,7 @@ def linear_fit(da, dim=SAMPLE_DIM, x=None):
 def trend(da, dim=SAMPLE_DIM):
     """Least-squares trend, per decade: the gradient (per year) times 10, of a DataArray or each variable of a Dataset."""
     slope, _ = _slope_and_line(da, dim)
-    return 10 * slope
+    return slope
 
 
 def detrend(da, dim=SAMPLE_DIM):
@@ -163,65 +168,27 @@ def lowess(da, core_dims='year', window: int = 81):
 # ---------------------------------------------------------------------------
 # Mann-Kendall trend test
 # ---------------------------------------------------------------------------
-
 def mk_S(y, i, j):
-    """Mann-Kendall S statistic along the last axis.
+    return np.nansum(np.sign(y[..., j] - y[..., i]), axis=-1)
 
-    S = sum_{k<l} sign(y_l - y_k), as a broadcast pairwise difference
-    over precomputed upper-triangle index pairs.
-
-    Parameters
-    ----------
-    y : np.ndarray
-        Shape (..., n); leading axes treated as independent cells.
-    i, j : np.ndarray
-        Upper-triangle index pairs from np.triu_indices(n, k=1).
-
-    Returns
-    -------
-    np.ndarray
-        S with shape y.shape[:-1].
-    """
-    return np.sign(y[..., j] - y[..., i]).sum(axis=-1)
-
-
-def grid_mk(da, dim='time', alpha=0.05):
-    """Per-cell Mann-Kendall test, lazy over dask.
-
-        Var(S) = n(n-1)(2n+5) / 18          no-ties form
-        Z      = (S -/+ 1) / sqrt(Var)      continuity-corrected, 0 if S = 0
-        p      = 2 * P(N(0,1) > |Z|)
-
-    apply_ufunc moves `dim` to the last axis, which is what mk_S expects.
-
-    Parameters
-    ----------
-    da : xr.DataArray
-        Input; `dim` is the time axis, other dims treated as cells.
-    dim : str
-        Dimension to test along.
-    alpha : float
-        Threshold for the significance mask.
-
-    Returns
-    -------
-    xr.Dataset
-        S, Z, p (two-sided), sig (bool, p < alpha).
-    """
+def grid_mk(da, dim='time', alpha=0.05, min_n=10):
     n = da.sizes[dim]
     i, j = np.triu_indices(n, k=1)
-    var = n * (n - 1) * (2 * n + 5) / 18.0
 
-    S = xr.apply_ufunc(
-        lambda y: mk_S(y, i, j),
-        da,
-        input_core_dims=[[dim]],
-        dask='parallelized', output_dtypes=[float]
-        )
+    S = xr.apply_ufunc(lambda y: mk_S(y, i, j), da,
+                       input_core_dims=[[dim]],
+                       dask='parallelized', output_dtypes=[float])
 
-    Z = xr.where(S > 0, (S - 1) / np.sqrt(var),
-        xr.where(S < 0, (S + 1) / np.sqrt(var), 0.0))
+    # per-cell effective sample size and variance
+    n_eff = da.notnull().sum(dim)
+    var = n_eff * (n_eff - 1) * (2 * n_eff + 5) / 18.0
+    sd = np.sqrt(var)
+
+    Z = xr.where(S > 0, (S - 1) / sd, xr.where(S < 0, (S + 1) / sd, 0.0))
+    Z = Z.where(n_eff >= min_n)          # NaN for masked / too-short cells
     p = xr.apply_ufunc(lambda z: 2 * norm.sf(np.abs(z)), Z,
                        dask='parallelized', output_dtypes=[float])
 
-    return xr.Dataset({'S': S, 'Z': Z, 'p': p, 'sig': p < alpha})
+    return xr.Dataset({'S': S, 'Z': Z, 'p': p,
+                       'sig': (p < alpha).where(p.notnull()),
+                       'n_eff': n_eff})

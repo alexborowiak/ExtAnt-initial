@@ -20,3 +20,10 @@ CEDA_DIRS = [Path('/badc/cmip6/data/CMIP6/DAMIP'), Path('/badc/cmip6/data/CMIP6/
 
 #(t): The station observations (notebook plot_05, section 1)
 OBS_PATH = Path('/gws/ssde/j25a/extant/users/rywill/Extremes_Database/Obs')
+
+RECON_PATH = Path('/gws/ssde/j25a/extant/users/aborow/recon_t2m_1958-2025_ano.final.nc')
+
+
+BERKLEY_PATH = Path('/gws/ssde/j25a/esmeval/obsdata-v2/Tier2/BerkeleyEarth/OBS_BerkeleyEarth_reanaly_2020_Amon_tas_185001-201912.nc')
+
+EXTANT_PATH = Path('/gws/ssde/j25a/extant/users/aborow')
