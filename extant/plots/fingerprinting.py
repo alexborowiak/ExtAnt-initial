@@ -11,14 +11,20 @@ is None); the notebook makes the figure and its axes (a GridSpec), draws each pa
     plot_correlations        the correlation of the fingerprints, or of the β's across the Monte Carlo trials
     plot_residual_null       the residual test: the observed statistic against its null distribution
 
-Colours: each signal's (``charts.SIGNAL_COLORS``); black is ERA5.
+Colours: each signal's (``SIGNAL_COLORS``); black is ERA5.
 """
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 from . import charts
-from .charts import MODEL_MARKERS, SIGNAL_COLORS
+from .charts import MODEL_MARKERS
+from .constants import FORCING_COLORS
+
+#(t): Each signal: its forcing's colour, and for the combinations their nearest
+#(t): (ALL is historical's; ANT orange, apart from it; OTH, the forcings other than GHG, a blue-grey)
+SIGNAL_COLORS = {'ALL': FORCING_COLORS['historical'], 'ANT': '#d95f02', 'NAT': FORCING_COLORS['hist-nat'],
+                 'GHG': FORCING_COLORS['hist-GHG'], 'AER': FORCING_COLORS['hist-aer'],
+                 'O3': FORCING_COLORS['hist-totalO3'], 'OTH': '#5d6fb3'}
 
 #(t): Markers of the two fits
 METHOD_MARKERS = {"ols": "o", "tls": "D"}
@@ -33,7 +39,8 @@ def plot_entry_table(table, scale, row_dim="region", col_dim="season", ax=None):
 
     Args:
         table (xr.DataArray): On (row_dim, col_dim), e.g. ``fingerprinting.unflatten`` of y.
-        scale (fr.Scale): The colour scale; the same for every table side by side, so one colour bar fits them all.
+        scale (dict): The colour scale (``levels`` and ``cmap`` are used), e.g. ``dict(levels=np.arange(-0.6, 0.61,
+            0.1), cmap='RdBu_r')``; the same for every table side by side, so one colour bar fits them all.
         row_dim, col_dim (str): The dims down and across.
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.
 
@@ -45,7 +52,7 @@ def plot_entry_table(table, scale, row_dim="region", col_dim="season", ax=None):
     charts.style_chart_ax(ax)
     rows, columns = list(table[row_dim].values), list(table[col_dim].values)
     values = table.transpose(row_dim, col_dim).values
-    image = ax.imshow(values, cmap=scale.cmap, vmin=scale.levels[0], vmax=scale.levels[-1], aspect="auto")
+    image = ax.imshow(values, cmap=scale["cmap"], vmin=scale["levels"][0], vmax=scale["levels"][-1], aspect="auto")
     for (r, c), value in np.ndenumerate(values):
         if np.isfinite(value):
             ax.text(c, r, f"{value:.2f}", ha="center", va="center", fontsize=7)

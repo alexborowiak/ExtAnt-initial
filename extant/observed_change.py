@@ -6,72 +6,22 @@ influence (hist-nat)?
 
 Sections
 --------
-1. Regions              area-weighted means over named regions, the spatial units of the optimal fingerprinting
-                        (notebook fingerprinting_01); no other notebook uses regions
-2. Detection classes    ERA5 outside hist-nat's range (detected) and inside historical's (consistent)
-3. Record rates         how many record highs and lows ERA5 sets, against chance and the members
-4. Signal sets          the forcings each fingerprinting fit combines
+1. Detection classes    ERA5 outside hist-nat's range (detected) and inside historical's (consistent)
+2. Record rates         how many record highs and lows ERA5 sets, against chance and the members
 
-ERA5's trend among each experiment's members (detection) is worked out in notebook calc_03c with
-era5_evaluation: ``ev.align`` for common samples, ``ev.locate`` for where ERA5 falls among the members.
+ERA5's trend among each experiment's members (detection) is worked out in notebook calc_03c, with
+``obs_evaluation.locate`` for where ERA5 falls among the members.
 """
 
 import numpy as np
 import xarray as xr
 
-from . import era5_evaluation as ev
-from .statistics import records, trend
-from .statistics.spatial import area_weights
-
-#(t): The observed period that ERA5 and LESFMIP historical share
-YEARS = slice(1979, 2014)
+from . import obs_evaluation as ev
+from .statistics import records
 
 
 # ---------------------------------------------------------------------------
-# 1. Regions
-# ---------------------------------------------------------------------------
-
-#(t): Regions as lat/lon selections on the LESFMIP grid (boxes; edit to taste)
-REGIONS = {
-    "Antarctica (90–65°S)": {"lat": slice(-90, -65)},
-    "Antarctic Peninsula": {"lat": slice(-75, -62.5), "lon": slice(-75, -55)},
-    "Southern Ocean (65–50°S)": {"lat": slice(-65, -50)},
-}
-
-
-def regional_mean(obj, region):
-    """Cos(latitude)-weighted mean over a region of ``REGIONS`` (or a selection dict).
-
-    Works on DataArrays, Datasets and DataTrees alike.
-    """
-    selection = REGIONS[region] if isinstance(region, str) else region
-
-    def average(ds):
-        ds = ds.sel(selection)
-        return ds.weighted(area_weights(ds["lat"])).mean(("lat", "lon"))
-
-    if isinstance(obj, xr.DataTree):
-        return obj.map_over_datasets(lambda ds: average(ds) if ds.data_vars else ds)
-    return average(obj)
-
-
-def regional_means(obj, regions=REGIONS):
-    """``regional_mean`` of every region, along a new ``region`` dim; NaN for a region with no grid points.
-
-    Works on DataArrays, Datasets and DataTrees alike.
-
-    Args:
-        obj: Data on (lat, lon, ...).
-        regions (dict): Region name -> lat/lon selection, as in ``REGIONS``.
-    """
-    if isinstance(obj, xr.DataTree):
-        return obj.map_over_datasets(lambda ds: regional_means(ds, regions) if ds.data_vars else ds)
-    return xr.concat([regional_mean(obj, selection) for selection in regions.values()],
-                     dim=xr.Variable("region", list(regions)))
-
-
-# ---------------------------------------------------------------------------
-# 2. Detection classes
+# 1. Detection classes
 # ---------------------------------------------------------------------------
 
 #(t): Detection classes: is ERA5 outside hist-nat's range (detected) and inside historical's (consistent)?
@@ -104,10 +54,10 @@ def detection_class(historical, hist_nat):
 
 
 # ---------------------------------------------------------------------------
-# 3. Record rates
+# 2. Record rates
 # ---------------------------------------------------------------------------
 
-def record_curves(ensembles, obs, years=YEARS, pool_seasons=True):
+def record_curves(ensembles, obs, pool_seasons=True):
     """Cumulative record highs and lows through the record, for ERA5 and each experiment's members.
 
     With no change at all, year k is a record with probability 1/k, so the
@@ -117,9 +67,8 @@ def record_curves(ensembles, obs, years=YEARS, pool_seasons=True):
     noisy than one season's ~4 records.
 
     Args:
-        ensembles (dict[str, xr.DataArray]): Experiment -> members on (member, year, season).
-        obs (xr.DataArray): ERA5 on (year, season).
-        years (slice): The shared period.
+        ensembles (dict[str, xr.DataArray]): Experiment -> members on (member, year, season), over the years compared.
+        obs (xr.DataArray): ERA5 on (year, season), over the same years.
         pool_seasons (bool): Sum the counts over seasons.
 
     Returns:
@@ -133,7 +82,7 @@ def record_curves(ensembles, obs, years=YEARS, pool_seasons=True):
 
     members, observed = {}, None
     for experiment, ensemble in ensembles.items():
-        ensemble, aligned_obs = ev.align(ensemble, obs, years=years)
+        ensemble, aligned_obs = ev.align(ensemble, obs)
         members[experiment] = curves(ensemble).assign_coords(member=np.arange(ensemble.sizes["member"]))
         observed = curves(aligned_obs) if observed is None else observed
     stacked = xr.concat(list(members.values()), dim=xr.Variable("experiment", list(members)), join="outer")
@@ -144,15 +93,3 @@ def record_curves(ensembles, obs, years=YEARS, pool_seasons=True):
     expected = (1 / rank).fillna(0).cumsum("year")
     expected = expected.sum("season") if pool_seasons else expected
     return xr.Dataset({"obs": observed, "members": stacked, "expected": expected})
-
-
-# ---------------------------------------------------------------------------
-# 4. Signal sets (fingerprinting)
-# ---------------------------------------------------------------------------
-
-#(t): Signal sets: name -> (experiment, experiment subtracted or None)
-SIGNAL_SETS = {
-    "ANT + NAT": {"ANT": ("historical", "hist-nat"), "NAT": ("hist-nat", None)},
-    "GHG + AER + O3 + NAT": {"GHG": ("hist-GHG", None), "AER": ("hist-aer", None),
-                             "O3": ("hist-totalO3", None), "NAT": ("hist-nat", None)},
-}

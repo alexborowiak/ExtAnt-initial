@@ -1,2 +1,3 @@
-"""General statistics used across the notebooks: trends and smoothing (trend), signal-to-noise (emergence),
-quantiles (quantiles), resampling and tests (significance), kernel density estimates (kde) and records (records)."""
+"""General statistics, for any data: trends and smoothing (trend), the shape of a distribution (moments), quantiles
+(quantiles), p-values, bootstraps and tests (significance), signal-to-noise (emergence), area and regional means
+(spatial), kernel density estimates (kde) and record highs and lows (records)."""

@@ -1,23 +1,25 @@
-"""Checks of era5_evaluation against independent reference implementations.
+"""Checks of obs_evaluation against independent reference implementations.
 
 Run with ``pytest tests``. Running this file directly also prints a calibration
 table (how often each test flags a statistic in synthetic worlds where the
-answer is known): ``python tests/test_era5_evaluation.py 200``.
+answer is known): ``python tests/test_obs_evaluation.py 200``.
 """
 
 import sys
+from functools import partial
 
 import numpy as np
 import pandas as pd
 import pytest
-import scipy.stats
 import xarray as xr
 
 if __name__ == "__main__":
     import conftest  # noqa: F401  (sets the import path when run as a script)
 
-from extant import era5_evaluation as ev
-from extant.statistics import emergence, kde, records, trend
+from extant import obs_evaluation as ev
+from extant.statistics import kde, trend
+from extant.statistics.moments import excess_kurtosis, skewness
+from extant.statistics.quantiles import quantile_range
 from extant.statistics.significance import pvalue_two_sided
 
 RNG = np.random.default_rng(42)
@@ -46,80 +48,13 @@ def test_align_refuses_kelvin_against_celsius():
 
 
 # ---------------------------------------------------------------------------
-# 3-4. Treatments and statistics
+# 2. Treatments
 # ---------------------------------------------------------------------------
 
-def test_linear_fit_and_detrend_match_polyfit_with_nan():
-    years = np.arange(1979, 2014)
-    y = 0.03 * (years - 1979) + RNG.standard_normal(years.size)
-    y[[3, 10]] = np.nan
-    da = xr.DataArray(y, dims="year", coords={"year": years})
-    ok = ~np.isnan(y)
-    slope, intercept = np.polyfit(years[ok], y[ok], 1)
-    np.testing.assert_allclose(trend.trend(da), 10 * slope)
-    residual = trend.detrend(da)
-    np.testing.assert_allclose(residual.values[ok], y[ok] - (slope * years[ok] + intercept))
-    assert np.isnan(residual.values[3])
-
-
-def test_pooled_trend_uses_year_as_regressor():
-    ens, _ = ev.simulate_ensemble(n_members=2, trend=0.5, noise=0.0)
-    np.testing.assert_allclose(trend.trend(ens, ("year", "season")), 0.5)
-
-
-def test_moments_match_scipy():
-    da = xr.DataArray(RNG.gamma(2.0, size=(3, 40)), dims=("member", "year"))
-    np.testing.assert_allclose(ev.skewness(da), scipy.stats.skew(da.values, axis=1))
-    np.testing.assert_allclose(ev.excess_kurtosis(da), scipy.stats.kurtosis(da.values, axis=1))
-    x = da.values[0]
-    np.testing.assert_allclose(ev.lag1_autocorrelation(da.isel(member=0)), np.corrcoef(x[1:], x[:-1])[0, 1])
-
-
-def test_width_and_tails_match_numpy():
-    da = xr.DataArray(RNG.standard_normal((3, 40)), dims=("member", "year"))
-    q05, q50, q95 = np.quantile(da.values, [0.05, 0.5, 0.95], axis=1)
-    np.testing.assert_allclose(ev.quantile_width(da), q95 - q05)
-    np.testing.assert_allclose(ev.upper_tail_width(da), q95 - q50)
-    np.testing.assert_allclose(ev.lower_tail_width(da), q50 - q05)
-
-
-@pytest.mark.parametrize("q", [0.5, [0.05, 0.5, 0.95], 0.0, 1.0])
-def test_nan_quantile_matches_xarray(q):
-    da = xr.DataArray(RNG.standard_normal((6, 36, 4, 3)), dims=("member", "year", "season", "lat"))
-    da = da.where(~((da.year == 35) & (da.season != 1)))  # a shared missing-sample mask
-    da[0, :, 0, 0] = np.nan                                # an all-NaN series
-    expected = da.quantile(q, dim="year")
-    np.testing.assert_allclose(ev.nan_quantile(da, q, "year").transpose(*expected.dims), expected, equal_nan=True)
-
-
-def test_record_counts_match_brute_force_and_theory():
-    x = RNG.standard_normal((400, 35))
-    x[:5, -1] = np.nan
-    da = xr.DataArray(x, dims=("member", "year"), coords={"year": np.arange(1979, 2014)})
-
-    def brute(row, high=True):
-        row = row[np.isfinite(row)]
-        row = row if high else -row
-        return sum(True if i == 0 else row[i] > row[:i].max() for i in range(row.size))
-
-    np.testing.assert_array_equal(records.record_highs(da).values, [brute(r) for r in x])
-    np.testing.assert_array_equal(records.record_lows(da).values, [brute(r, False) for r in x])
-    np.testing.assert_allclose(float(records.record_highs(da).mean()), records.expected_records(35), atol=0.15)
-    np.testing.assert_array_equal(records.cumulative_records(da).isel(year=-1).values, records.record_highs(da).values)
-
-
-def test_self_signal_to_noise_of_a_known_trend():
-    years = np.arange(1979, 2014)
-    noise = RNG.standard_normal(years.size)
-    noise = (noise - noise.mean()) / noise.std(ddof=1)
-    series = xr.DataArray(0.1 * (years - years[0]) + noise, dims="year", coords={"year": years})
-    # Signal ~ 0.1 x 34 years = 3.4 over unit noise.
-    np.testing.assert_allclose(float(emergence.self_signal_to_noise(series)), 3.4, rtol=0.15)
-
-
-def test_anomalies_reference_period():
+def test_anomalies_over_a_reference_period():
     da = xr.DataArray(np.arange(10.0), dims="year", coords={"year": np.arange(2000, 2010)})
-    np.testing.assert_allclose(ev.anomalies(da, reference=slice(2000, 2001)).values, np.arange(10.0) - 0.5)
+    np.testing.assert_allclose(ev.treat(da, "anomaly", reference=slice(2000, 2001)).values, np.arange(10.0) - 0.5)
+    np.testing.assert_allclose(ev.treat(da, "anomaly").values, np.arange(10.0) - 4.5)
 
 
 # ---------------------------------------------------------------------------
@@ -150,8 +85,8 @@ def _moment_tests(ens, obs):
     """The moment test as notebook calc_03a runs it: each moment of the members and ERA5, then ``locate``."""
     ds = xr.Dataset({"members": ens, "era5": obs})
     detrended = ds.map(trend.detrend)
-    moments = [ds.mean("year"), detrended.std("year", ddof=1), detrended.map(ev.skewness),
-               detrended.map(ev.excess_kurtosis)]
+    moments = [ds.mean("year"), detrended.std("year", ddof=1), detrended.map(skewness),
+               detrended.map(excess_kurtosis)]
     return xr.concat([ev.locate(moment["members"], moment["era5"]) for moment in moments],
                      dim=xr.Variable("statistic", ["mean", "std", "skewness", "kurtosis"]))
 
@@ -162,13 +97,9 @@ def _statistic_tests(ens, obs):
     detrended = ds.map(trend.detrend)
     statistics = {
         "trend": ds.map(trend.trend),
-        "emergence": ds.map(emergence.self_signal_to_noise),
-        "width": detrended.map(ev.quantile_width),
-        "lower_tail": detrended.map(ev.lower_tail_width),
-        "upper_tail": detrended.map(ev.upper_tail_width),
-        "records_high": ds.map(records.record_highs),
-        "records_low": ds.map(records.record_lows),
-        "lag1": detrended.map(ev.lag1_autocorrelation),
+        "width": detrended.map(partial(quantile_range, quantiles=(0.05, 0.95), dims=("year",))),
+        "lower_tail": detrended.map(partial(quantile_range, quantiles=(0.05, 0.5), dims=("year",))),
+        "upper_tail": detrended.map(partial(quantile_range, quantiles=(0.5, 0.95), dims=("year",))),
     }
     return xr.concat([ev.locate(values["members"], values["era5"]) for values in statistics.values()],
                      dim=xr.Variable("statistic", list(statistics)))
@@ -187,7 +118,7 @@ def test_locate_counts_only_members_with_values():
 def _map_world(n_members=25, noise=1.0, seed=0):
     """Independent (ensemble, obs) at every point of a small polar grid: a perfect model if noise == 1."""
     rng = np.random.default_rng(seed)
-    coords = {"year": np.arange(1979, 2014), "season": list(ev.SEASONS),
+    coords = {"year": np.arange(1979, 2014), "season": ["DJF", "MAM", "JJA", "SON"],
               "lat": np.linspace(-85.0, -50.0, 5), "lon": np.arange(0.0, 360.0, 60.0)}
     shape = tuple(len(v) for v in coords.values())
     ens = xr.DataArray(noise * rng.standard_normal((n_members, *shape)), dims=("member", *coords),
@@ -286,17 +217,6 @@ def test_rank_histogram_test_shapes_and_frequencies():
 # 8-9. Distributions and plumes
 # ---------------------------------------------------------------------------
 
-def test_kde_matches_scipy_and_integrates_to_one():
-    samples = RNG.standard_normal(35)
-    da = xr.DataArray(samples, dims="year")
-    x = xr.DataArray(np.linspace(-6, 6, 2001), dims="x")
-    bandwidth = 0.4
-    ours = kde.kde(da, x, bandwidth=bandwidth)
-    reference = scipy.stats.gaussian_kde(samples, bw_method=bandwidth / samples.std(ddof=1))(x.values)
-    np.testing.assert_allclose(ours, reference, rtol=1e-10)
-    np.testing.assert_allclose(np.trapezoid(ours, x), 1, rtol=1e-4)
-
-
 def test_pooled_kde_is_the_member_mean_and_anomalies_are_centred():
     ens, obs = ev.align(*ev.simulate_ensemble(n_members=8, bias=2))
     summary = ev.distribution_summary(ens, obs)
@@ -337,10 +257,10 @@ def _spatial(n_members=50, thresholds="fixed", **world):
 
 @pytest.mark.parametrize("world, diagnosis, period", [
     ({}, "adequate", "no problem over the whole record"),
-    ({"trend": 2.0}, "warms too much", "problem changes: forced response"),
-    ({"trend": -1.5}, "warms too little", "problem changes: forced response"),
-    ({"noise": 0.5}, "too little variability", "same problem in both: variability"),
-    ({"noise": 2.0}, "too much variability", "same problem in both: variability"),
+    ({"trend": 2.0}, "signal overestimated", "problem changes: forced response"),
+    ({"trend": -1.5}, "signal underestimated", "problem changes: forced response"),
+    ({"noise": 0.5}, "variability too small", "same problem in both: variability"),
+    ({"noise": 2.0}, "variability too large", "same problem in both: variability"),
 ])
 def test_spatial_evaluation_diagnoses_known_worlds(world, diagnosis, period):
     """Most grid points of each toy world get its diagnosis (step 7) and its period verdict (step 8)."""
@@ -415,4 +335,3 @@ if __name__ == "__main__":
     pd.set_option("display.max_columns", None)
     print(f"Fraction flagged over {worlds} synthetic worlds (40 members, 35 years x 4 seasons):")
     print(calibration(worlds).round(2))
-

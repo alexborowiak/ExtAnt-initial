@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from extant import era5_evaluation as ev
+from extant import obs_evaluation as ev
 from extant.statistics import records, trend
 from extant import observed_change as oc
 
@@ -45,15 +45,6 @@ def test_detection_class():
     # A test with too few members to flag anything leaves the point unclassified.
     hist_nat["testable"] = xr.DataArray([1, 0, 1, 1], dims="point")
     np.testing.assert_array_equal(oc.detection_class(historical, hist_nat).values, [0, np.nan, 1, 2])
-
-
-def test_regional_mean_is_cos_lat_weighted():
-    lat = np.array([-80.0, -70.0, -60.0])
-    da = xr.DataArray(np.array([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]]), dims=("lat", "lon"),
-                      coords={"lat": lat, "lon": [0.0, 180.0]})
-    weights = np.cos(np.deg2rad([-80.0, -70.0]))
-    expected = (1 * weights[0] + 2 * weights[1]) / weights.sum()
-    np.testing.assert_allclose(oc.regional_mean(da, {"lat": slice(-90, -65)}), expected)
 
 
 def test_record_curves(world):

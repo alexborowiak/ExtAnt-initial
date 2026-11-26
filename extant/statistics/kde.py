@@ -1,14 +1,9 @@
 """Kernel density estimates of every series at once (Gaussian kernels)."""
 
 import numpy as np
-import scipy.stats
-import xarray as xr
-
-SAMPLE_DIM = "year"
-MEMBER_DIM = "member"
 
 
-def kde_bandwidth(ensemble, dim=SAMPLE_DIM, member_dim=MEMBER_DIM):
+def kde_bandwidth(ensemble, dim='year', member_dim='member'):
     """One Gaussian-kernel bandwidth for ERA5 and all members: the members' median Scott's rule.
 
     Scott's rule (std x n^(-1/5)) is scipy.stats.gaussian_kde's default. With
@@ -19,7 +14,7 @@ def kde_bandwidth(ensemble, dim=SAMPLE_DIM, member_dim=MEMBER_DIM):
     return (ensemble.std(dim, ddof=1) * ensemble.count(dim) ** (-1 / 5)).median(member_dim)
 
 
-def kde(da, x, dim=SAMPLE_DIM, bandwidth=None):
+def kde(da, x, dim='year', bandwidth=None):
     """Gaussian kernel density estimate over ``dim``, evaluated at ``x``, ignoring NaN.
 
     Args:

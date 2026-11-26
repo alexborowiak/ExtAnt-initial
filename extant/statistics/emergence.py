@@ -1,16 +1,17 @@
 """Signal-to-noise: when and where a forced change stands out from natural variability.
 
-Two definitions of the forced S/N, side by side, for comparison:
+Two definitions of the forced S/N:
 
-    proper_sn     historical against hist-nat, one value of noise (notebook calc_03c, section 1)
+    proper_sn     historical against hist-nat, one value of noise (notebook calc_03c, section *Signal-to-Noise Ratio*)
                   signal  the historical ensemble mean's anomaly from hist-nat's climatology (its mean over every year
                           and member), LOWESS-smoothed
                   noise   hist-nat's standard deviation over every year and member: one number per grid point and
                           season
-    rolling_sn    any experiment against hist-nat, noise that changes through time (notebook calc_02b, section 2)
+    calc_02b's    any experiment against hist-nat, noise that changes through time, worked out step by step in
+                  notebook calc_02b (``trend.forced_response`` with centre='mean', then ``rolling_std``)
                   signal  the experiment's forced response minus hist-nat's, each its ensemble mean LOWESS-smoothed
-                  noise   each experiment's members about their forced response, pooled over the WINDOW years centred
-                          on each year (rolling_std), the experiment's and hist-nat's variances averaged
+                  noise   each experiment's members about their forced response, pooled over the config.WINDOW years
+                          centred on each year (rolling_std), the experiment's and hist-nat's variances averaged
 
 Both smooth with ``trend.lowess`` (81-year window). Then the S/N of single series, the same for ERA5 and each member:
 ``linear_sn`` (the rise of a linear trend over the standard deviation about it) and ``self_signal_to_noise`` (the
@@ -23,10 +24,9 @@ from typing import Optional
 import numpy as np
 import xarray as xr
 
-from ..config import WINDOW
 from ..utils.datatree import skip_empty
 from . import trend
-from .spatial import area_weights
+from .spatial import area_mean
 
 def linear_sn(input_da):
     '''S/N ratio from a straight line through each series (each member, or ERA5).
@@ -38,7 +38,9 @@ def linear_sn(input_da):
     #(c): A tree node's Dataset (one variable) becomes its DataArray, without a size-1 'variable' dim
     if isinstance(input_da, xr.Dataset): input_da = input_da.to_dataarray().squeeze('variable', drop=True)
 
-    output_da = trend.linear_fit(input_da, dim='year')
+    #(c): The line's slope (per year) and the line itself
+    output_da = xr.Dataset({'gradient': trend.trend(input_da, dim='year'),
+                            'fit': trend.linear_fit(input_da, dim='year')})
     output_da['linear_signal'] = output_da.gradient * (output_da.year - output_da.year.min())
     output_da['linear_detrend'] = input_da - output_da.fit
     output_da['linear_noise'] = output_da.linear_detrend.std('year')
@@ -85,58 +87,11 @@ def proper_sn(input_da, base_period:Optional=(1850, 1880), histnat_da:Optional=N
     return output_da
 
 
-@skip_empty
-def rolling_sn(input_da, histnat_da, window=WINDOW, lowess_window=81):
-    """Forced S/N of one experiment against hist-nat, with a noise that changes through time.
-
-    For each of the experiment and hist-nat: its forced response is its ensemble mean, LOWESS-smoothed (as an anomaly
-    from its own mean over every year and member, which is then added back), and its noise is the standard deviation
-    of its members about that forced response, pooled over the ``window`` years centred on each year (``rolling_std``).
-    Then
-
-        signal = forced(experiment) - forced(hist-nat)
-        noise  = sqrt((noise(experiment)² + noise(hist-nat)²) / 2)
-        S/N    = signal / noise
-
-    Example: in 2000 the experiment's forced response is 0.8 °C above hist-nat's, and their members scatter about
-    their forced responses by 0.5 °C and 0.7 °C; the noise is sqrt((0.25 + 0.49) / 2) = 0.61 °C and the S/N 1.3.
-
-    The steps one at a time, on every model and experiment at once, are notebook calc_02b's section 2.
-
-    Args:
-        input_da, histnat_da (xr.DataArray | xr.Dataset): The experiment's and hist-nat's members on (member, year,
-            ...); a Dataset of one variable (a tree node) is taken as its DataArray.
-        window (int): Years pooled for the noise.
-        lowess_window (int): Years in each LOWESS fit of the forced response.
-
-    Returns:
-        xr.Dataset: ``forced`` (the experiment's forced response), ``signal``, ``noise`` and ``sn``, on (year, ...).
-    """
-    #(c): A tree node's Dataset (one variable) becomes its DataArray, without a size-1 'variable' dim
-    if isinstance(input_da, xr.Dataset): input_da = input_da.to_dataarray().squeeze('variable', drop=True)
-    if isinstance(histnat_da, xr.Dataset): histnat_da = histnat_da.to_dataarray().squeeze('variable', drop=True)
-
-    def forced_and_noise(members_da):
-        #(c): The ensemble mean smoothed as an anomaly from the whole-record mean, which is then added back
-        record_mean_da = members_da.mean(['year', 'member'])
-        anomaly_da = members_da - record_mean_da
-        smooth_da = trend.lowess(anomaly_da.mean('member'), core_dims='year', window=lowess_window)
-        noise_da = rolling_std(anomaly_da - smooth_da, window=window)
-        return smooth_da + record_mean_da, noise_da
-
-    forced_da, noise_da = forced_and_noise(input_da)
-    histnat_forced_da, histnat_noise_da = forced_and_noise(histnat_da)
-    signal_da = forced_da - histnat_forced_da
-    pooled_noise_da = np.sqrt(0.5 * (noise_da ** 2 + histnat_noise_da ** 2))
-    return xr.Dataset({'forced': forced_da, 'signal': signal_da, 'noise': pooled_noise_da,
-                       'sn': signal_da / pooled_noise_da})
-
-
 def emergence_surface_area_percent(da, thresholds):
     """Percent of the area where ``da`` is greater than each threshold, each grid cell weighted by cos(latitude).
 
     Example: an S/N of 2 at 70°S and 0.5 at 80°S, threshold 1: the weights are cos 70° = 0.34 and cos 80° = 0.17,
-    so 100 × 0.34 / (0.34 + 0.17) = 66% of the area has emerged. Missing values count as not emerged.
+    so 100 × 0.34 / (0.34 + 0.17) = 66% of the area has emerged. Missing values are left out.
 
     Args:
         da (xr.DataArray): On (..., lat, lon), e.g. the S/N on (model, year, season, lat, lon).
@@ -147,9 +102,8 @@ def emergence_surface_area_percent(da, thresholds):
     """
     thresholds_da = xr.DataArray(np.atleast_1d(thresholds), dims='threshold')
     thresholds_da = thresholds_da.assign_coords(threshold=thresholds_da)
-    weights_da = area_weights(da['lat'])
     exceeds_da = (da > thresholds_da).where(da.notnull())
-    return 100 * exceeds_da.weighted(weights_da).mean(['lat', 'lon'])
+    return 100 * area_mean(exceeds_da)
 
 
 #(t): LOWESS window for the emergence statistic, in years (a ~35-year record cannot carry the 81 used elsewhere)
@@ -181,7 +135,7 @@ def self_signal_to_noise(da, dim='year', window=EMERGENCE_WINDOW):
 
 
 # ---------------------------------------------------------------------------
-# The noise of a S/N that changes through time (notebook calc_02b, section 2)
+# The noise of a S/N that changes through time (notebook calc_02b, section *Mean Change and Signal to Noise*)
 # ---------------------------------------------------------------------------
 
 def _centred_sums(x, window):
@@ -193,7 +147,7 @@ def _centred_sums(x, window):
     Example: x = [2, 3, 1, 4] and window = 3 have the running totals
     [0, 2, 5, 6, 10]. The window centred on the third value runs from the second
     to the fourth: 10 - 2 = 8 (3 + 1 + 4). Centred on the first it is cut short
-    to the first two: 5 - 0 = 5. Notebook calc_02b (section 2) goes through it.
+    to the first two: 5 - 0 = 5. Notebook calc_02b (section *Mean Change and Signal to Noise*) goes through it.
     """
     half = window // 2
     n = x.shape[-1]
@@ -221,7 +175,7 @@ def _rolling_std_block(x, window):
 
 
 @skip_empty
-def rolling_std(da, window=WINDOW, dim="year", member_dim="member"):
+def rolling_std(da, window, dim="year", member_dim="member"):
     """Standard deviation of every member's values in a centred ``window``-year window, for each year.
 
     The same numbers as ``da.rolling(year=window, center=True).construct('window').std(['window', 'member'])``
@@ -231,7 +185,7 @@ def rolling_std(da, window=WINDOW, dim="year", member_dim="member"):
 
     Args:
         da (xr.DataArray | xr.Dataset): With ``member_dim`` and ``dim``.
-        window (int): Window length in years.
+        window (int): Window length in years (``config.WINDOW``).
         dim, member_dim (str): The rolling and the pooled dimension.
 
     Returns:

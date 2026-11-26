@@ -1,3 +1,19 @@
+"""Labels: a latitude, a point, a selection, a period."""
+
+
+def latitude_label(value, position=None):
+    """A latitude's tick label, '60°S' rather than -60: give it to ``ax.xaxis.set_major_formatter``.
+
+    Args:
+        value (float): The latitude (degrees north).
+        position: The tick's position, which matplotlib passes and this ignores.
+
+    Returns:
+        str: E.g. '60°S', or '0°'.
+    """
+    return f'{abs(value):g}°S' if value < 0 else f'{value:g}°'
+
+
 def format_latlon(point, precision=2):
     lat, lon = point["lat"], point["lon"]
     lat_str = f"{abs(lat):.{precision}f}".rstrip("0").rstrip(".")
@@ -31,3 +47,10 @@ def format_sel(sel, labels=None, formats=None, sep=", ", assign=" = "):
             text = str(v)
         parts.append(f"{labels.get(k, k)}{assign}{text}")
     return sep.join(parts)
+
+
+def period_label(period):
+    """Human label for a year selection, which may be a slice or a scalar."""
+    if isinstance(period, slice):
+        return f"{period.start}–{period.stop}"
+    return str(period)

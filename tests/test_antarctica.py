@@ -10,7 +10,7 @@ import xarray as xr  # noqa: E402
 
 pytest.importorskip("cartopy")
 
-from extant.plots import antarctica, forced_response as fr  # noqa: E402
+from extant.plots import antarctica, charts, colour_scales  # noqa: E402
 
 EXPERIMENTS = ["hist-GHG", "historical"]
 SEASONS = ["DJF", "MAM", "JJA", "SON"]
@@ -36,7 +36,7 @@ def test_figure_size_and_the_size_that_fits_a_page():
     assert antarctica.panel_size_to_fit(3, 4, 2, width=7.2, height=9.0) == pytest.approx(1.675)
     #(c): A legend's row makes the figure taller by its height
     with_legend = antarctica.map_figure_size(n_rows=3, n_cols=4, n_colorbar_rows=2, n_legends=1)
-    assert with_legend[1] == pytest.approx(9.2 + antarctica.LEGEND_HEIGHT)
+    assert with_legend[1] == pytest.approx(9.2 + charts.LEGEND_HEIGHT)
     #(c): A tall figure is fitted to the page's height, and is then no wider or taller than the page
     panel_size = antarctica.panel_size_to_fit(6, 4, 1, width=7.2, height=9.0)
     width, height = antarctica.map_figure_size(6, 4, 1, panel_size=panel_size)
@@ -84,7 +84,7 @@ def test_every_layer_on_a_grid():
 
     #(c): Rows 1 and 2: the change, dotted, hatched, with its lines and the ice edges
     antarctica.heatmaps_of_antarctica(change_da, "experiment", "season", axes=axes[:2], cax=change_cax,
-                                      **fr.colour_scales("tas").change.colours())
+                                      **colour_scales.CHANGE)
     antarctica.not_significant_dots_grid(np.abs(change_da) < 0.5, "experiment", "season", axes=axes[:2])
     antarctica.hatching_grid(change_da > 1, "experiment", "season", axes=axes[:2], pattern="xxxx")
     antarctica.contour_lines_grid(change_da, [-1, 1], "experiment", "season", axes=axes[:2])
@@ -92,7 +92,7 @@ def test_every_layer_on_a_grid():
     #(c): Row 3: classes on their own bar, a tick in the middle of each, named
     classes_da = (change_da.sel(experiment="historical") > 0).astype(float)
     antarctica.heatmaps_of_antarctica(classes_da, None, "season", axes=axes[2], cax=classes_cax,
-                                      **fr.class_scale(["no", "yes"], ["white", "k"]).colours())
+                                      **colour_scales.class_scale(["no", "yes"], ["white", "k"]))
     antarctica.label_columns(axes, SEASONS)
     antarctica.label_rows(axes, [*EXPERIMENTS, "classes"])
     assert antarctica.tag_panels(axes) == 12
@@ -133,9 +133,8 @@ def test_bivariate_key():
                      layout="constrained")
     axes = antarctica.map_axes(fig, n_rows=1, n_cols=2)
     key_ax = antarctica.key_axis_below(axes)
-    joint = fr.colour_scales("tas").joint
-    rows, columns, row_title, column_title = joint.key
-    antarctica.bivariate_key(key_ax, joint.cmap, rows, columns, row_title, column_title)
+    rows, columns, row_title, column_title = colour_scales.JOINT_KEY
+    antarctica.bivariate_key(key_ax, colour_scales.JOINT['cmap'], rows, columns, row_title, column_title)
     assert [text.get_text() for text in key_ax.get_xticklabels()] == list(columns)
     assert key_ax.get_ylabel() == row_title
     #(c): Under the maps, twice as wide as tall, and about as wide as one map though it is under two

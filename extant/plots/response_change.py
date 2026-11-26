@@ -5,64 +5,26 @@ the notebook makes the figure and its axes (a GridSpec), then draws each panel a
 (``charts``). Each
 experiment has its colour, FORCING_COLORS (hist-nat green, hist-GHG red, ...). The maps of these results are drawn
 layer by layer with ``antarctica``, the area means with ``charts.plot_model_dots`` and
-``charts.plot_scatter_by_forcing``, in notebook plot_03.
+``charts.plot_scatter_by_forcing``, in notebooks plot_03a to plot_03d.
 
 Sections
 --------
-1. Scales: colour-bar ticks, the number of models, the extremes' titles
+1. The extremes' titles
 2. Local: how the distribution shifts and widens at one grid point (``plot_point_distributions``,
    ``plot_quantile_shifts``)
 3. Summary: what each corner of a scatter of two changes means (``plot_quadrant_labels``)
 """
 
-import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
-from matplotlib.colors import BoundaryNorm, ListedColormap
 
-from .. import era5_evaluation as ev
 from ..statistics.kde import kde
 from . import charts
-from .era5_evaluation import INK, INK_2
-from .constants import FORCING_COLORS
+from .constants import FORCING_COLORS, INK, INK_2
 
 # ---------------------------------------------------------------------------
-# 1. Scales
+# 1. The extremes' titles
 # ---------------------------------------------------------------------------
-
-def round_ticks(levels, most):
-    """Every k-th level, at most ``most`` of them, for a colour bar.
-
-    k divides the number of steps, so the end levels are ticked, and on a
-    symmetric scale it divides each half as well, so 0 is ticked too. Of the
-    k that fit, the smallest giving round ticks (every 1, 2, 2.5 or 5 x 10^n)
-    is taken, e.g. 0, 2, 4 rather than 0, 1.5, 3; failing that, the smallest.
-    """
-    levels = np.asarray(levels, dtype=float)
-    n_steps = len(levels) - 1
-    symmetric = n_steps % 2 == 0 and np.isclose(levels[n_steps // 2], 0)
-    fitting = [step for step in range(1, n_steps + 1)
-               if n_steps % step == 0 and (not symmetric or (n_steps // 2) % step == 0) and n_steps // step + 1 <= most]
-    if not fitting:
-        return levels[[0, -1]]
-
-    def round_spacing(step):
-        spacing = abs(levels[step] - levels[0])
-        mantissa = spacing / 10 ** np.floor(np.log10(spacing))
-        return any(np.isclose(mantissa, m) for m in (1, 2, 2.5, 5, 10))
-
-    return levels[::next((step for step in fitting if round_spacing(step)), fitting[0])]
-
-
-def count_colormap(n_models, base_cmap="Purples", add_white=True):
-    """Discrete colormap for a number of models: white for none, one step per model."""
-    base = plt.get_cmap(base_cmap)
-    length = n_models if add_white else (n_models+1)
-    colors = [base(x) for x in np.linspace(0, 1, length)]
-    if add_white: colors = ['white', *colors]
-    cmap = ListedColormap(colors)
-    return cmap, BoundaryNorm(np.arange(-0.5, n_models + 1.5), cmap.N)
-
 
 #(t): The titles of the extremes' maps and zonal means (notebook plot_03c), by their names in ``rc.EXTREMES``
 EXTREME_TITLES = {
@@ -85,7 +47,7 @@ def plot_point_distributions(samples, shift_ds, experiment, test_ds=None, units=
 
     Args:
         samples (dict[str, xr.DataArray]): ``rc.final_years`` output, including hist-nat and ``experiment``.
-        shift_ds (xr.Dataset): ``rc.quantile_shift`` of ``experiment`` against hist-nat.
+        shift_ds (xr.Dataset): ``significance.quantile_shift`` of ``experiment`` against hist-nat.
         experiment (str): The experiment drawn against hist-nat.
         test_ds (xr.Dataset | None): ``rc.change_summary`` at this model, experiment, season and point; adds the
             test results to the box.
@@ -148,7 +110,7 @@ def plot_quantile_shifts(shifts, experiment=None, ax=None):
     distribution widens upwards); a falling curve, the cold tail warms faster.
 
     Args:
-        shifts (dict[str, xr.Dataset]): Experiment -> ``rc.quantile_shift`` against hist-nat.
+        shifts (dict[str, xr.Dataset]): Experiment -> ``significance.quantile_shift`` against hist-nat.
         experiment (str | None): The experiment drawn thicker, e.g. the one of ``plot_point_distributions``' panel.
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.
 

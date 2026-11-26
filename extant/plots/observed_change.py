@@ -3,8 +3,8 @@
 Each ``plot_*(data, ax=None, ...)`` styles one panel (``charts.style_chart_ax``) and draws on it (a new figure if
 ``ax`` is None); the notebook makes the figure and its axes (a GridSpec), draws each panel and labels them, as
 everywhere (``charts``); each
-``..._legend_handles`` gives a panel's legend entries. Colour follows the experiment (FORCING_COLORS) or the signal
-(``charts.SIGNAL_COLORS``), and ERA5 is always black.
+``..._legend_handles`` gives a panel's legend entries. Colour follows the experiment (FORCING_COLORS),
+and ERA5 is always black.
 
 The record rates: cumulative record highs and lows against chance and the members (``plot_record_rates``), and the
 detection classes' colours (``DETECTION_COLORS``). The fingerprinting's panels are in ``plots.fingerprinting``.
@@ -14,8 +14,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 from . import charts
-from .era5_evaluation import ERA5_COLOR, INK, INK_2
-from .constants import FORCING_COLORS
+from .constants import ERA5_COLOR, FORCING_COLORS, INK, INK_2
 
 #(t): Detection classes (observed_change.DETECTION_CLASSES), validated as a categorical palette
 DETECTION_COLORS = ("#d9d8d4", "#2a78d6", "#eb6834", "#4a3aa7")

@@ -1,8 +1,20 @@
-"""Resampling and t-test significance for experiment vs hist-nat ensembles.
+"""Significance: p-values, and every test that resamples members. Each works on any ensembles, on (member, year, ...).
 
 All resampling works on whole members, so each member's time series stays intact.
 
-The width test and the mean test (notebook calc_02a, section 2, and calc_02b, section 1) compare an
+    weighted_member_sums                     each trial's weighted sum over the members, the step every resampling shares
+    pvalue_two_sided                         a p-value from any set of samples (bootstrap trials, permutations)
+    bootstrap_member_mean                    the ensemble mean of members drawn with replacement (``resample_weights``,
+                                             ``resample_members``)
+    quantile_shift                           the change in every quantile, with its bootstrap range
+    bootstrap_qrange, bootstrap_mean         the width and the mean of 10 hist-nat members drawn at random, trial by trial
+                                             (``bootstrap_draws`` says which)
+    member_block_pvalue                      the permutation test of a difference in means (``permutation_weights``)
+    model_agreement, significant_counts,     how many models agree
+    significant_sign, robust_sign
+    ttest_welch                              Welch's t-test
+
+The width test and the mean test (notebooks calc_02a and calc_02b, sections *Quantiles, Width and Tails* and *Mean Change and Signal to Noise*) compare an
 experiment's final years with hist-nat's over the same years. Their null is a
 bootstrap of hist-nat alone: each trial is 10 different hist-nat members, all
 the years given pooled (``bootstrap_draws``). ``bootstrap_qrange`` gives each
@@ -16,7 +28,7 @@ import xarray as xr
 from numba import njit, prange
 
 from ..utils.datatree import skip_empty
-from .quantiles import nan_quantile, numpy_lerp
+from .quantiles import numpy_lerp
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +72,7 @@ def weighted_member_sums(values, weights):
 
 
 # ---------------------------------------------------------------------------
-# p-values and bounds from a sample distribution
+# The p-value of a value against a set of samples
 # ---------------------------------------------------------------------------
 
 def pvalue_two_sided(samples, observed, dim="trial", method="tails"):
@@ -88,16 +100,8 @@ def pvalue_two_sided(samples, observed, dim="trial", method="tails"):
     return pvalue.where(observed.notnull())
 
 
-def outside_bounds(samples, observed, alpha=0.05, dim="trial"):
-    """Return the central (1 - alpha) bounds of ``samples`` and whether ``observed`` lies outside."""
-    bounds = nan_quantile(samples, [alpha / 2, 1 - alpha / 2], dim)
-    lower = bounds.sel(quantile=alpha / 2, drop=True)
-    upper = bounds.sel(quantile=1 - alpha / 2, drop=True)
-    return lower, upper, (observed < lower) | (observed > upper)
-
-
 # ---------------------------------------------------------------------------
-# Member resampling
+# Members drawn with replacement
 # ---------------------------------------------------------------------------
 
 def resample_members(da, n_trials, rng, n_samples=None, replace=True, member_dim="member"):
@@ -118,8 +122,93 @@ def resample_members(da, n_trials, rng, n_samples=None, replace=True, member_dim
     return da.isel({member_dim: xr.DataArray(idx, dims=("trial", member_dim))})
 
 
+def resample_weights(n_members, n_trials, rng):
+    """How often each member is drawn in each trial of a bootstrap with replacement, as a share of the draws.
+
+    Trial k draws ``n_members`` members at random with replacement; row k
+    holds how many times each member was drawn, over ``n_members``. A row
+    times the members' values is then the mean of the members drawn, so every
+    trial is one matrix product.
+
+    Example: 4 members, and a trial draws members [2, 0, 2, 3]: member 2 twice,
+    0 and 3 once, 1 never, so its row is [1, 0, 2, 1] / 4 = [0.25, 0, 0.5, 0.25].
+    Notebook calc_02c (section *Probability Ratios*) checks trial 0.
+
+    Returns:
+        np.ndarray: (n_trials, n_members); every row sums to 1.
+    """
+    #(c): Each trial's members drawn, with replacement: (trial, draw)
+    draws = rng.integers(0, n_members, size=(n_trials, n_members))
+    #(c): Each draw compared with every member, (trial, draw, member), and the matches added up over the draws
+    counts = (draws[:, :, None] == np.arange(n_members)).sum(axis=1)
+    return counts / n_members
+
+
+@skip_empty
+def bootstrap_member_mean(members, n_trials=1000, seed=0):
+    """The ensemble mean of members drawn with replacement, ``n_trials`` times.
+
+    Each trial draws as many members as there are, with replacement, and
+    averages them (``resample_weights``). Calls with the same seed and the same
+    number of members draw the same members, so two things made from one
+    ensemble (hist-nat's own chance and its shift-only chance, against the
+    moved thresholds) are resampled together, and their ratio keeps its pairing.
+
+    Args:
+        members (xr.Dataset | xr.DataArray): On (member, ...), e.g. ``probability_ratio.member_exceedance`` output.
+        n_trials (int): Trials.
+        seed (int): Random seed.
+
+    Returns:
+        The same type, with ``member`` replaced by ``trial`` (first, numbered from 0).
+    """
+    weights = resample_weights(members.sizes["member"], n_trials, np.random.default_rng(seed))
+    return weighted_member_sums(members, weights)
+
+
+#(t): Quantile levels for the quantile-shift curve
+SHIFT_QUANTILES = np.round(np.arange(0.05, 0.951, 0.05), 2)
+
+
+def quantile_shift(experiment, reference, quantiles=SHIFT_QUANTILES, n_boot=1000, seed=0):
+    """Change in each quantile, experiment minus reference, pooling members and years, with a bootstrap range.
+
+    The bootstrap resamples whole members (with replacement) in both
+    ensembles, as in ``resample_members``, so each member's years
+    stay together.
+
+    Args:
+        experiment, reference (xr.DataArray): Samples on (member, year), e.g. from ``response_change.final_years``.
+        quantiles (Sequence[float]): Quantile levels.
+        n_boot (int): Bootstrap resamples.
+        seed (int): Random seed.
+
+    Returns:
+        xr.Dataset:
+            experiment_quantiles, reference_quantiles   (quantile)
+            shift                                       (quantile) experiment minus reference
+            shift_lower, shift_upper                    (quantile) bootstrap 5-95% range
+    """
+    pool = ("member", "year")
+    rng = np.random.default_rng(seed)
+    exp_q = experiment.quantile(quantiles, dim=pool)
+    ref_q = reference.quantile(quantiles, dim=pool)
+    boot = (resample_members(experiment, n_boot, rng).quantile(quantiles, dim=pool)
+            - resample_members(reference, n_boot, rng).quantile(quantiles, dim=pool))
+    #(c): Move the quantile levels aside so xarray's (fast) quantile over trials can add its own dim
+    band = (boot.rename(quantile="level").quantile([0.05, 0.95], dim="trial")
+            .rename(quantile="bootstrap", level="quantile"))
+    return xr.Dataset({
+        "experiment_quantiles": exp_q,
+        "reference_quantiles": ref_q,
+        "shift": exp_q - ref_q,
+        "shift_lower": band.sel(bootstrap=0.05, drop=True),
+        "shift_upper": band.sel(bootstrap=0.95, drop=True),
+    })
+
+
 # ---------------------------------------------------------------------------
-# Q-range kernels (numba)
+# The hist-nat bootstrap of the width and of the mean
 # ---------------------------------------------------------------------------
 # A trial's Q-range pools some members' values. Instead of gathering and sorting
 # those values for every trial, each grid point's pool is sorted once, and each
@@ -130,7 +219,7 @@ def resample_members(da, n_trials, rng, n_samples=None, replace=True, member_dim
 # Q05 at position 209 * 0.05 = 10.45, between the trial's 11th and 12th smallest
 # values. Walking up the sorted pool and counting only the trial's values, the
 # walk stops at the 12th. Q95, at 198.55, is the 11th and 12th largest, so that
-# walk starts from the top. Notebook calc_02a (section 2) goes through it on one trial.
+# walk starts from the top. Notebook calc_02a (section *Quantiles, Width and Tails*) goes through it on one trial.
 
 @njit
 def _sorted_pool(block, values, members, counts):
@@ -236,16 +325,12 @@ def _qrange_block(data, selected, q_low, q_high, parallel):
     return out.reshape(*data.shape[:-2], selected.shape[0])
 
 
-#(t): Members in every hist-nat bootstrap draw: the smallest LESFMIP ensemble, so one null serves every experiment
-N_BOOTSTRAP_MEMBERS = 10
-
-
-def bootstrap_draws(n_hist_nat_members, n_members=N_BOOTSTRAP_MEMBERS, n_trials=10_000, seed=0):
+def bootstrap_draws(n_hist_nat_members, n_members, n_trials, seed):
     """Which hist-nat members each bootstrap trial uses: ``n_members`` different ones, at random.
 
     Args:
         n_hist_nat_members (int): Members in the hist-nat ensemble.
-        n_members (int): Members per trial.
+        n_members (int): Members per trial (``config.N_BOOTSTRAP_MEMBERS``).
         n_trials (int): Trials.
         seed (int): Random seed.
 
@@ -255,7 +340,7 @@ def bootstrap_draws(n_hist_nat_members, n_members=N_BOOTSTRAP_MEMBERS, n_trials=
     Example: 5 members and 2 per trial. A trial's random numbers
     [0.7, 0.1, 0.5, 0.9, 0.3] are smallest at members 1 and 4, so its row is
     [False, True, False, False, True]: every pair as likely as any other, and
-    no member twice. Notebook calc_02a (section 2) shows trial 0's members.
+    no member twice. Notebook calc_02a (section *Quantiles, Width and Tails*) shows trial 0's members.
     """
     if n_members > n_hist_nat_members:
         raise ValueError("n_members cannot exceed the hist-nat members available.")
@@ -271,7 +356,7 @@ def bootstrap_draws(n_hist_nat_members, n_members=N_BOOTSTRAP_MEMBERS, n_trials=
 
 
 @skip_empty
-def bootstrap_qrange(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, quantiles=(0.05, 0.95), n_trials=1000, seed=0):
+def bootstrap_qrange(hist_nat, n_members, quantiles, n_trials, seed):
     """The Q-range (e.g. Q95 - Q05) of each hist-nat bootstrap trial.
 
     Trial k pools every year given of ``n_members`` different hist-nat members,
@@ -308,7 +393,7 @@ def bootstrap_qrange(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, quantiles=(0.05, 0
 
 
 @skip_empty
-def bootstrap_mean(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, n_trials=1000, seed=0):
+def bootstrap_mean(hist_nat, n_members, n_trials, seed):
     """The mean of each hist-nat bootstrap trial's values, pooled; NaN are skipped.
 
     The trials of ``bootstrap_qrange`` with the same arguments: trial k pools
@@ -321,7 +406,7 @@ def bootstrap_mean(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, n_trials=1000, seed=
     21 years each. Its row of the draws, [0, 1, 0, 0, 1], times the sums
     [8, 10, 9, 12, 14] is 24, times the counts [21, 21, 21, 21, 21] is 42, so
     its mean is 24 / 42 = 0.57; one matrix product gives every row at once. Notebook
-    calc_02b (section 1) goes through it on trial 0.
+    calc_02b (section *Mean Change and Signal to Noise*) goes through it on trial 0.
 
     Args:
         hist_nat (xr.DataArray | xr.Dataset): hist-nat over the years compared, on (member, year, ...).
@@ -340,17 +425,101 @@ def bootstrap_mean(hist_nat, n_members=N_BOOTSTRAP_MEMBERS, n_trials=1000, seed=
 
 
 # ---------------------------------------------------------------------------
-# Multi-model aggregation
+# The permutation test of a difference in means, whole members relabelled
 # ---------------------------------------------------------------------------
 
-def model_agreement(change, significant=None, dim="model", sign_threshold=0.8, significant_threshold=0.66):
+def permutation_weights(n_permutations, n_exp, n_nat, rng):
+    """Random relabellings of ``n_exp + n_nat`` members, each as a row of weights.
+
+    A row has +1/n_exp on the members relabelled as the experiment and
+    -1/n_nat on the rest, so ``weights @ member_means`` is each relabelling's
+    difference in means. The experiment's members come first in the pool.
+
+    Example: 3 experiment members and 2 hist-nat ones, pooled. The random
+    numbers [0.6, 0.2, 0.9, 0.1, 0.4] sort to the order [3, 1, 4, 0, 2], so
+    pooled members 3, 1 and 4 are relabelled as the experiment:
+    [-1/2, 1/3, -1/2, 1/3, 1/3]. Notebook calc_02b (section *Mean Change and Signal to Noise*) checks the first row.
+
+    Returns:
+        np.ndarray: (n_permutations, n_exp + n_nat).
+    """
+    #(c): One random number per pooled member; their order shuffles the members
+    order = np.argsort(rng.random((n_permutations, n_exp + n_nat)), axis=1)
+    weights = np.full((n_permutations, n_exp + n_nat), -1 / n_nat)
+    #(c): The first n_exp members of each shuffle are relabelled as the experiment
+    np.put_along_axis(weights, order[:, :n_exp], 1 / n_exp, axis=1)
+    return weights
+
+
+def _member_block_pvalue(experiment, hist_nat, n_permutations, batch_size, seed):
+    """Two-sided permutation p-values of the difference in means, for arrays on (..., member)."""
+    n_exp, n_nat = experiment.shape[-1], hist_nat.shape[-1]
+    observed = experiment.mean(-1) - hist_nat.mean(-1)
+    pooled = np.nan_to_num(np.concatenate([experiment, hist_nat], axis=-1))
+    rng = np.random.default_rng(seed)
+    at_least = np.zeros(observed.shape)
+    at_most = np.zeros(observed.shape)
+    for start in range(0, n_permutations, batch_size):
+        weights = permutation_weights(min(batch_size, n_permutations - start), n_exp, n_nat, rng)
+        differences = pooled @ weights.T
+        at_least += (differences >= observed[..., None]).sum(-1)
+        at_most += (differences <= observed[..., None]).sum(-1)
+    pvalue = np.minimum(1, 2 * np.minimum(at_least + 1, at_most + 1) / (n_permutations + 1))
+    return np.where(np.isfinite(observed), pvalue, np.nan)
+
+
+@skip_empty
+def member_block_pvalue(experiment, hist_nat, n_permutations=5000, batch_size=500, seed=0):
+    """Permutation p-value of the difference in means, experiment minus hist-nat, permuting whole members.
+
+    Give it each member's mean over the years tested (e.g. the final
+    ``WINDOW`` years): permuting member means is permuting whole members, each
+    keeping its years together. A pooled t-test treats every member-year as
+    independent, but a member's years are serially correlated; members are
+    independent realisations, so this test respects that correlation.
+
+    Each permutation relabels the pooled members, as many as the experiment
+    has as the experiment and the rest as hist-nat (``permutation_weights``,
+    the experiment's members first), and takes the difference in means. The
+    p-value is two-sided, with the +1 correction, as in
+    ``pvalue_two_sided``. The permutations are drawn in batches of
+    ``batch_size``, one matrix product each, from ``np.random.default_rng(seed)``.
+
+    Args:
+        experiment, hist_nat (xr.DataArray | xr.Dataset): Member means on (member, ...); the numbers of
+            members may differ.
+        n_permutations (int): Relabellings.
+        batch_size (int): Relabellings per matrix product.
+        seed (int): Random seed.
+
+    Returns:
+        The same type, without ``member``; NaN where the difference in means is NaN.
+    """
+    if experiment.chunks:
+        experiment = experiment.chunk({"member": -1})
+    if hist_nat.chunks:
+        hist_nat = hist_nat.chunk({"member": -1})
+    return xr.apply_ufunc(
+        _member_block_pvalue, experiment, hist_nat,
+        input_core_dims=[["member"], ["member"]], exclude_dims={"member"},
+        kwargs=dict(n_permutations=n_permutations, batch_size=batch_size, seed=seed),
+        dask="parallelized", output_dtypes=[float],
+    )
+
+
+# ---------------------------------------------------------------------------
+# How many models agree
+# ---------------------------------------------------------------------------
+
+def model_agreement(change, significant=None, dim="model", *, sign_threshold, significant_threshold):
     """Collapse a per-model field into a multi-model summary (IPCC AR6 "advanced approach").
 
     Args:
         change (xr.DataArray): Per-model change, with ``dim``.
         significant (xr.DataArray | None): Per-model boolean significance.
-        sign_threshold (float): Fraction of models that must share the sign of the median.
-        significant_threshold (float): Fraction of models that must be significant.
+        sign_threshold (float): Fraction of models that must share the sign of the median (``config.SIGN_THRESHOLD``).
+        significant_threshold (float): Fraction of models that must be significant
+            (``config.SIGNIFICANT_THRESHOLD``).
 
     Returns:
         xr.Dataset: ``median``, ``n_models``, ``sign_agreement`` and, with
@@ -402,13 +571,13 @@ def significant_sign(change, significant):
     return np.sign(change).where(significant, 0).where(change.notnull())
 
 
-def robust_sign(change, significant, threshold=0.66, dim="model"):
+def robust_sign(change, significant, threshold, dim="model"):
     """Where the models agree: +1 where at least ``threshold`` of them have a significant increase, -1 a decrease.
 
     0 elsewhere, and NaN where no model has data. The fraction is of the
-    models with data at each point, so with six models and the default
-    threshold four must agree; with two, both. Both signs cannot pass a
-    threshold above one half.
+    models with data at each point, so with six models and a threshold of
+    0.66 four must agree; with two, both. Both signs cannot pass a threshold
+    above one half.
 
     Args:
         change (xr.DataArray): Per-model change, with ``dim``.
@@ -428,20 +597,25 @@ def robust_sign(change, significant, threshold=0.66, dim="model"):
 
 
 # ---------------------------------------------------------------------------
-# Parametric
+# Welch's t-test
 # ---------------------------------------------------------------------------
 
 @skip_empty
-def ttest_welch(da1, da2, dims=("year", "member"), variable="tas"):
+def ttest_welch(da1, da2, dims=("year", "member"), variable=None):
     """Welch's t-test across ``dims``, returning ``t`` and the two-sided ``p``.
 
-    Takes two DataArrays, or two Datasets (as ``xr.map_over_datasets`` gives them) whose ``variable`` is tested.
+    Takes two DataArrays, or two Datasets (as ``xr.map_over_datasets`` gives them) with ``variable`` naming the one
+    tested. Missing values are left out: n is the number of values there are, as for the means and variances.
+
+    Example: 10 members × 21 years is 210 values, but a SAM phase keeps about a third of the seasons (the rest NaN), so
+    n is about 70, not 210. Counting 210 would make the standard error too small and p far too small.
     """
     if isinstance(da1, xr.Dataset):
         da1, da2 = da1[variable], da2[variable]
 
-    n1 = np.prod([da1.sizes[d] for d in dims])
-    n2 = np.prod([da2.sizes[d] for d in dims])
+    #(c): The values that are there, not the size of the array
+    n1 = da1.count(dims)
+    n2 = da2.count(dims)
 
     m1, m2 = da1.mean(dims), da2.mean(dims)
     v1, v2 = da1.var(dims, ddof=1), da2.var(dims, ddof=1)

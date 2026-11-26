@@ -11,7 +11,7 @@ than its 5th (a cold one), hist-nat's members and years pooled. hist-nat has a
 halves it. Each probability is the share of an ensemble's member-years beyond
 the percentile, averaged member by member (``member_exceedance``).
 
-The shift-only ratio (notebook calc_02c, section 2) asks how much of the ratio the
+The shift-only ratio (notebook calc_02c, section *Probability Ratios*) asks how much of the ratio the
 shift of the mean alone gives: hist-nat's own seasons, every one moved by the
 experiment's change in the mean, against the same percentiles. Moving the
 seasons up by the change is the same as moving the percentile down by it,
@@ -20,11 +20,11 @@ the ratio is what the change in width (and shape) adds; it matters most for
 the cold tail, which a narrowing distribution pulls in.
 
 Uncertainty comes from a bootstrap of whole members, with replacement, within
-each ensemble (``bootstrap_member_mean``). The thresholds stay fixed: each
+each ensemble (``significance.bootstrap_member_mean``). The thresholds stay fixed: each
 trial asks how often the resampled members go beyond the same levels, so the
 spread is how well the two ensembles pin down the chance of one defined event.
 
-By SAM phase (notebook calc_02c, sections 1 and 2), the events and thresholds are
+By SAM phase (notebook calc_02c, section *Probability Ratios*), the events and thresholds are
 the same, and the chance is of a season beyond them among the seasons of one
 phase. Members then have different numbers of seasons, so the chance is pooled:
 every member's count of seasons beyond the threshold (``member_beyond``) over
@@ -35,7 +35,6 @@ Sections
 --------
 1. The levels and the thresholds
 2. How often each member goes beyond them
-3. The bootstrap
 """
 
 import numpy as np
@@ -43,7 +42,6 @@ import xarray as xr
 
 from .utils.datatree import skip_empty
 from .statistics.quantiles import nan_quantile
-from .statistics.significance import weighted_member_sums
 
 # ---------------------------------------------------------------------------
 # 1. The levels and the thresholds
@@ -56,6 +54,9 @@ TAIL_SIGNS = xr.DataArray([1, -1], dims="tail", coords={"tail": ["warm", "cold"]
 #(t): (its 90th and 10th) to check the sensitivity
 #(c): Rarer events are avoided on purpose: with hist-nat's chance that small, the ratio blows up on a handful of seasons
 CHANCES = (0.05, 0.10)
+
+#(t): The one the figures show (notebooks plot_03d and plot_06)
+CHANCE = 0.05
 
 
 def threshold_levels(chances=CHANCES):
@@ -136,51 +137,3 @@ def member_beyond(values, threshold, dim="year"):
     beyond = (TAIL_SIGNS * (values - threshold)) > 0
     #(c): A season left out (NaN) compares False, so it is not counted; a missing threshold stays missing
     return beyond.sum(dim).where(threshold.notnull())
-
-
-# ---------------------------------------------------------------------------
-# 3. The bootstrap
-# ---------------------------------------------------------------------------
-
-def resample_weights(n_members, n_trials, rng):
-    """How often each member is drawn in each trial of a bootstrap with replacement, as a share of the draws.
-
-    Trial k draws ``n_members`` members at random with replacement; row k
-    holds how many times each member was drawn, over ``n_members``. A row
-    times the members' values is then the mean of the members drawn, so every
-    trial is one matrix product.
-
-    Example: 4 members, and a trial draws members [2, 0, 2, 3]: member 2 twice,
-    0 and 3 once, 1 never, so its row is [1, 0, 2, 1] / 4 = [0.25, 0, 0.5, 0.25].
-    Notebook calc_02c (section 1) checks trial 0.
-
-    Returns:
-        np.ndarray: (n_trials, n_members); every row sums to 1.
-    """
-    #(c): Each trial's members drawn, with replacement: (trial, draw)
-    draws = rng.integers(0, n_members, size=(n_trials, n_members))
-    #(c): Each draw compared with every member, (trial, draw, member), and the matches added up over the draws
-    counts = (draws[:, :, None] == np.arange(n_members)).sum(axis=1)
-    return counts / n_members
-
-
-@skip_empty
-def bootstrap_member_mean(members, n_trials=1000, seed=0):
-    """The ensemble mean of members drawn with replacement, ``n_trials`` times.
-
-    Each trial draws as many members as there are, with replacement, and
-    averages them (``resample_weights``). Calls with the same seed and the same
-    number of members draw the same members, so two things made from one
-    ensemble (hist-nat's own chance and its shift-only chance, against the
-    moved thresholds) are resampled together, and their ratio keeps its pairing.
-
-    Args:
-        members (xr.Dataset | xr.DataArray): On (member, ...), e.g. ``member_exceedance`` output.
-        n_trials (int): Trials.
-        seed (int): Random seed.
-
-    Returns:
-        The same type, with ``member`` replaced by ``trial`` (first, numbered from 0).
-    """
-    weights = resample_weights(members.sizes["member"], n_trials, np.random.default_rng(seed))
-    return weighted_member_sums(members, weights)

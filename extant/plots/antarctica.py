@@ -41,17 +41,18 @@ import xarray as xr
 from cartopy.util import add_cyclic_point
 from matplotlib.colors import BoundaryNorm
 
+from .. import config
+from .charts import COLORBAR_HEIGHT, LEGEND_HEIGHT
+
 # ---------------------------------------------------------------------------
 # 1. Layout
 # ---------------------------------------------------------------------------
 
-#(t): Sizes in inches: each map's width and height, the room each row of colour bars takes (its ticks and label
-#(t): included), each row with a key (a grid of classes, ``bivariate_key``), a legend's row under the maps, and the
-#(t): space above the maps for the title and the column labels, and left of them for the row labels
+#(t): Sizes in inches: each map's width and height, each row with a key (a grid of classes, ``bivariate_key``), and the
+#(t): space above the maps for the title and the column labels, and left of them for the row labels. A row of colour
+#(t): bars (its ticks and label included) and a legend's row take what they take under charts (``charts``)
 PANEL_SIZE = 2.3
-COLORBAR_HEIGHT = 0.7
 KEY_HEIGHT = 1.2
-LEGEND_HEIGHT = 0.4
 TITLE_HEIGHT = 0.9
 ROW_LABEL_WIDTH = 0.5
 
@@ -96,7 +97,7 @@ def panel_size_to_fit(n_rows, n_cols, n_colorbar_rows, width, height, n_keys=0, 
     Args:
         n_rows, n_cols, n_colorbar_rows, n_keys, n_legends, title_height, colorbar_height: As ``map_figure_size``'s.
         width, height (float): The most the figure can be wide and tall (inches), e.g. 7.2 and 9.0 for a two-column
-            page (``forced_response.PAGE_WIDTH``, ``PAGE_HEIGHT``).
+            page (``styles.PAGE_WIDTH``, ``PAGE_HEIGHT``).
 
     Returns:
         float: The maps' width and height. E.g. 3 rows, 4 columns and 2 rows of colour bars on a 7.2 × 9 in page:
@@ -200,7 +201,7 @@ def key_axis_below(axes):
 # 2. One map's style
 # ---------------------------------------------------------------------------
 
-#(t): What every map shows: south of 40°S
+#(t): What every map shows: south of 50°S
 EXTENT = [-180, 180, -90, -50]
 
 
@@ -318,8 +319,8 @@ def heatmaps_of_antarctica(da, row_dim, col_dim, axes=None, cax=None, levels=Non
         ticklabels (Sequence[str] | None): A label for each tick, e.g. the names of the classes of a discrete scale;
             the tick values if None.
 
-    A colour scale of notebooks plot_03 to plot_06 (``forced_response.colour_scales``) passes its levels, colours, ticks and label
-    in one go: ``heatmaps_of_antarctica(da, 'model', 'season', axes=axes, cax=cax, **scales.change.colours())``.
+    A colour scale of ``colour_scales`` is a dict of these arguments, passed in one go:
+    ``heatmaps_of_antarctica(da, 'model', 'season', axes=axes, cax=cax, **colour_scales.CHANGE)``.
 
     Returns:
         matplotlib.colorbar.Colorbar | None: The colour bar, or None without ``cax``.
@@ -359,7 +360,7 @@ def bivariate_key(cax, cmap, rows, columns, row_title, column_title):
     Used instead of a colour bar, in an axis under the maps it is for (``key_axis_below``; give
     ``map_figure_size`` ``n_keys=1`` for its room). Class
     ``i * len(columns) + j`` is the cell of row ``i`` (from the bottom) and column ``j``, as in
-    ``forced_response.bivariate_scale``.
+    ``colour_scales.JOINT``.
 
     Args:
         cax (matplotlib.axes.Axes): Where the key goes, e.g. ``key_axis_below(axes)``.
@@ -367,10 +368,10 @@ def bivariate_key(cax, cmap, rows, columns, row_title, column_title):
         rows, columns (Sequence[str]): The names of the rows (bottom first) and of the columns.
         row_title, column_title (str): What the rows and the columns are, e.g. 'Mean' and 'Width'.
 
-    Example, the joint change in the mean and the width (``forced_response.joint_scale``)::
+    Example, the joint change in the mean and the width (``colour_scales.JOINT``)::
 
-        rows, columns, row_title, column_title = scales.joint.key
-        bivariate_key(key_axis_below(axes), scales.joint.cmap, rows, columns, row_title, column_title)
+        rows, columns, row_title, column_title = colour_scales.JOINT_KEY
+        bivariate_key(key_axis_below(axes), colour_scales.JOINT['cmap'], rows, columns, row_title, column_title)
     """
     #(c): The classes' numbers laid out as the grid: row i (from the bottom), column j holds i * len(columns) + j
     classes_arr = np.arange(len(rows) * len(columns)).reshape(len(rows), len(columns))
@@ -393,12 +394,9 @@ def bivariate_key(cax, cmap, rows, columns, row_title, column_title):
 # 4. The ice edge
 # ---------------------------------------------------------------------------
 
-#(t): The ice edge: the concentration (%) from which a cell counts as ice
-ICE_EDGE_LEVEL = 15.0
-
-
 def ice_edge(siconc_da, ax=None, color='k', linestyle='solid', linewidth=1.2):
-    """The ice edge, the 15% contour of a concentration field on (lat, lon), on a map of Antarctica.
+    """The ice edge, the 15% contour (``config.ICE_THRESHOLD``) of a concentration field on (lat, lon), on a map of
+    Antarctica.
 
     Args:
         siconc_da (xr.DataArray): Concentration (%) on (lat, lon), empty over land.
@@ -427,7 +425,7 @@ def ice_edge(siconc_da, ax=None, color='k', linestyle='solid', linewidth=1.2):
     #(c): A field with no ice at 15% (one model's summer, say) has no line; matplotlib warns about that, harmlessly
     with warnings.catch_warnings():
         warnings.filterwarnings('ignore', message='No contour levels were found')
-        return ax.contour(lon_arr, field_da['lat'].values, values_arr, levels=[ICE_EDGE_LEVEL], colors=[color],
+        return ax.contour(lon_arr, field_da['lat'].values, values_arr, levels=[config.ICE_THRESHOLD], colors=[color],
                           linestyles=linestyle, linewidths=linewidth, transform=ccrs.PlateCarree())
 
 

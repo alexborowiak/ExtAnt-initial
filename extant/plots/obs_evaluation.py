@@ -1,13 +1,13 @@
-"""Panels for the ERA5 evaluation; the calculations live in era5_evaluation.
+"""Panels for the ERA5 evaluation; the calculations live in obs_evaluation.
 
 Each ``plot_*(data, ax=None, ...)`` styles one panel (``charts.style_chart_ax``) and draws on it (a new figure if
 ``ax`` is None); the notebook makes the figure and its axes (a GridSpec), draws each panel, and labels them, as
 everywhere (``charts``).
 ``member_strips_grid`` draws the member strips of a grid of seasons and statistics; each ``..._legend_handles()``
 gives a panel's legend entries. Nothing here computes a test statistic. Every function draws the output of an
-era5_evaluation function, so the numbers on a figure are exactly the numbers the tests used.
+obs_evaluation function, so the numbers on a figure are exactly the numbers the tests used.
 
-Colour means the same thing in every figure:
+Colour means the same thing in every figure (``constants``, and ERA5's percentile in ``colour_scales``):
     black           ERA5
     blue            the model ensemble (darker = more central, or pooled)
     orange          ERA5 outside the ensemble range
@@ -25,97 +25,29 @@ Sections
 5. Rank histograms (Suarez-Gutierrez et al., 2021)
 6. Multi-model summaries: scorecard and signal-noise diagram
 7. Method demonstration on synthetic ensembles
-8. Spatial evaluation: the classes and colours of its maps (drawn in notebook plot_01c)
+8. Spatial evaluation: the colours of its maps' classes (drawn in notebook plot_01c)
 """
 
 import matplotlib.pyplot as plt
 import numpy as np
-import xarray as xr
-from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 
-from .. import era5_evaluation as ev
+from .. import obs_evaluation as ev
 from ..statistics import trend
 from . import charts
-from .constants import FORCING_COLORS, SEASONS
+from .colour_scales import PERCENTILE_BOUNDS, percentile_colormap
+from .constants import ENSEMBLE_COLORS, ERA5_COLOR, FORCING_COLORS, INK, INK_2, MUTED, OUTSIDE_COLOR, SEASONS
 
 
 # ---------------------------------------------------------------------------
 # 1. Style and shared helpers
 # ---------------------------------------------------------------------------
 
-INK = "#0b0b0b"          # primary text
-INK_2 = "#52514e"        # secondary text
-MUTED = "#a3a29d"        # reference lines
-ERA5_COLOR = charts.ERA5_LINE["color"]
-OUTSIDE_COLOR = "#eb6834"
 CONTEXT_COLOR = FORCING_COLORS["hist-nat"]
 PSEUDO_COLOR = "#3d3d3a"
 STATUS_OK = "#0ca30c"
 STATUS_FLAG = "#d03b3b"
-
-#(t): One blue ramp for the ensemble, light (wide ranges) to dark (central values)
-ENSEMBLE = {
-    "range": "#cde2fb",    # full member range
-    "outer": "#9ec5f4",    # 5-95%
-    "member": "#86b6ef",   # individual members
-    "inner": "#5598e7",    # central 75%, 12.5-87.5%
-    "pooled": "#1c5cab",   # pooled ensemble
-    "median": "#104281",   # ensemble median
-}
-
-#(t): Scorecard and map classes for ERA5's percentile among the members
-PERCENTILE_BOUNDS = (0, 5, 25, 75, 95, 100)
-PERCENTILE_COLORS = ("#1c5cab", "#9ec5f4", "#f0efec", "#f7aba4", "#a6272a")
-
-#(t): Model identity: the marker, kept with every chart's settings (charts.MODEL_MARKERS; colours: charts.model_shades)
-MODEL_MARKERS = charts.MODEL_MARKERS
-
-EVAL_RC = {
-    "font.size": 9,
-    "axes.titlesize": 9.5,
-    "axes.titleweight": "bold",
-    "figure.titlesize": 11,
-    "figure.titleweight": "bold",
-    "axes.labelsize": 9,
-    "axes.labelcolor": INK,
-    "axes.edgecolor": "#8a8985",
-    "axes.linewidth": 0.8,
-    "xtick.labelsize": 8,
-    "ytick.labelsize": 8,
-    "xtick.color": INK_2,
-    "ytick.color": INK_2,
-    "legend.fontsize": 8.5,
-    "text.color": INK,
-    "figure.facecolor": "white",
-    "axes.facecolor": "white",
-    "savefig.dpi": 200,
-    "savefig.bbox": "tight",
-    "lines.solid_capstyle": "round",
-    #(c): The gaps between panels in a figure with layout='constrained', as a share of the figure, so panels whose tick
-    #(c): labels are hidden (shared axes) don't touch
-    "figure.constrained_layout.wspace": 0.06,
-    "figure.constrained_layout.hspace": 0.08,
-}
-
-
-def order_seasons(obj, dim="season"):
-    """Put a season dimension in calendar order (DJF, MAM, JJA, SON) rather than alphabetical."""
-    if dim not in obj.dims:
-        return obj
-    return obj.sel({dim: [s for s in SEASONS if s in obj[dim].values]})
-
-
-#(c): Class edges with the ends pushed just outside 0-100. Percentiles of exactly 0 or 100 (ERA5
-#(c): beyond every member) are common, and contourf leaves holes where a flat region sits on a level.
-PERCENTILE_EDGES = (-0.5, *PERCENTILE_BOUNDS[1:-1], 100.5)
-
-
-def percentile_colormap():
-    """Five-class diverging colormap for ERA5's percentile: significant low, low, central, high, significant high."""
-    cmap = ListedColormap(PERCENTILE_COLORS).with_extremes(bad="white")
-    return cmap, BoundaryNorm(PERCENTILE_EDGES, cmap.N)
 
 
 def _ordinal(value):
@@ -224,8 +156,8 @@ def plot_kde(summary, ax=None, members=True):
     x = summary["x"].values
     member_kde = summary["member_kde"].transpose("member", "x").values
     if members:
-        ax.plot(x, member_kde.T, color=ENSEMBLE["member"], lw=0.5, alpha=0.4, zorder=1)
-    ax.plot(x, summary["ensemble_kde"], color=ENSEMBLE["pooled"], lw=2.0, zorder=3)
+        ax.plot(x, member_kde.T, color=ENSEMBLE_COLORS["member"], lw=0.5, alpha=0.4, zorder=1)
+    ax.plot(x, summary["ensemble_kde"], color=ENSEMBLE_COLORS["pooled"], lw=2.0, zorder=3)
     ax.plot(x, summary["obs_kde"], color=ERA5_COLOR, lw=2.0, zorder=4)
 
     #(c): Zoom to where any curve carries weight, and leave a strip below zero for the rug
@@ -262,8 +194,8 @@ def plot_qq(summary, ax=None):
     member_q = summary["member_quantiles"].transpose("member", "quantile").values
     low, mid, high = np.nanquantile(member_q, [0.05, 0.5, 0.95], axis=0)
 
-    ax.fill_between(obs_q, low, high, color=ENSEMBLE["outer"], lw=0, zorder=1)
-    ax.plot(obs_q, mid, color=ENSEMBLE["pooled"], lw=1.8, marker="o", ms=3, zorder=3)
+    ax.fill_between(obs_q, low, high, color=ENSEMBLE_COLORS["outer"], lw=0, zorder=1)
+    ax.plot(obs_q, mid, color=ENSEMBLE_COLORS["pooled"], lw=1.8, marker="o", ms=3, zorder=3)
     limits = np.array([np.nanmin([obs_q.min(), low.min()]), np.nanmax([obs_q.max(), high.max()])])
     limits += np.array([-1, 1]) * 0.05 * np.ptp(limits)
     ax.plot(limits, limits, color=INK_2, lw=0.9, zorder=2)
@@ -281,11 +213,11 @@ def distribution_legend_handles():
     """The legend entries of the KDE and Q-Q panels: each member, the pooled ensemble, ERA5, its values, the members'
     5-95% and the 1:1 line."""
     return [
-        Line2D([], [], color=ENSEMBLE["member"], lw=1, label="Each member"),
-        Line2D([], [], color=ENSEMBLE["pooled"], lw=2, label="Pooled ensemble"),
+        Line2D([], [], color=ENSEMBLE_COLORS["member"], lw=1, label="Each member"),
+        Line2D([], [], color=ENSEMBLE_COLORS["pooled"], lw=2, label="Pooled ensemble"),
         Line2D([], [], color=ERA5_COLOR, lw=2, label="ERA5"),
         Line2D([], [], color=ERA5_COLOR, lw=0, marker="|", ms=7, label="ERA5 values"),
-        Patch(color=ENSEMBLE["outer"], label="Members' 5–95% (Q–Q)"),
+        Patch(color=ENSEMBLE_COLORS["outer"], label="Members' 5–95% (Q–Q)"),
         Line2D([], [], color=INK_2, lw=0.9, label="1:1"),
     ]
 
@@ -312,12 +244,12 @@ def plot_plume(plume, ax=None, context=None, x_dim="year", note=True):
     charts.style_chart_ax(ax)
     x = plume[x_dim].values
     quantiles = plume["quantiles"]
-    ax.fill_between(x, plume["minimum"], plume["maximum"], color=ENSEMBLE["range"], lw=0, zorder=1)
+    ax.fill_between(x, plume["minimum"], plume["maximum"], color=ENSEMBLE_COLORS["range"], lw=0, zorder=1)
     ax.fill_between(x, quantiles.sel(quantile=0.05), quantiles.sel(quantile=0.95),
-                    color=ENSEMBLE["outer"], lw=0, zorder=2)
+                    color=ENSEMBLE_COLORS["outer"], lw=0, zorder=2)
     ax.fill_between(x, quantiles.sel(quantile=0.125), quantiles.sel(quantile=0.875),
-                    color=ENSEMBLE["inner"], lw=0, zorder=3)
-    ax.plot(x, quantiles.sel(quantile=0.5), color=ENSEMBLE["median"], lw=1.3, zorder=4)
+                    color=ENSEMBLE_COLORS["inner"], lw=0, zorder=3)
+    ax.plot(x, quantiles.sel(quantile=0.5), color=ENSEMBLE_COLORS["median"], lw=1.3, zorder=4)
 
     if context is not None:
         context_q = context["quantiles"]
@@ -351,10 +283,10 @@ def plume_legend_handles(context=False):
         Line2D([], [], color=ERA5_COLOR, lw=1.6, marker="o", ms=3, label="ERA5"),
         Line2D([], [], ls="none", marker="^", ms=7, color=OUTSIDE_COLOR, mec="white", label="ERA5 above every member"),
         Line2D([], [], ls="none", marker="v", ms=7, color=OUTSIDE_COLOR, mec="white", label="ERA5 below every member"),
-        Line2D([], [], color=ENSEMBLE["median"], lw=1.3, label="Ensemble median"),
-        Patch(color=ENSEMBLE["inner"], label="Central 75% (12.5–87.5%)"),
-        Patch(color=ENSEMBLE["outer"], label="5–95%"),
-        Patch(color=ENSEMBLE["range"], label="Full range"),
+        Line2D([], [], color=ENSEMBLE_COLORS["median"], lw=1.3, label="Ensemble median"),
+        Patch(color=ENSEMBLE_COLORS["inner"], label="Central 75% (12.5–87.5%)"),
+        Patch(color=ENSEMBLE_COLORS["outer"], label="5–95%"),
+        Patch(color=ENSEMBLE_COLORS["range"], label="Full range"),
     ]
     if context:
         handles += [Line2D([], [], color=CONTEXT_COLOR, lw=1.2, ls=(0, (4, 2)), label="hist-nat median"),
@@ -386,10 +318,10 @@ def plot_member_strip(result, ax=None):
     jitter = ((np.arange(members.size) * 0.618034) % 1 - 0.5) * 0.62
 
     #(c): Everything sits below y = 0.55; the strip above is left clear for the verdict text
-    ax.fill_between([float(result["lower"]), float(result["upper"])], -0.5, 0.55, color=ENSEMBLE["range"], lw=0,
+    ax.fill_between([float(result["lower"]), float(result["upper"])], -0.5, 0.55, color=ENSEMBLE_COLORS["range"], lw=0,
                     zorder=0)
-    ax.scatter(members, jitter, s=13, color=ENSEMBLE["inner"], edgecolor="white", linewidth=0.4, zorder=2)
-    ax.plot([float(result["median"])] * 2, [-0.5, 0.55], color=ENSEMBLE["median"], lw=1.0, zorder=1)
+    ax.scatter(members, jitter, s=13, color=ENSEMBLE_COLORS["inner"], edgecolor="white", linewidth=0.4, zorder=2)
+    ax.plot([float(result["median"])] * 2, [-0.5, 0.55], color=ENSEMBLE_COLORS["median"], lw=1.0, zorder=1)
     ax.plot([era5, era5], [-0.5, 0.55], color=ERA5_COLOR, lw=1.8, zorder=3)
     ax.plot(era5, 0.44, marker="D", color=ERA5_COLOR, ms=6, mec="white", mew=0.8, zorder=4)
 
@@ -436,9 +368,9 @@ def member_strips_grid(result, row_dim, axes=None, statistics=None):
 def member_strip_legend_handles():
     """The legend entries of the member strips: each member, their 5-95%, their median and ERA5."""
     return [
-        Line2D([], [], ls="none", marker="o", ms=5, color=ENSEMBLE["inner"], mec="white", label="Each member"),
-        Patch(color=ENSEMBLE["range"], label="Members' 5–95%"),
-        Line2D([], [], color=ENSEMBLE["median"], lw=1, label="Member median"),
+        Line2D([], [], ls="none", marker="o", ms=5, color=ENSEMBLE_COLORS["inner"], mec="white", label="Each member"),
+        Patch(color=ENSEMBLE_COLORS["range"], label="Members' 5–95%"),
+        Line2D([], [], color=ENSEMBLE_COLORS["median"], lw=1, label="Member median"),
         Line2D([], [], color=ERA5_COLOR, lw=1.8, marker="D", ms=5, mec="white", label="ERA5"),
     ]
 
@@ -605,7 +537,7 @@ def anatomy_years(result):
 def plot_rank_counting(ensemble, obs, years, ax=None):
     """How ERA5's rank is counted: in each of ``years``, the members (dots) below ERA5 (dark) and above it (light).
 
-    The second step of how the rank-histogram test works (notebook calc_03b, section 1); its first is the members and ERA5 through
+    The second step of how the rank-histogram test works (notebook calc_03b, section *Rank Histograms and Every Test at the Point*); its first is the members and ERA5 through
     time with ``years`` highlighted, and its last the histogram (``plot_grouped_rank_histogram``).
 
     Args:
@@ -626,9 +558,9 @@ def plot_rank_counting(ensemble, obs, years, ax=None):
         value = float(obs.sel(year=year))
         below = values < value
         offsets = ((np.arange(values.size) * 0.618034) % 1 - 0.5) * 0.5
-        ax.scatter(k + offsets[below], values[below], s=16, color=ENSEMBLE["pooled"], edgecolor="white",
+        ax.scatter(k + offsets[below], values[below], s=16, color=ENSEMBLE_COLORS["pooled"], edgecolor="white",
                    linewidth=0.4, zorder=2)
-        ax.scatter(k + offsets[~below], values[~below], s=16, color=ENSEMBLE["outer"], edgecolor="white",
+        ax.scatter(k + offsets[~below], values[~below], s=16, color=ENSEMBLE_COLORS["outer"], edgecolor="white",
                    linewidth=0.4, zorder=2)
         ax.plot([k - 0.34, k + 0.34], [value, value], color=ERA5_COLOR, lw=1.8, zorder=3)
         ax.plot(k, value, marker="D", color=ERA5_COLOR, ms=7, mec="white", zorder=4)
@@ -637,8 +569,8 @@ def plot_rank_counting(ensemble, obs, years, ax=None):
     ax.set_xticks(range(len(years)), [str(y) for y in years])
     ax.set_xlim(-0.6, len(years) - 0.4)
     ax.legend(handles=[
-        Line2D([], [], ls="none", marker="o", ms=5, color=ENSEMBLE["pooled"], label="below ERA5"),
-        Line2D([], [], ls="none", marker="o", ms=5, color=ENSEMBLE["outer"], label="above ERA5"),
+        Line2D([], [], ls="none", marker="o", ms=5, color=ENSEMBLE_COLORS["pooled"], label="below ERA5"),
+        Line2D([], [], ls="none", marker="o", ms=5, color=ENSEMBLE_COLORS["outer"], label="above ERA5"),
     ], loc="lower right", frameon=False, fontsize=7.5, handletextpad=0.2)
     return ax
 
@@ -646,7 +578,7 @@ def plot_rank_counting(ensemble, obs, years, ax=None):
 def plot_rank_through_time(result, years=(), ax=None):
     """ERA5's rank / N through the record, with its trend; a drift means the model's forced response differs.
 
-    The third step of how the rank-histogram test works (notebook calc_03b, section 1). Shaded: outside the ensemble.
+    The third step of how the rank-histogram test works (notebook calc_03b, section *Rank Histograms and Every Test at the Point*). Shaded: outside the ensemble.
 
     Args:
         result (xr.Dataset): ``ev.rank_histogram_test`` output with ``obs_rank`` on (year).
@@ -661,7 +593,7 @@ def plot_rank_through_time(result, years=(), ax=None):
     charts.style_chart_ax(ax)
     rank = result["obs_rank"]
     n_members = result.attrs["n_members"]
-    fitted = trend.linear_fit(rank, "year")["fit"]
+    fitted = trend.linear_fit(rank, "year")
     ax.axhspan(-0.04, 1 / n_members, color="#fbe3d9", lw=0, zorder=0)
     ax.axhspan(1 - 1 / n_members, 1.04, color="#fbe3d9", lw=0, zorder=0)
     ax.plot(rank["year"], rank, color=ERA5_COLOR, lw=0.8, marker="o", ms=4, zorder=3)
@@ -709,6 +641,11 @@ def _wrap(text, width=16):
     return "\n".join(lines + [line])
 
 
+#(t): The scorecard's statistics, in the order of its columns: the moments, the other statistics, the rank dispersions
+SCORECARD_STATISTICS = ["mean", "std", "skewness", "kurtosis", "trend", "rank_trend", "width", "lower_tail",
+                        "upper_tail", "dispersion (anomaly)", "dispersion (detrended)"]
+
+
 def plot_scorecard(table, statistics=None, ax=None):
     """Every model, statistic and season at one point: where ERA5 falls among the members, as a table of cells.
 
@@ -721,13 +658,14 @@ def plot_scorecard(table, statistics=None, ax=None):
     Args:
         table (xr.Dataset): ``percentile``, ``verdict`` (and ``testable``) on (model, statistic, season)
             at one point, e.g. notebook calc_03b's ``eval_table_ds``.
-        statistics (Sequence[str] | None): Subset and order of the column groups.
+        statistics (Sequence[str] | None): Subset and order of the column groups, e.g. ``SCORECARD_STATISTICS``.
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.
 
     Returns:
         matplotlib.image.AxesImage: The cells, for a colour bar (``image.axes`` is the axis).
     """
-    table = order_seasons(table)
+    #(c): The seasons in calendar order (DJF, MAM, JJA, SON)
+    table = table.sel(season=[season for season in SEASONS if season in table["season"].values])
     statistics = list(statistics or table["statistic"].values)
     table = table.sel(statistic=statistics)
     models, seasons = list(table["model"].values), list(table["season"].values)
@@ -798,7 +736,7 @@ def plot_signal_noise(table, season, x="trend", y="std", ax=None):
 
     Returns:
         matplotlib.axes.Axes: The axis. Model k is the k-th shade of historical's colour (``charts.model_shades``)
-        and ``MODEL_MARKERS[k]`` (``charts.model_legend_handles(models, experiment='historical')``).
+        and ``charts.MODEL_MARKERS[k]`` (``charts.model_legend_handles(models, experiment='historical')``).
     """
     if ax is None:
         ax = charts.one_panel()
@@ -813,7 +751,7 @@ def plot_signal_noise(table, season, x="trend", y="std", ax=None):
     for k, model in enumerate(models):
         point = table["percentile"].sel(model=model, season=season)
         ax.scatter(float(point.sel(statistic=x)), float(point.sel(statistic=y)), s=58,
-                   marker=MODEL_MARKERS[k % len(MODEL_MARKERS)], color=shades[k],
+                   marker=charts.MODEL_MARKERS[k % len(charts.MODEL_MARKERS)], color=shades[k],
                    edgecolor="white", linewidth=1.1, zorder=3)
     ax.set_xlim(-5, 105)
     ax.set_ylim(-5, 105)
@@ -845,7 +783,7 @@ def plot_percentile_ladder(tests, anomaly_ranks, detrended_ranks, alpha=ev.ALPHA
     """ERA5's percentile for each statistic of a test and the rank tests, one row each: green inside the members'
     central range (the grey band), a red cross where flagged.
 
-    The last column of the toy-ensemble demonstration (notebook calc_03b, section 3): one scenario, one season.
+    The last column of the toy-ensemble demonstration (notebook calc_03b, section *Toy Ensembles with a Known Answer*): one scenario, one season.
 
     Args:
         tests (xr.Dataset): ``ev.locate`` results on (statistic) for one scenario and season.
@@ -884,7 +822,7 @@ def scenario_legend_handles():
     """The legend entries of the toy-ensemble demonstration: the plume's, the rank histograms' and the ladder's."""
     return [
         Line2D([], [], color=ERA5_COLOR, lw=1.6, marker="o", ms=3, label="ERA5"),
-        Patch(color=ENSEMBLE["outer"], label="Ensemble 5–95%"),
+        Patch(color=ENSEMBLE_COLORS["outer"], label="Ensemble 5–95%"),
         Line2D([], [], ls="none", marker="v", ms=7, color=OUTSIDE_COLOR, mec="white", label="ERA5 outside ensemble"),
         Patch(color=RANK_BAR, label="ERA5 rank frequency"),
         Line2D([], [], color=PSEUDO_COLOR, lw=1.3, marker="_", ms=7, label="Perfect-model 5–95%"),
@@ -897,24 +835,9 @@ def scenario_legend_handles():
 # 8. Spatial evaluation (Suarez-Gutierrez et al., 2021, section 2.2.2)
 # ---------------------------------------------------------------------------
 
-#(t): The paper's map: ERA5 above every member (red) or below (blue) in >= 10% (light) or >= 20% (dark) of years
-EDGE_CLASSES = ("neither", "above ≥ 10%", "above ≥ 20%", "below ≥ 10%", "below ≥ 20%", "both ≥ 10%")
+#(t): One colour per ev.EDGE_CLASSES class: red above every member, blue below, light at 10% of years and dark at 20%
 EDGE_COLORS = ("#ffffff", "#f7aba4", "#a6272a", "#9ec5f4", "#1c5cab", "#8a5fbf")
 
 #(t): One colour per ev.DIAGNOSES class (white: adequate), and per ev.PERIOD_DIAGNOSES class
 DIAGNOSIS_COLORS = ("#ffffff", "#d03b3b", "#2a78d6", "#eda100", "#8a8985", "#1baf7a")
 PERIOD_COLORS = ("#ffffff", "#eda100", "#d03b3b")
-
-def edge_class(table):
-    """The paper's colour class at each point: index into ``EDGE_CLASSES``; NaN where untested."""
-    above, below = table["above"], table["below"]
-    edge, strong = ev.EDGE_THRESHOLD, 2 * ev.EDGE_THRESHOLD
-    out = xr.zeros_like(above)
-    out = xr.where(above >= edge, 1, out)
-    out = xr.where(above >= strong, 2, out)
-    out = xr.where(below >= edge, 3, out)
-    out = xr.where(below >= strong, 4, out)
-    out = xr.where((above >= edge) & (below >= edge), 5, out)
-    return out.where(table["adequate"].notnull())
-
-

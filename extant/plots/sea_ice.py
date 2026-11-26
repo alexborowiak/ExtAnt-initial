@@ -1,7 +1,7 @@
 """Panels of the sea ice: how a field goes onto the 2.5° grid and its edge becomes a latitude, and the edge against
 ERA5's.
 
-Draws the output of ``sea_ice``. Each function draws one panel, on an axis from a GridSpec (styled by
+Draws what notebook calc_04 works out. Each function draws one panel, on an axis from a GridSpec (styled by
 ``charts.style_chart_ax``) or a map's (``antarctica.map_axes``); the notebook makes the figure and its axes, then
 draws each panel and labels them, as everywhere (``charts``). On the maps the edge is the 15% contour of the ensemble-mean concentration, solid for the
 experiment and dashed for hist-nat, in ink so that it reads on red and blue alike; ERA5's black too (``charts.ERA5_LINE``), dotted.
@@ -21,11 +21,11 @@ import pandas as pd
 import xarray as xr
 from matplotlib.colors import BoundaryNorm
 
-from .constants import FORCING_COLORS
 from .. import sea_ice
-from . import charts
+from . import charts, formatting
 from .charts import MODEL_MARKERS
-from .era5_evaluation import INK, INK_2, MUTED, OUTSIDE_COLOR, where_era5
+from .constants import FORCING_COLORS, INK, INK_2, MUTED, OUTSIDE_COLOR
+from .obs_evaluation import where_era5
 
 #(t): Colours of the cells in the method figure: open water, ice, the continent
 CELL_COLORS = ("white", "#9ec5f4", "#c9c8c3")
@@ -38,7 +38,7 @@ CELL_COLORS = ("white", "#9ec5f4", "#c9c8c3")
 def plot_cap_area(extent, continent_area, edge_latitude, ax=None):
     """The area south of each latitude, A(φ) = 2πR²(1 + sin φ), read backwards from the ice's and the continent's area.
 
-    The last step of how the ice edge becomes a latitude (notebook calc_04, section 4, Sample plots): the curve, and the total area
+    The last step of how the ice edge becomes a latitude (notebook calc_04, section *Seasonal Means, Extent and Ice Edge*, Sample plots): the curve, and the total area
     taken across to it and down to the latitude whose polar cap holds it.
 
     Args:
@@ -72,7 +72,7 @@ def plot_cap_area(extent, continent_area, edge_latitude, ax=None):
     ax.text(-89, total, f" {ice:.1f} + {continent:.1f} = {total:.1f}", va="bottom", fontsize=8, color=INK)
     ax.set_xlim(-90, -40)
     ax.set_ylim(0, None)
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda value, _: f"{abs(value):g}°S"))
+    ax.xaxis.set_major_formatter(formatting.latitude_label)
     ax.set_xlabel("Latitude φ")
     ax.set_ylabel("Area south of φ (million km²)")
     return ax
@@ -130,12 +130,12 @@ def _draw_cell_lines(ax, on_grid, region):
 def plot_native_points(native, lat, lon, on_grid, region=REGRID_REGION, ax=None):
     """A field on its own grid, close up: one dot per point, coloured by its value, with the 2.5° cells over them.
 
-    The first step of how a field goes onto the 2.5° grid (``sea_ice.to_grid``; notebook calc_04, section 1, Sample plots).
+    The first step of how a field goes onto the 2.5° grid (notebook calc_04, section *How to Regrid*, Sample plots).
 
     Args:
         native (xr.DataArray): Concentration (%) on the field's own grid, e.g. (j, i); empty over land.
         lat, lon (xr.DataArray): Its points' latitudes and longitudes, on the same dims.
-        on_grid (xr.DataArray): ``sea_ice.to_grid`` of it, on (lat, lon): where the 2.5° cells are.
+        on_grid (xr.DataArray): The field on the 2.5° grid, on (lat, lon): where the 2.5° cells are.
         region (tuple): ((south, north), (west, east)) of the close-up, in degrees.
         ax (matplotlib.axes.Axes | None): Where to draw; a new figure with one panel if None.
 
@@ -157,7 +157,7 @@ def plot_grid_cells(native, lat, lon, on_grid, region=REGRID_REGION, ax=None):
     """The 2.5° cells, close up: each coloured by the area-weighted mean of its points, with the points as dots and
     how many of them went into each cell.
 
-    The second step of how a field goes onto the 2.5° grid (``sea_ice.to_grid``; notebook calc_04, section 1, Sample plots).
+    The second step of how a field goes onto the 2.5° grid (notebook calc_04, section *How to Regrid*, Sample plots).
 
     Args:
         native, lat, lon, on_grid, region: As ``plot_native_points``'.
@@ -234,18 +234,18 @@ def plot_edge_latitudes(edges_tree, era5_da, seasons, ax=None):
                     color=shades[k], mec="white", mew=0.6, zorder=3)
     ax.set_xticks(range(len(seasons)), seasons)
     ax.grid(axis="x", visible=False)
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda value, _: f"{abs(value):g}°S"))
+    ax.yaxis.set_major_formatter(formatting.latitude_label)
     return ax
 
 
 def era5_verdict(cell_ds, diagnostic):
-    """``(ok, message)`` for one statistic of ERA5's extent test (notebook calc_04, section 6) at one model and season.
+    """``(ok, message)`` for one statistic of ERA5's extent test (notebook calc_04, section *Comparison with ERA5*) at one model and season.
 
     ``ok`` is True (ERA5 inside the members' 5-95%), False (outside: the message says what that means for the
-    model) or None (no data, or too few members for the test to flag anything). For ``era5_evaluation.status_line``.
+    model) or None (no data, or too few members for the test to flag anything). For ``obs_evaluation.status_line``.
 
     Args:
-        cell_ds (xr.Dataset): ``era5_evaluation.locate``'s result at one statistic and season, on (member).
+        cell_ds (xr.Dataset): ``obs_evaluation.locate``'s result at one statistic and season, on (member).
         diagnostic: The statistic's entry in ``sea_ice.ERA5_DIAGNOSTICS``.
     """
     if not bool(np.isfinite(cell_ds["era5"])) or not bool(cell_ds["members"].notnull().any()):

@@ -3,7 +3,7 @@
 import numpy as np
 import xarray as xr
 
-from extant import config, sam
+from extant import config, convert, sam
 
 
 def test_open_index(tmp_path):
@@ -17,7 +17,7 @@ def test_open_index(tmp_path):
         ds.to_netcdf(folder / f"SAM_zonal_mon_hist-nat_MODEL_{member}_interp.nc")
     #(c): Listed as notebook calc_01 lists them: /<experiment>/<model>/*.nc
     files = sorted((tmp_path / "hist-nat" / "MODEL").glob("*.nc"))
-    assert [sam.member_of(f) for f in files] == ["r1i1p1f1", "r2i1p1f1"]
+    assert [convert.member_from_path(f) for f in files] == ["r1i1p1f1", "r2i1p1f1"]
     index = sam.open_index(files, level=1).load()
     assert index["sam"].dims == ("member", "time")
     assert list(index["member"].values) == ["r1i1p1f1", "r2i1p1f1"]
@@ -80,9 +80,8 @@ def test_synthetic_index_matches_the_tree():
 
 
 def test_notebook_01_chain(tmp_path):
-    #(c): Notebook calc_01, section 6, on fake files: open, cut where historical ends, seasonal means, year x season
-    from extant import preprocessing as pp
-    from extant.utils import datatree
+    #(c): Notebook calc_01, section *SAM Index*, on fake files: open, cut where historical ends, seasonal means, year x season
+    from extant.utils import datatree, time_axis
     times = xr.date_range("1850-01-16", "2020-12-16", freq="MS", calendar="360_day", use_cftime=True)
     for experiment in ("historical", "hist-nat"):
         folder = tmp_path / experiment / "MODEL"
@@ -96,8 +95,8 @@ def test_notebook_01_chain(tmp_path):
         for experiment in ("historical", "hist-nat")
     })
     cut = monthly.sel(time=slice(None, config.LAST_MONTH))
-    seasonal = cut.map_over_datasets(pp.seasonal_mean)
-    seasons = seasonal.map_over_datasets(datatree.skip_empty(pp.split_time),
+    seasonal = cut.map_over_datasets(time_axis.seasonal_mean)
+    seasons = seasonal.map_over_datasets(datatree.skip_empty(time_axis.split_time),
                                          kwargs=dict(parts=("year", "season"), dim="time")).compute()
     node = seasons["MODEL/historical"]
     assert node["sam"].dims == ("member", "year", "season")

@@ -17,8 +17,8 @@ Sections
 --------
 1.  Aligning            the same years, and one shared missing-data mask
 2.  Treatments          raw values, anomalies, detrended anomalies
-3.  Statistics          the four moments (mean, std, skewness, kurtosis) and other statistics
-                        (trend, width, tails, records, lag-1 autocorrelation, ...)
+3.  The statistics'     what ERA5 low or high among the members means for the model, for the four moments
+    labels              (mean, std, skewness, kurtosis), the trend, the width and tails, and the rank tests
 4.  Locating ERA5       the percentile and p-value that every test reports
 5.  Field test          is ERA5 flagged over more of a map than a perfect model would be?
 6.  Rank histograms     the Suarez-Gutierrez et al. (2021) test
@@ -33,7 +33,7 @@ Getting ERA5 ready (monthly means to seasonal means, on the model grid) is
 
 Conventions
 -----------
-Functions reduce over ``sample_dim`` ("year") and/or ``member_dim`` ("member")
+Functions reduce over ``sample_dim`` ("year" unless told otherwise) and/or ``member_dim`` ("member")
 and broadcast over everything else, so one call handles a grid point, all four
 seasons at once, or a whole map. ``obs`` is ERA5 in practice, but nothing here
 is ERA5-specific. Works on numpy- or dask-backed data; at a single point the
@@ -45,7 +45,7 @@ the values as they are. ``locate`` then places ERA5 among the members where the
 values are used: notebooks plot_01a to plot_01c and plot_06, and calc_03b's table, beside
 calc_03b's rank histograms. Every result has the layout ``locate`` gives it, so
 the notebooks can put several along a ``statistic`` dim and
-``plots.era5_evaluation`` can draw them.
+``plots.obs_evaluation`` can draw them.
 """
 
 from dataclasses import dataclass
@@ -57,11 +57,8 @@ import xarray as xr
 from .statistics import trend
 from .statistics.kde import kde, kde_bandwidth
 from .statistics.quantiles import nan_quantile
-from .statistics.spatial import area_mean, area_weights
+from .statistics.spatial import area_mean
 
-MEMBER_DIM = "member"
-SAMPLE_DIM = "year"
-SEASONS = ("DJF", "MAM", "JJA", "SON")
 
 #(t): Two-sided significance level for every test: ERA5 outside the members' 5-95% range
 ALPHA = 0.1
@@ -71,7 +68,7 @@ ALPHA = 0.1
 # 1. Aligning
 # ---------------------------------------------------------------------------
 
-def align(ensemble, obs, years=None, member_dim=MEMBER_DIM, sample_dim=SAMPLE_DIM):
+def align(ensemble, obs, years=None, member_dim='member', sample_dim='year'):
     """Put an ensemble and ERA5 on the same samples, with one shared missing-data mask.
 
     Each test compares a statistic of ERA5 with the same statistic of every
@@ -85,7 +82,7 @@ def align(ensemble, obs, years=None, member_dim=MEMBER_DIM, sample_dim=SAMPLE_DI
        2014, for example, so the 2014 seasons it lacks are masked in ERA5 too.
 
     Every other dimension (season, lat, lon) must already match exactly; see
-    ``preprocessing.match_grid``.
+    ``utils.regrid.match_grid``.
 
     Args:
         ensemble (xr.DataArray): Model data with ``member_dim`` and ``sample_dim``.
@@ -132,23 +129,12 @@ TREATMENTS = {
 }
 
 
-def anomalies(da, sample_dim=SAMPLE_DIM, reference=None):
-    """Subtract each series' own mean over the ``reference`` samples (all of them if None).
-
-    Every member and ERA5 are each measured from their own climatology, so a
-    mean-state bias disappears while the forced trend and the variability
-    remain.
-    """
-    base = da if reference is None else da.sel({sample_dim: reference})
-    return da - base.mean(sample_dim)
-
-
-def treat(da, treatment, sample_dim=SAMPLE_DIM, reference=None):
+def treat(da, treatment, sample_dim='year', reference=None):
     """Apply one of ``TREATMENTS`` to every series (each member and ERA5 separately).
 
     raw        unchanged. A mean-state bias dominates any comparison.
-    anomaly    minus the series' own mean over ``reference``. The bias is gone;
-               the forced trend (signal) and the variability (noise) remain.
+    anomaly    minus the series' own mean over the ``reference`` samples (all of them if None).
+               A mean-state bias is gone; the forced trend (signal) and the variability (noise) remain.
     detrended  minus the series' own least-squares line (``statistics.trend.detrend``). Only the noise remains.
 
     Treating ERA5 and the members identically is what keeps every test fair:
@@ -157,62 +143,18 @@ def treat(da, treatment, sample_dim=SAMPLE_DIM, reference=None):
     if treatment == "raw":
         return da
     if treatment == "anomaly":
-        return anomalies(da, sample_dim, reference)
+        base = da if reference is None else da.sel({sample_dim: reference})
+        return da - base.mean(sample_dim)
     if treatment == "detrended":
         return trend.detrend(da, sample_dim)
     raise ValueError(f"treatment must be one of {list(TREATMENTS)}, got {treatment!r}")
 
 
 # ---------------------------------------------------------------------------
-# 3. Statistics
+# 3. The statistics' labels
 # ---------------------------------------------------------------------------
-# Each takes the samples along ``dim`` and returns one number per series.
-# Skewness and kurtosis use the plain moment estimators. They are biased for
-# short records, but identically so for ERA5 and the members, so the
-# comparison is unaffected.
-
-def _standardised_moment(da, dim, order):
-    deviation = da - da.mean(dim)
-    variance = (deviation**2).mean(dim)
-    return (deviation**order).mean(dim) / variance ** (order / 2)
-
-
-def skewness(da, dim=SAMPLE_DIM):
-    """Skewness: > 0 when the warm tail is longer than the cold tail."""
-    return _standardised_moment(da, dim, 3)
-
-
-def excess_kurtosis(da, dim=SAMPLE_DIM):
-    """Excess kurtosis: 0 for a normal distribution, > 0 for heavier tails."""
-    return _standardised_moment(da, dim, 4) - 3
-
-
-def lag1_autocorrelation(da, dim=SAMPLE_DIM):
-    """Correlation between consecutive years: the year-to-year memory."""
-    return xr.corr(da, da.shift({dim: 1}), dim=dim)
-
-
-#(t): The quantiles behind the width and tail statistics, matching the Q95 - Q05 analysis elsewhere
-LOW_QUANTILE, HIGH_QUANTILE = 0.05, 0.95
-
-
-def _quantile(da, q, dim):
-    return nan_quantile(da, q, dim)
-
-
-def quantile_width(da, dim=SAMPLE_DIM):
-    """Width of the distribution, Q95 - Q05: the quantity whose change the Q-range analysis tests."""
-    return _quantile(da, HIGH_QUANTILE, dim) - _quantile(da, LOW_QUANTILE, dim)
-
-
-def upper_tail_width(da, dim=SAMPLE_DIM):
-    """Length of the warm tail, Q95 - Q50."""
-    return _quantile(da, HIGH_QUANTILE, dim) - _quantile(da, 0.5, dim)
-
-
-def lower_tail_width(da, dim=SAMPLE_DIM):
-    """Length of the cold tail, Q50 - Q05."""
-    return _quantile(da, 0.5, dim) - _quantile(da, LOW_QUANTILE, dim)
+# The statistics themselves are general: ``statistics/moments`` (skewness, excess kurtosis), ``statistics/trend``,
+# ``statistics/quantiles``, and xarray's own mean and std. Here is what each one means for a model.
 
 
 @dataclass(frozen=True)
@@ -247,31 +189,19 @@ MOMENTS = {
 }
 
 #(t): Other statistics, tested in exactly the same way but not moments
-#(c): Signal: trend and emergence. Noise: width and the two tails, i.e. the quantities whose forced
-#(c): changes the forced-response notebooks analyse. Then record counts and year-to-year memory.
+#(c): Signal: the trend. Noise: the width and the two tails, i.e. the quantities whose forced changes the forced-response
+#(c): notebooks analyse
 STATISTICS = {
     "trend": Diagnostic("Trend", "°C/decade", "model trend too large", "model trend too small",
                         treatment="raw"),
-    "emergence": Diagnostic("S/N (own change)", "", "model emerges too strongly", "model emerges too weakly",
-                            treatment="raw"),
     "width": Diagnostic("Width (Q95 − Q05)", "°C", "model distribution too wide", "model distribution too narrow",
                         treatment="detrended"),
     "lower_tail": Diagnostic("Cold tail (Q50 − Q05)", "°C", "model cold tail too long", "model cold tail too short",
                              treatment="detrended"),
     "upper_tail": Diagnostic("Warm tail (Q95 − Q50)", "°C", "model warm tail too long", "model warm tail too short",
                              treatment="detrended"),
-    "records_high": Diagnostic("Record highs", "count", "model sets too many record highs",
-                               "model sets too few record highs", treatment="raw"),
-    "records_low": Diagnostic("Record lows", "count", "model sets too many record lows",
-                              "model sets too few record lows", treatment="raw"),
-    "lag1": Diagnostic("Lag-1 autocorrelation", "", "model too persistent", "model not persistent enough",
-                       treatment="detrended"),
 }
 
-#(t): The other statistics grouped by the question they answer
-SIGNAL_STATISTICS = ("trend", "emergence")
-NOISE_STATISTICS = ("width", "lower_tail", "upper_tail")
-RECORD_STATISTICS = ("records_high", "records_low")
 
 #(t): Rank-histogram summaries (section 6); the treatment is chosen when the test is run
 RANKS = {
@@ -280,7 +210,7 @@ RANKS = {
     "below": Diagnostic("Below all members", "%", "ERA5 too rarely below", "ERA5 too often below"),
     "above": Diagnostic("Above all members", "%", "ERA5 too rarely above", "ERA5 too often above"),
     "mean_rank": Diagnostic("Mean rank", "", "ERA5 sits low: model too warm", "ERA5 sits high: model too cold"),
-    "rank_trend": Diagnostic("Rank trend", "/decade", "model warms faster than ERA5", "model warms slower than ERA5"),
+    "rank_trend": Diagnostic("Rank trend", "/year", "model warms faster than ERA5", "model warms slower than ERA5"),
 }
 
 DIAGNOSTICS = {**MOMENTS, **STATISTICS, **RANKS}
@@ -290,11 +220,7 @@ DIAGNOSTICS = {**MOMENTS, **STATISTICS, **RANKS}
 # 4. Locating ERA5 among the members
 # ---------------------------------------------------------------------------
 
-#(t): The variables every test result carries, so results can be stacked and plotted alike
-RESULT_VARIABLES = ("era5", "members", "lower", "median", "upper", "percentile", "pvalue", "verdict", "testable")
-
-
-def locate(members, observed, member_dim=MEMBER_DIM, alpha=ALPHA):
+def locate(members, observed, member_dim='member', alpha=ALPHA):
     """Where does ERA5's value of a statistic fall among the members' values?
 
     If the model were perfect, ERA5 would be exchangeable with the members, so
@@ -314,7 +240,7 @@ def locate(members, observed, member_dim=MEMBER_DIM, alpha=ALPHA):
                                                     p = 2 * 0.048 = 0.095 < 0.1, so the verdict is +1
         19 members, all less than ERA5              p = 2 / 20 = 0.1, not less than 0.1: nothing can be flagged
 
-    Notebook calc_03b goes through these steps one at a time, in section 2 (*Every Test in One Table*, Sample plots).
+    Notebook calc_03b goes through these steps one at a time, in section *Rank Histograms and Every Test at the Point* (*Every test in one table*, Sample plots).
 
     Only the members with a value count, so several models can sit side by
     side on one ``member`` dim, each padded with NaN to the largest ensemble
@@ -366,18 +292,6 @@ def locate(members, observed, member_dim=MEMBER_DIM, alpha=ALPHA):
     return result.where(observed.notnull())
 
 
-def _stack(results, names, registry, **attrs):
-    """Concatenate per-statistic ``locate`` results along a labelled ``statistic`` dim."""
-    stacked = xr.concat(results, dim="statistic", coords="minimal", compat="override")
-    stacked = stacked.assign_coords(
-        statistic=list(names),
-        label=("statistic", [registry[name].label for name in names]),
-        units=("statistic", [registry[name].units for name in names]),
-    )
-    stacked.attrs.update(attrs)
-    return stacked
-
-
 # ---------------------------------------------------------------------------
 # 5. Field test
 # ---------------------------------------------------------------------------
@@ -392,7 +306,7 @@ def _flagged(below, n_others, alpha):
     return 2 * (np.minimum(below, above) + 1) / (n_others + 1) < alpha
 
 
-def field_test(result, dims=("lat", "lon"), member_dim=MEMBER_DIM, alpha=ALPHA):
+def field_test(result, member_dim='member', alpha=ALPHA):
     """Is ERA5 flagged over more of the map than it would be if the model were perfect?
 
     A map of point-wise verdicts cannot say by itself whether a model is
@@ -420,12 +334,11 @@ def field_test(result, dims=("lat", "lon"), member_dim=MEMBER_DIM, alpha=ALPHA):
         so the point counts 2 / 50 = 0.04 towards ERA5's flagged area
         3 of 50 pseudo-observations flagged over at least ERA5's area: field_pvalue = (3 + 1) / (50 + 1) = 0.078
 
-    Notebook plot_01c goes through these steps one at a time, on one model's standard deviation (section 7).
+    Notebook plot_01c goes through these steps one at a time, on one model's standard deviation (section *Moment Test Maps*).
 
     Args:
         result (xr.Dataset): ``locate`` results (e.g. the four moments along a ``statistic``
-            dim) on a lat/lon grid, still with ``members``.
-        dims (Sequence[str]): The map dimensions; areas are cos(latitude)-weighted.
+            dim) on a lat/lon grid, still with ``members``; areas are cos(latitude)-weighted.
         member_dim (str): Member dimension.
         alpha (float): Significance level, for the point-wise tests and the field test.
 
@@ -453,10 +366,9 @@ def field_test(result, dims=("lat", "lon"), member_dim=MEMBER_DIM, alpha=ALPHA):
 
     #(c): A pseudo-observation has N - 1 others, so it can only be flagged if 2 / N < alpha
     present = result["era5"].notnull() & (2 / n < alpha)
-    weights = area_weights(result["lat"])
 
     def area(flagged):
-        return 100 * flagged.astype(float).where(present).weighted(weights).mean(dims)
+        return 100 * area_mean(flagged.astype(float).where(present))
 
     flagged_area = area(era5_flagged)
     pseudo_area = area(pseudo_flagged)
@@ -476,7 +388,7 @@ def field_test(result, dims=("lat", "lon"), member_dim=MEMBER_DIM, alpha=ALPHA):
 # 6. Rank histograms (Suarez-Gutierrez et al., 2021)
 # ---------------------------------------------------------------------------
 
-def ensemble_rank(ensemble, obs, member_dim=MEMBER_DIM):
+def ensemble_rank(ensemble, obs, member_dim='member'):
     """ERA5's rank within the ensemble at each sample: how many members lie below it (0 to N)."""
     return (ensemble < obs).sum(member_dim).where(obs.notnull())
 
@@ -519,7 +431,7 @@ def _rank_among_others(values):
     return np.where(np.isnan(values), np.nan, ranks)
 
 
-def pseudo_observation_ranks(ensemble, member_dim=MEMBER_DIM):
+def pseudo_observation_ranks(ensemble, member_dim='member'):
     """Each member's rank among the other N - 1 members, at each sample (0 to N - 1).
 
     Treating each member in turn as if it were the observations ("model as
@@ -629,8 +541,8 @@ def rank_statistics(counts, rank_dim="rank"):
     })
 
 
-def rank_histogram_test(ensemble, obs, treatment="anomaly", pool_dims=(SAMPLE_DIM,),
-                        sample_dim=SAMPLE_DIM, member_dim=MEMBER_DIM, reference=None,
+def rank_histogram_test(ensemble, obs, treatment="anomaly", pool_dims=('year',),
+                        sample_dim='year', member_dim='member', reference=None,
                         alpha=ALPHA, keep_histograms=True):
     """The rank-histogram test of Suarez-Gutierrez et al. (2021).
 
@@ -698,14 +610,20 @@ def rank_histogram_test(ensemble, obs, treatment="anomaly", pool_dims=(SAMPLE_DI
     #(c): is (r / N)(r - 1) + ((N - r) / N) r = r (N - 1) / N, which scaled by N - 1 is r / N (4 members, r = 3: 0.75)
     obs_scaled = obs_rank / n_members
     pseudo_scaled = pseudo_rank / (n_members - 1)
+    #(c): The slope of the scaled rank against the year: per year
     obs_summary["rank_trend"] = trend.trend(obs_scaled, pool_dims)
     pseudo_summary["rank_trend"] = trend.trend(pseudo_scaled, pool_dims)
 
     names = list(RANKS)
     results = [locate(pseudo_summary[name], obs_summary[name], member_dim, alpha) for name in names]
-    result = _stack(results, names, RANKS, test="rank histogram", alpha=alpha, n_members=n_members,
-                    pool_dims=", ".join(pool_dims))
-    result = result.assign_coords(treatment=("statistic", [treatment] * len(names)))
+    result = xr.concat(results, dim="statistic", coords="minimal", compat="override")
+    result = result.assign_coords(
+        statistic=names,
+        label=("statistic", [RANKS[name].label for name in names]),
+        units=("statistic", [RANKS[name].units for name in names]),
+        treatment=("statistic", [treatment] * len(names)),
+    )
+    result.attrs.update(test="rank histogram", alpha=alpha, n_members=n_members, pool_dims=", ".join(pool_dims))
 
     if keep_histograms:
         result["obs_frequency"] = 100 * obs_counts / obs_counts.sum("rank")
@@ -770,8 +688,8 @@ def regroup_ranks(frequency, n_bins=10, rank_dim="rank"):
 QQ_QUANTILES = np.round(np.arange(0.05, 0.951, 0.05), 2)
 
 
-def distribution_summary(ensemble, obs, treatments=("raw", "anomaly"), sample_dim=SAMPLE_DIM,
-                         member_dim=MEMBER_DIM, reference=None, quantiles=QQ_QUANTILES, n_points=600):
+def distribution_summary(ensemble, obs, treatments=("raw", "anomaly"), sample_dim='year',
+                         member_dim='member', reference=None, quantiles=QQ_QUANTILES, n_points=600):
     """KDEs and quantiles of ERA5 and every member, for each treatment, ready to plot.
 
     Args:
@@ -824,8 +742,8 @@ def distribution_summary(ensemble, obs, treatments=("raw", "anomaly"), sample_di
 PLUME_QUANTILES = (0.05, 0.125, 0.5, 0.875, 0.95)
 
 
-def ensemble_plume(ensemble, obs, treatment="raw", quantiles=PLUME_QUANTILES, sample_dim=SAMPLE_DIM,
-                   member_dim=MEMBER_DIM, reference=None):
+def ensemble_plume(ensemble, obs, treatment="raw", quantiles=PLUME_QUANTILES, sample_dim='year',
+                   member_dim='member', reference=None):
     """Ensemble quantiles and range through time, and where ERA5 sits relative to them.
 
     If ERA5 were a member, it would fall below the lowest member (or above the
@@ -866,7 +784,7 @@ def ensemble_plume(ensemble, obs, treatment="raw", quantiles=PLUME_QUANTILES, sa
     }, attrs={"treatment": treatment})
 
 
-def outside_frequency(plume, dims=SAMPLE_DIM):
+def outside_frequency(plume, dims='year'):
     """% of samples with ERA5 below, above and outside the ensemble range, and inside its central 75%."""
     below = 100 * plume["below"].mean(dims)
     above = 100 * plume["above"].mean(dims)
@@ -909,10 +827,10 @@ TIMING_SHARE = 2 / 3
 #(t): Step 7, what is wrong at a grid point
 DIAGNOSES = {
     0: "adequate",                 # none of the problems below
-    1: "warms too much",           # ERA5 below the members late (or above them early): forced response too strong
-    2: "warms too little",         # ERA5 above the members late (or below them early): forced response too weak
-    3: "too little variability",   # ERA5 both below and above the members, throughout: spread too narrow
-    4: "too much variability",     # ERA5 inside the central 75% too often: spread too wide
+    1: "signal overestimated",     # ERA5 below the members late (or above them early): forced response too strong
+    2: "signal underestimated",    # ERA5 above the members late (or below them early): forced response too weak
+    3: "variability too small",    # ERA5 both below and above the members, throughout: spread too narrow
+    4: "variability too large",    # ERA5 inside the central 75% too often: spread too wide
     5: "one tail too short",       # ERA5 beyond one edge only, throughout: the shape of the distribution
 }
 
@@ -932,7 +850,7 @@ def _central_of_others(values, low, high):
     skipping the member itself, so there is no loop over members.
     """
     ordered = np.sort(values, axis=-1)
-    position = np.argsort(np.argsort(values, axis=-1), axis=-1)
+    position = _rank_among_others(values)
     n_others = values.shape[-1] - 1
 
     def others_quantile(q):
@@ -971,7 +889,7 @@ def _perfect_model_thresholds(ensemble, present, member_dim, sample_dim, quantil
 
 
 def spatial_evaluation(ensemble, obs, reference=None, period=None, thresholds="fixed",
-                       sample_dim=SAMPLE_DIM, member_dim=MEMBER_DIM):
+                       sample_dim='year', member_dim='member'):
     """Evaluate ensemble agreement with observations, including independent signal and noise biases."""
     if thresholds not in ("fixed", "perfect_model"):
         raise ValueError(f"thresholds must be 'fixed' or 'perfect_model', got {thresholds!r}")
@@ -1113,6 +1031,24 @@ def adequate_area(result, lat="lat", lon="lon"):
     return 100 * area_mean(result["adequate"], lat=lat, lon=lon)
 
 
+#(t): The paper's map (Fig. 5): ERA5 above or below every member in at least EDGE_THRESHOLD (10%) of years, or in twice
+#(t): that
+EDGE_CLASSES = ("neither", "above ≥ 10%", "above ≥ 20%", "below ≥ 10%", "below ≥ 20%", "both ≥ 10%")
+
+
+def edge_class(table):
+    """The paper's class at each point: index into ``EDGE_CLASSES``; NaN where untested."""
+    above, below = table["above"], table["below"]
+    edge, strong = EDGE_THRESHOLD, 2 * EDGE_THRESHOLD
+    out = xr.zeros_like(above)
+    out = xr.where(above >= edge, 1, out)
+    out = xr.where(above >= strong, 2, out)
+    out = xr.where(below >= edge, 3, out)
+    out = xr.where(below >= strong, 4, out)
+    out = xr.where((above >= edge) & (below >= edge), 5, out)
+    return out.where(table["adequate"].notnull())
+
+
 def adequate_count(results, model_dim="model"):
     """Step 9 across models (Fig. 8 of the paper): how many tested models are adequate at each grid point.
 
@@ -1148,7 +1084,7 @@ SCENARIO_DESCRIPTIONS = {
 }
 
 
-def simulate_ensemble(n_members=50, years=np.arange(1979, 2014), seasons=SEASONS, trend=0.3, noise=1.0,
+def simulate_ensemble(n_members=50, years=np.arange(1979, 2014), seasons=("DJF", "MAM", "JJA", "SON"), trend=0.3, noise=1.0,
                       obs_trend=0.3, obs_noise=1.0, bias=0.0, seed=0):
     """A toy ensemble and pseudo-ERA5 with chosen signal and noise, so the right answer is known.
 

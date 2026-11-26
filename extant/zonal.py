@@ -8,7 +8,7 @@ the sea-ice edge marked (``sea_ice``). What differs here:
 - every model on its own; the paper averages five;
 - the changes are this project's: each experiment's final ``WINDOW`` years
   against hist-nat, split as in ``response_change.extreme_changes``;
-- the zonal mean is tested, with the same tests as the maps (notebook calc_02a, section 5, and calc_02b, section 4).
+- the zonal mean is tested, with the same tests as the maps (notebook calc_02a, section *Zonal Means of the Width: the Change at Each Latitude*, and calc_02b, section *Zonal Means of the Mean: the Change at Each Latitude*).
 
 A latitude's value is the mean over longitude of the change at each grid
 point. So the zonal-mean width is the average of the local widths (how much a
@@ -29,17 +29,7 @@ width   the zonal mean of the hist-nat bootstrap trials of the width
 The low and high extremes have no test of their own.
 """
 
-import xarray as xr
-
 from . import response_change as rc
-from .utils.datatree import skip_empty
-
-
-def zonal_mean(obj, lon="lon"):
-    """Mean over longitude, skipping missing cells, of a Dataset, DataArray or (every node of) a DataTree."""
-    if isinstance(obj, xr.DataTree):
-        return obj.map_over_datasets(skip_empty(lambda ds: ds.mean(lon)))
-    return obj.mean(lon)
 
 
 def zonal_summary(summary, mean_tested=None, width_tested=None):
@@ -56,7 +46,7 @@ def zonal_summary(summary, mean_tested=None, width_tested=None):
         ``mean_pvalue``, ``width_pvalue``, and the width test's ``hist_nat_width``,
         ``null_lower`` and ``null_upper``.
     """
-    out = zonal_mean(rc.extreme_changes(summary))
+    out = rc.extreme_changes(summary).mean("lon")
     if mean_tested is not None:
         out["mean_pvalue"] = mean_tested["pvalue"]
     if width_tested is not None:

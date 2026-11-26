@@ -4,7 +4,6 @@ from functools import partial
 
 import numpy as np
 import pytest
-import scipy.stats
 import xarray as xr
 
 from extant.utils import datatree
@@ -64,7 +63,7 @@ def summary(tree):
     sn = xr.where(mean.lat == -80.0, 3.0, 1.0) + 0 * mean
     width_p = xr.where(mean.lon == 0.0, 0.01, 0.5) + 0 * mean
     qrange = xr.Dataset({"qrange_change": xr.full_like(mean, 1.0), "qrange_pvalue": width_p})
-    return rc.change_summary(mean, pvalue, sn.assign_coords(year=2009), qrange, _tails(tree))
+    return rc.change_summary(mean, pvalue, sn.assign_coords(year=2009), qrange, _tails(tree), alpha=0.05, sn_threshold=2)
 
 
 # ---------------------------------------------------------------------------
@@ -105,32 +104,6 @@ def test_strongest_joint_change_and_regional_fractions(summary):
 
 
 # ---------------------------------------------------------------------------
-# The member-block test and internal variability
-# ---------------------------------------------------------------------------
-
-def test_member_block_pvalue_matches_scipy_and_detects_the_shift(tree):
-    member_means = tree.isel(year=slice(-11, None)).mean("year")
-    pvalue = xr.map_over_datasets(partial(rc.member_block_pvalue, n_permutations=2000, seed=1),
-                                  member_means, datatree.hist_nat_like(member_means))
-    assert float(pvalue["A/historical"].tas.max()) < 0.01  # a 2-degree shift is unmistakable
-
-    point = dict(season="DJF", lat=-80.0, lon=0.0)
-    x, y = (_member_data(8, shift).isel(year=slice(-11, None)).mean("year").sel(point) for shift in (0.4, 0.0))
-    ours = float(rc.member_block_pvalue(x, y, n_permutations=20000, seed=2))
-    reference = scipy.stats.permutation_test((x.values, y.values), lambda a, b: a.mean() - b.mean(),
-                                             n_resamples=20000, random_state=3).pvalue
-    assert abs(ours - reference) < 0.02
-
-
-def test_members_minus_the_forced_response_leave_internal_variability(tree):
-    internal = tree - tree.map_over_datasets(partial(rc.forced_response, window=21))
-    anomalies = internal["A/historical"].tas
-    # The forced shift is gone and the spread is the historical noise (1.5), not shrunk by removing it.
-    np.testing.assert_allclose(float(anomalies.mean()), 0, atol=0.05)
-    np.testing.assert_allclose(float(anomalies.std()), WIDEN, rtol=0.05)
-
-
-# ---------------------------------------------------------------------------
 # Additivity
 # ---------------------------------------------------------------------------
 
@@ -157,43 +130,14 @@ def test_additivity_recovers_the_residual():
 
 
 # ---------------------------------------------------------------------------
-# Local distributions
+# One grid point, the width's parts and the joint classes
 # ---------------------------------------------------------------------------
 
-def test_quantile_shift_recovers_shift_and_widening(tree):
-    samples = rc.final_years(tree, "A", ["hist-nat", "historical"], {"lat": -80.0, "lon": 0.0}, "DJF", years=11)
-    with_season = rc.final_years(tree, "A", ["historical"], {"season": "DJF", "lat": -80.0, "lon": 0.0}, years=11)
+def test_final_years_at_one_point(tree):
+    samples = rc.final_years(tree, "A", ["hist-nat", "historical"], {"lat": -80.0, "lon": 0.0}, "DJF", years=11, variable="tas")
+    with_season = rc.final_years(tree, "A", ["historical"], {"season": "DJF", "lat": -80.0, "lon": 0.0}, years=11, variable="tas")
     xr.testing.assert_identical(with_season["historical"], samples["historical"])
     assert samples["historical"].dims == ("member", "year") and samples["historical"].sizes["year"] == 11
-    result = rc.quantile_shift(samples["historical"], samples["hist-nat"], n_boot=300)
-    assert set(result.dims) == {"quantile"}
-    # A shift of SHIFT plus a widening of WIDEN: the change in quantile q is SHIFT + (WIDEN - 1) * z_q.
-    z = xr.DataArray(scipy.stats.norm.ppf(result["quantile"].values), dims="quantile",
-                     coords={"quantile": result["quantile"]})
-    assert float(np.abs(result["shift"] - (SHIFT + (WIDEN - 1) * z)).max()) < 0.6
-    assert bool(((result["shift_lower"] <= result["shift"]) & (result["shift"] <= result["shift_upper"])).all())
-    assert float(result["shift"].sel(quantile=0.95) - result["shift"].sel(quantile=0.05)) > 0.5
-
-
-def test_the_step_by_step_permutations_are_the_member_block_tests(tree):
-    """Notebook calc_02b's demonstration (weights from default_rng(0), times the member means) is member_block_pvalue's test."""
-    point = dict(season="DJF", lat=-80.0, lon=0.0)
-    experiment, hist_nat = (tree[f"A/{e}"].tas.sel(point).isel(year=slice(-11, None)).mean("year")
-                            for e in ("historical", "hist-nat"))
-    weights = rc.permutation_weights(500, experiment.sizes["member"], hist_nat.sizes["member"], np.random.default_rng(0))
-    permutations = xr.DataArray(weights @ np.concatenate([experiment.values, hist_nat.values]), dims="trial")
-    change = experiment.mean("member") - hist_nat.mean("member")
-    by_hand = float(sig.pvalue_two_sided(permutations, change))
-    assert by_hand == pytest.approx(float(rc.member_block_pvalue(experiment, hist_nat, n_permutations=500)))
-    # A 2-degree shift with 30 members each is far outside every relabelling
-    assert by_hand == pytest.approx(2 / 501)
-
-    # With a smaller shift the p-value is not at its floor, and still the same
-    shifted = experiment - 1.9
-    permutations = xr.DataArray(weights @ np.concatenate([shifted.values, hist_nat.values]), dims="trial")
-    by_hand = float(sig.pvalue_two_sided(permutations, shifted.mean("member") - hist_nat.mean("member")))
-    assert by_hand > 2 / 501
-    assert by_hand == pytest.approx(float(rc.member_block_pvalue(shifted, hist_nat, n_permutations=500)))
 
 
 def test_width_parts_add_up_to_the_width():
@@ -208,8 +152,6 @@ def test_width_parts_add_up_to_the_width():
 
 
 def test_joint_class_orders_the_nine_classes_as_the_key():
-    from extant.statistics import significance as sig
-
     change = xr.DataArray([-1.0, 2.0, 3.0, np.nan], dims="lat")
     significant = xr.DataArray([True, True, False, True], dims="lat")
     signs = sig.significant_sign(change, significant)

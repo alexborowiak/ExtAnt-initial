@@ -52,9 +52,9 @@ JASMIN = "(JASMIN)"
 #(t): full-data opening sections, calc_01's conversion, test sample and SAM index, and the year-to-year correlation
 #(t): (which needs the full seasonal temperature) where it is made (calc_04) and drawn (plot_02, plot_03c)
 JASMIN_SECTIONS = {
-    "calc_01_process_data": {"Dask Cluster", "1. LESFMIP Files to Monthly Stores",
-                             "2. ERA5 Hourly Files to Monthly Means", "Full data", "Save", "4. Test Sample",
-                             "6. SAM Index"},
+    "calc_01_process_data": {"Dask Cluster", "LESFMIP Files to Monthly Stores",
+                             "Regridding Target (LESFMIP target grid)", "ERA5 Hourly Files to Monthly Means",
+                             "Other Products (easier)", "Full data", "Save", "Test Sample", "SAM Index"},
     "calc_02a_width_change": {"Dask Cluster", "Full data"},
     "calc_02b_mean_change": {"Dask Cluster", "Full data"},
     "calc_02c_probability_ratios": {"Dask Cluster", "Full data"},
@@ -72,11 +72,11 @@ JASMIN_SECTIONS = {
     "plot_02_sea_ice": {"Full data", "Year-to-year correlation"},
     "plot_03a_mean_and_signal_to_noise": {"Full data"},
     "plot_03b_quantiles_and_width": {"Full data"},
-    "plot_03c_distribution_additivity_zonal": {"Full data", "7.6 Sea ice itself", "7.8 Year-to-year correlation"},
+    "plot_03c_distribution_additivity_zonal": {"Full data", "Year-to-year correlation"},
     "plot_03d_probability_ratios": {"Full data"},
     "plot_04_slides": {"Full data"},
     "plot_05_paper": {"Full data"},
-    "plot_06_figure_candidates": {"Full data", "D2 and D4", "Layouts with sea ice"},
+    "plot_06_figure_candidates": {"Full data"},
 }
 
 #(t): A section inside one of those that runs on the sample too: calc_04's look at what was opened, either way
@@ -96,8 +96,8 @@ JASMIN_SCRATCH = "Path('/work/scratch-pw4/aborow/ExtAnt')"
 REPO_FIGURES = "Path('../figures')"
 
 #(t): Resampling settings in the notebooks, and what they become here
-TRIAL_CAPS = {"n_trials=10_000": "n_trials={}", "N_TRIALS = 1000": "N_TRIALS = {}", "n_permutations=5000": "n_permutations={}",
-              "DEMO_TRIALS = 10_000": "DEMO_TRIALS = {}", "N_PERMUTATIONS = 5000": "N_PERMUTATIONS = {}",
+#(c): (the hist-nat bootstrap's, config.N_TRIALS, is capped in main)
+TRIAL_CAPS = {"n_trials=10_000": "n_trials={}", "N_PERMUTATIONS = 5000": "N_PERMUTATIONS = {}",
               "PR_TRIALS = 1000": "PR_TRIALS = {}", "N_MONTE_CARLO = 1000": "N_MONTE_CARLO = {}"}
 
 
@@ -220,6 +220,9 @@ def main():
     #(c): The notebooks that take the scratch folder from src.paths get the temporary one too
     import src.paths
     src.paths.SCRATCH_DIR = Path(os.environ["EXTANT_SCRATCH"])
+    #(c): The hist-nat bootstrap's trials, which the notebooks take from config
+    from extant import config
+    config.N_TRIALS = min(config.N_TRIALS, args.trials)
 
     if args.notebooks:
         notebooks = [p.resolve() for p in args.notebooks]

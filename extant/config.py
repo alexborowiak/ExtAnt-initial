@@ -1,7 +1,7 @@
-"""Settings shared by every notebook: experiments, windows, the example point, and the variables.
+"""Settings shared by every notebook: experiments, windows, thresholds, and the variables.
 
 Change a setting here and every notebook picks it up. Settings that only matter
-to one figure stay in that figure's notebook. File locations are in each notebook's Settings.
+to one figure stay in that figure's notebook. The folders on JASMIN are in ``src/paths.py``.
 """
 
 from dataclasses import dataclass
@@ -49,21 +49,34 @@ SATELLITE_YEAR_RANGE = slice(ERA5_START_YEAR, 2013)
 #(t): Southern edge of the stored data: everything south of 40°S
 LAT_MAX = -40
 
-# ---------------------------------------------------------------------------
-# What the figures show
-# ---------------------------------------------------------------------------
+#(t): Concentration (%) from which a cell counts as sea ice: the usual definition of the extent, and of the edge on the
+#(t): maps
+ICE_THRESHOLD = 15.0
 
-#(t): The example grid point (the sample data are the 3x3 block of cells around it)
-POINT = dict(lat=-81.88, lon=120.9, method="nearest")
-
-#(t): Model and experiment shown in single-model detail plots
-PLOT_SEL = dict(model="CanESM5", experiment="historical")
+# ---------------------------------------------------------------------------
+# The tests and their settings
+# ---------------------------------------------------------------------------
 
 #(t): Quantiles for the rolling-quantile analysis: the median and three symmetric pairs
 QUANTILES = np.array([0.01, 0.05, 0.1, 0.5, 0.9, 0.95, 0.99])
 
 #(t): The significance level of every test of the forced response (notebooks calc_02a to calc_02c, and their figures)
 ALPHA = 0.05
+
+#(t): Members in each trial of the hist-nat bootstrap (the width and the mean tests, notebooks calc_02a and calc_02b):
+#(t): the smallest ensemble
+N_BOOTSTRAP_MEMBERS = 10
+
+#(t): Trials of that bootstrap, the same in both tests (trial k draws the same members in each)
+N_TRIALS = 1000
+
+#(t): Which test says the mean has changed, where the mean and the width are put together (notebooks plot_03c and
+#(t): plot_05): 'significant' (the hist-nat bootstrap, calc_02b section *Mean Change and Signal to Noise*), 'emerged' (S/N) or 'robust' (both)
+MEAN_TEST = "significant"
+
+#(t): |S/N| counted as emerged, and the S/N thresholds of the areas and of the model counts
+SN_THRESHOLD = 2
+SN_THRESHOLDS = [0.5, 1, 2]
 
 #(t): Multi-model agreement thresholds (IPCC AR6 advanced approach)
 SIGNIFICANT_THRESHOLD = 0.66   # fraction of models that must be significant
@@ -116,7 +129,7 @@ class Variable:
 #(c): siconc (sea-ice concentration, %) is not in the LEADER-EPESC folders: notebook calc_04 takes it from CEDA's copy of
 #(c): CMIP6 (calc_04's ``CEDA_DIRS``, table SImon), each model on its own grid, and puts it on the 2.5° grid. ERA5's
 #(c): sea-ice cover (code ci) is a fraction from 0 to 1; notebook calc_04 stores it in % like the models.
-#(c): sam is the Southern Annular Mode index, already standardised, from notebook calc_01's ``SAM_RAW_DIR`` rather than the
+#(c): sam is the Southern Annular Mode index, already standardised, from ``paths.SAM_RAW_DIR`` rather than the
 #(c): LESFMIP files (``sam.open_index``); it sorts the seasons into SAM phases (notebook calc_02a, *SAM Phases*).
 VARIABLES = {
     "tas": Variable("tas", "Near-surface air temperature", "°C", offset=-273.15, era5_code="2t", era5_name="t2m"),

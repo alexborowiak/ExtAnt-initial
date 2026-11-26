@@ -47,7 +47,7 @@ def test_member_labels():
 def test_raw_files_to_seasonal_means(raw_dir, tmp_path):
     monthly_dir, scratch_dir = tmp_path / "monthly", tmp_path / "scratch"
 
-    #(c): Notebook calc_01, section 1: each model's member files for each experiment, opened together and saved
+    #(c): Notebook calc_01, section *LESFMIP Files to Monthly Stores*: each model's member files for each experiment, opened together and saved
     for model in MODELS:
         for experiment in EXPERIMENTS:
             member_paths = sorted((raw_dir / experiment / model).rglob(f"*_{config.GROUP}.nc"))
@@ -58,7 +58,7 @@ def test_raw_files_to_seasonal_means(raw_dir, tmp_path):
     assert monthly_ds.sizes["member"] == 12 and set(monthly_ds.member.values) == {f"r{k}i1p1f1" for k in range(1, 13)}
     assert float(monthly_ds.lat.max()) <= config.LAT_MAX
 
-    #(c): Section 3: the stores listed, the model and experiment read from each name, opened into a DataTree
+    #(c): Section *Monthly to Seasonal Means*: the stores listed, the model and experiment read from each name, opened into a DataTree
     store_paths = sorted(monthly_dir.glob(f"*_tas_*_{config.GROUP}_monthly.zarr"))
     names = [path.name.removesuffix("_monthly.zarr").rsplit("_", 3) for path in store_paths]
     assert sorted({model for model, _, _, _ in names}) == MODELS

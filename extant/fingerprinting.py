@@ -31,7 +31,7 @@ into labelled xarray objects.
 
 Sections
 --------
-1. Vectors: the order of the entries
+1. Regions and vectors: where the trends are, and the order of the entries
 2. Fingerprints, signal sets and effective ensemble sizes
 3. Noise: samples, two independent halves, the covariance
 4. Fitting: prewhitening, OLS and TLS
@@ -45,8 +45,15 @@ import xarray as xr
 from .utils.datatree import skip_empty
 
 # ---------------------------------------------------------------------------
-# 1. Vectors: the order of the entries
+# 1. Regions and vectors: where the trends are, and the order of the entries
 # ---------------------------------------------------------------------------
+
+#(t): Regions as lat/lon selections on the LESFMIP grid (boxes; edit to taste)
+REGIONS = {
+    "Antarctica (90–65°S)": {"lat": slice(-90, -65)},
+    "Antarctic Peninsula": {"lat": slice(-75, -62.5), "lon": slice(-75, -55)},
+    "Southern Ocean (65–50°S)": {"lat": slice(-65, -50)},
+}
 
 #(t): The order of a vector's entries: region-major, the seasons inside each region
 ENTRY_DIMS = ("region", "season")
@@ -80,7 +87,7 @@ def unflatten(vector):
 
 #(t): The signal sets, from one signal to four: each signal is a sum of experiments' responses, with coefficients.
 #(t): ANT is historical minus hist-nat; OTH (aerosols and ozone) is hist-aer plus hist-totalO3. Every set with
-#(t): more than one signal assumes the single forcings add up (notebook calc_02b, section 3)
+#(t): more than one signal assumes the single forcings add up (notebook calc_02b, section *Mean Change and Signal to Noise*, its additivity)
 SIGNAL_SETS = {
     "1 signal": {"ALL": {"historical": 1}},
     "2 signals": {"ANT": {"historical": 1, "hist-nat": -1}, "NAT": {"hist-nat": 1}},
@@ -91,6 +98,10 @@ SIGNAL_SETS = {
 
 #(t): Every signal of every set, in the order the figures list them
 SIGNALS = list(dict.fromkeys(signal for signals in SIGNAL_SETS.values() for signal in signals))
+
+#(t): The signal set shown step by step, and the fit of the final result (total least squares, section 4)
+MAIN_SET = "4 signals"
+METHOD = "tls"
 
 
 def coefficients(signals, experiments):
@@ -219,7 +230,7 @@ def ledoit_wolf(samples):
     give 0.8 * [4, 1, 0.01] + 0.2 * 1.67 = [3.53, 1.13, 0.34]: the smallest is
     lifted from 0.01 to 0.34, so its weight in the fit drops from 100 to 3. If
     S is 2 from μ I (delta) and 0.5 of that is sampling noise (beta), λ = 0.25.
-    Notebook fingerprinting_01 (section 5) goes through it on the first half.
+    Notebook fingerprinting_01 (section *The Fit*, *Noise and its covariance*) goes through it on the first half.
 
     Args:
         samples (np.ndarray): (s, n): s samples of n entries, each already with a mean of zero.
@@ -284,7 +295,7 @@ def fit_tls(y, X, covariance, n_eff):
     Example: 2 entries, one fingerprint, and y = 2 x exactly, so Z = [[1, 2], [2, 4]].
     Z times [2, -1] is [0, 0]: Z has no extent in that direction, so it is the
     smallest singular vector, v = [2, -1] / √5, and βₛ = -(2 / √5) / (-1 / √5) = 2.
-    Notebook fingerprinting_01 (section 7) goes through the steps on the real fit.
+    Notebook fingerprinting_01 (section *The Fit*, *The fit*) goes through the steps on the real fit.
 
     Args:
         y (np.ndarray): (n,) the observations.

@@ -1,6 +1,8 @@
 """Smoke tests: every panel draws without error on small synthetic inputs, on the axes of ``charts``, as the notebooks
 draw them."""
 
+from functools import partial
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -10,10 +12,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 
-from extant import era5_evaluation as ev  # noqa: E402
-from extant.statistics import trend
+from extant import obs_evaluation as ev  # noqa: E402
+from extant.statistics import trend  # noqa: E402
+from extant.statistics import significance as sig  # noqa: E402
+from extant.statistics.moments import excess_kurtosis, skewness  # noqa: E402
+from extant.statistics.quantiles import quantile_range  # noqa: E402
 from extant.utils import datatree  # noqa: E402
-from extant.plots import charts, era5_evaluation as evp  # noqa: E402
+from extant.plots import charts, obs_evaluation as evp  # noqa: E402
 from extant import response_change as rc  # noqa: E402
 from extant.plots import response_change as rcp  # noqa: E402
 
@@ -55,12 +60,12 @@ def tests(point):
     moments = _tests({
         "mean": point_ds.mean("year"),
         "std": detrended_ds.std("year", ddof=1),
-        "skewness": detrended_ds.map(ev.skewness),
-        "kurtosis": detrended_ds.map(ev.excess_kurtosis),
+        "skewness": detrended_ds.map(skewness),
+        "kurtosis": detrended_ds.map(excess_kurtosis),
     }).assign_coords(treatment=("statistic", ["raw", "detrended", "detrended", "detrended"]))
     others = _tests({
         "trend": point_ds.map(trend.trend),
-        "width": detrended_ds.map(ev.quantile_width),
+        "width": detrended_ds.map(partial(quantile_range, dims=("year",))),
     }).assign_coords(treatment=("statistic", ["raw", "detrended"]))
     return moments, others
 
@@ -159,7 +164,7 @@ def test_point_and_scatter_panels():
     rng = np.random.default_rng(2)
     samples = {e: xr.DataArray(shift + scale * rng.standard_normal((20, 11)), dims=("member", "year"))
                for e, shift, scale in (("hist-nat", 0, 1), ("historical", 2, 1.4), ("hist-GHG", 3, 1.2))}
-    shifts = {e: rc.quantile_shift(samples[e], samples["hist-nat"], n_boot=100) for e in ("historical", "hist-GHG")}
+    shifts = {e: sig.quantile_shift(samples[e], samples["hist-nat"], n_boot=100) for e in ("historical", "hist-GHG")}
     axes = _axes(1, 2, n_legends=0)
     rcp.plot_point_distributions(samples, shifts["historical"], "historical", ax=axes[0, 0])
     rcp.plot_quantile_shifts(shifts, "historical", ax=axes[0, 1])
@@ -198,16 +203,17 @@ def spatial_table():
 
 def test_edge_classes_of_the_spatial_evaluation(spatial_table):
     """Every tested point has one of the classes of the paper's Fig. 5; an untested point has none."""
-    classes = evp.edge_class(spatial_table)
+    classes = ev.edge_class(spatial_table)
     assert bool((classes.notnull() == spatial_table["adequate"].notnull()).all())
-    assert set(np.unique(classes.values[np.isfinite(classes.values)])) <= set(range(len(evp.EDGE_CLASSES)))
+    assert set(np.unique(classes.values[np.isfinite(classes.values)])) <= set(range(len(ev.EDGE_CLASSES)))
+    assert len(evp.EDGE_COLORS) == len(ev.EDGE_CLASSES)
+
 
 def test_method_panels():
     """The step-by-step schematics and the small figures that follow the data, on synthetic ensembles."""
     import pandas as pd
 
     from extant.statistics import quantiles as qc
-    from extant.statistics import significance as sig
     from extant.plots import methods
 
     rng = np.random.default_rng(1)
@@ -219,10 +225,10 @@ def test_method_panels():
 
     hist, nat = members(30, 2.0, 1.2), members(30)
     final, nat_final = hist.isel(year=slice(-21, None)), nat.isel(year=slice(-21, None))
-    selected = sig.bootstrap_draws(30, n_trials=200)
+    selected = sig.bootstrap_draws(30, n_members=10, n_trials=200, seed=0)
 
     #(c): The bootstrap of the width: a, the trials (checked against the test's), c
-    trial_widths = sig.bootstrap_qrange(nat_final, n_trials=200)
+    trial_widths = sig.bootstrap_qrange(nat_final, n_members=10, quantiles=(0.05, 0.95), n_trials=200, seed=0)
     width = qc.quantile_range(final)
     fig = plt.figure(figsize=(11, 15))
     ax_a, flow_axes, trial_axes, ax_c = methods.schematic_axes(fig)
@@ -233,13 +239,13 @@ def test_method_panels():
     methods.plot_trial_distribution(trial_widths, width, float(qc.quantile_range(nat_final)), "historical", 30, ax=ax_c)
 
     #(c): The bootstrap of the mean, and the permutation test
-    trial_means = sig.bootstrap_mean(nat_final, n_trials=200)
+    trial_means = sig.bootstrap_mean(nat_final, n_members=10, n_trials=200, seed=0)
     fig = plt.figure(figsize=(11, 15))
     ax_a, flow_axes, trial_axes, ax_c = methods.schematic_axes(fig)
     methods.plot_two_ensembles(nat_final, final, "historical", ax=ax_a)
     methods.plot_mean_trials(nat_final, selected, trial_means, trial_axes)
     methods.plot_trial_distribution(trial_means, final.mean(), float(nat_final.mean()), "historical", 30, ax=ax_c)
-    weights = rc.permutation_weights(200, 30, 30, np.random.default_rng(0))
+    weights = sig.permutation_weights(200, 30, 30, np.random.default_rng(0))
     permutations = weights @ np.concatenate([final.mean("year").values, nat_final.mean("year").values])
     fig = plt.figure(figsize=(11, 15))
     ax_a, flow_axes, trial_axes, ax_c = methods.schematic_axes(fig)
@@ -255,13 +261,13 @@ def test_method_panels():
         methods.plot_phase_temperatures(phases.sel(phase=phase), phases.sel(phase=phase) + 1.0, "historical")
 
     #(c): Following the data: a rolling quantile, the smoothing, the change in each quantile, the forced response
-    rolling = qc.centred_rolling_quantiles(hist, quantiles=[0.05, 0.5, 0.95])
+    rolling = qc.centred_rolling_quantiles(hist, window=21, quantiles=[0.05, 0.5, 0.95])
     methods.plot_window(hist, 1950, 21)
     methods.plot_window_values(hist, 1950, 21)
     methods.plot_rolling_quantiles(rolling, 1950)
     smooth = trend.lowess(rolling)
     methods.plot_smoothing(rolling, smooth)
-    both = xr.concat([smooth, trend.lowess(qc.centred_rolling_quantiles(nat, quantiles=[0.05, 0.5, 0.95]))],
+    both = xr.concat([smooth, trend.lowess(qc.centred_rolling_quantiles(nat, window=21, quantiles=[0.05, 0.5, 0.95]))],
                      dim="experiment").assign_coords(experiment=["historical", "hist-nat"])
     base = nat.quantile([0.05, 0.5, 0.95], dim=["member", "year"])
     methods.plot_smoothed_quantiles(both, base, "historical")
@@ -294,8 +300,8 @@ def test_method_panels():
 
 @pytest.fixture(scope="module")
 def zonal_inputs():
-    """A change summary with tails and zonal tests, sea-ice edges and a concentration climatology, all synthetic."""
-    from extant import sea_ice, zonal
+    """A change summary with tails and zonal tests, and sea-ice edges, all synthetic."""
+    from extant import zonal
 
     rng = np.random.default_rng(7)
     lat, lon = np.arange(-87.5, -39.9, 5.0), np.arange(-180.0, 180.0, 30.0)
@@ -312,21 +318,18 @@ def zonal_inputs():
     width = xr.Dataset({"width_pvalue": pvalue, "hist_nat_width": null * 10, "null_lower": -null, "null_upper": null})
     zonal_ds = zonal.zonal_summary(summary, xr.Dataset({"pvalue": pvalue}), width)
 
-    ice = (100 / (1 + np.exp((xr.DataArray(lat, dims="lat", coords={"lat": lat}) + 62) / 2))
-           ).expand_dims(lon=lon, model=["A", "B"], experiment=["hist-nat", "hist-GHG", "historical"],
-                         season=coords["season"]).transpose("model", "experiment", "season", "lat", "lon")
-    ice = ice.where(ice.lat > -75)
-    area = sea_ice.cell_area(ice.lat, ice.lon)
-    edges = sea_ice.equivalent_latitude(sea_ice.extent(ice, area)
-                                        + sea_ice.continent_area(ice.isel(model=0, experiment=0, season=0).isnull(), area))
-    return summary, zonal_ds, ice, edges
+    edges = xr.DataArray(rng.uniform(-70, -60, (2, 3, 4)), dims=("model", "experiment", "season"),
+                         coords={"model": ["A", "B"], "experiment": ["hist-nat", "hist-GHG", "historical"],
+                                 "season": coords["season"]})
+    return summary, zonal_ds, edges
+
 
 def test_zonal_layers(zonal_inputs):
     """A zonal figure as notebook plot_03c draws it: the four changes across, one line per experiment, the dots, hist-nat's
     band and the ice edges."""
-    from extant.plots import zonal as zp
+    from extant.plots import formatting, zonal as zp
 
-    _, zonal_ds, _, edges = zonal_inputs
+    _, zonal_ds, edges = zonal_inputs
     columns = list(rc.EXTREMES)
     season_ds = zonal_ds.sel(season="JJA")
     axes = _axes(2, len(columns), sharex=True, sharey="col")
@@ -339,29 +342,26 @@ def test_zonal_layers(zonal_inputs):
                                      None, axes=axes[:, 0])
         zp.ice_edge_lines_grid(edges.sel(experiment=experiment, season="JJA").expand_dims(column=columns), "model",
                                "column", axes=axes)
-    axes[0, 0].xaxis.set_major_formatter(zp.latitude_label)
-    assert zp.latitude_label(-60) == "60°S"
+    axes[0, 0].xaxis.set_major_formatter(formatting.latitude_label)
+    assert formatting.latitude_label(-60) == "60°S"
     #(c): A line per experiment in each panel, and a dashed edge where there is one
     assert len(axes[0, 1].lines) >= season_ds.sizes["experiment"]
     assert zp.plot_ice_edge_line(xr.DataArray(np.nan)) is None
 
 
-def test_sea_ice_panels(zonal_inputs):
+def test_sea_ice_panels():
     pytest.importorskip("cartopy")
-    from extant import sea_ice
     from extant.plots import sea_ice as sip
 
-    _, _, ice, _ = zonal_inputs
-    example = sea_ice.edge_example(ice.sel(model="A", experiment="hist-nat", season="JJA"))
-    sip.plot_cap_area(float(example["extent"]), float(example["continent_area"]), float(example["edge_latitude"]))
+    sip.plot_cap_area(9.8e6, 13.9e6, -63.4)
 
     #(c): The extent through time: each experiment's band and mean, seasons down and models across
     years = np.arange(1950, 1960)
     extent = xr.DataArray(np.random.default_rng(8).uniform(2e6, 4e6, (5, years.size, 2)),
                           dims=("member", "year", "season"), coords={"year": years, "season": ["DJF", "JJA"]})
-    extents = xr.DataTree.from_dict({f"A/{e}": xr.Dataset({"extent": extent, "continent_area": 13.9e6})
-                                     for e in ("hist-nat", "historical")})
-    summary = sea_ice.extent_summary(extents)
+    spread = extent.quantile([0.05, 0.95], "member")
+    summary = xr.Dataset({"mean": extent.mean("member"), "low": spread.isel(quantile=0, drop=True),
+                          "high": spread.isel(quantile=1, drop=True)}).expand_dims(model=["A"], experiment=["hist-nat", "historical"])
     axes = _axes(2, 1, sharex=True, sharey="row")
     for experiment in summary["experiment"].values:
         experiment_ds = summary.sel(experiment=experiment) / 1e6
@@ -406,37 +406,55 @@ def test_lines_and_dots_of_every_model():
     assert len(axes[0, 0].patches) == 2 and len(axes[0, 0].lines) == 1 + 2 * 3
 
 
-def test_scale_colours_are_the_settings_of_a_heatmap():
-    from extant.plots import forced_response as fr
+def test_colour_scales_are_the_settings_of_a_heatmap():
+    from extant.plots import colour_scales
 
-    colours = fr.Scale(np.linspace(-3, 3, 25), "RdBu_r", "Change").colours()
-    assert colours["extend"] == "both" and colours["ticks"] is None and colours["label"] == "Change"
+    assert colour_scales.CHANGE["extend"] == "both" and colour_scales.CHANGE["label"] == "Anomaly (°C)"
     #(c): A discrete scale: no arrows, and a tick in the middle of each class's colour, named
-    colours = fr.class_scale(["no", "yes"], ["white", "k"]).colours()
+    colours = colour_scales.class_scale(["no", "yes"], ["white", "k"])
     assert colours["extend"] == "neither" and colours["ticklabels"] == ["no", "yes"]
     np.testing.assert_allclose(colours["ticks"], [0, 1])
 
-def test_saving_and_the_talk_panels(tmp_path):
-    from extant.plots import forced_response as fr, slides
 
-    scales = fr.colour_scales("tas")
+def test_banded_scales_keep_their_colours():
+    from matplotlib.colors import to_hex
+
+    from extant.plots import colour_scales
+
+    #(c): The counts: one colour per count, white for none, the hue changing past half the models
+    count = colour_scales.count_scale(5)
+    assert count["cmap"].N == count["levels"].size - 1 == 11
+    assert to_hex(count["cmap"](5)) == "#ffffff"
+    assert to_hex(count["cmap"](0)) == to_hex(plt.get_cmap("PRGn")(0.0))
+    assert to_hex(count["cmap"](10)) == to_hex(plt.get_cmap("BrBG")(0.0))
+    majority = colour_scales.majority_scale(4)
+    assert majority["cmap"].N == 5 and to_hex(majority["cmap"](0)) == "#ffffff"
+    assert to_hex(majority["cmap"](3)) == to_hex(plt.get_cmap("Greens")(0.55))
+    #(c): S/N: a colour per step, and one beyond each end
+    sn = colour_scales.SN
+    assert sn["cmap"].N == sn["levels"].size - 1 + 2
+    np.testing.assert_allclose(sn["ticks"], [-3, -2, -1, 0, 1, 2, 3])
+
+def test_saving_and_the_talk_panels(tmp_path):
+    from extant.plots import colour_scales, slides, styles
+
     rng = np.random.default_rng(3)
 
     #(c): Saved as a PDF and a PNG
     fig, ax = plt.subplots()
     ax.plot([0, 1])
-    paths = fr.save(fig, tmp_path, "figure")
+    paths = styles.save(fig, tmp_path, "figure")
     assert all(path.exists() for path in paths)
 
     #(c): The talk figures: one model's test at a point (a significant increase), the joint key's cells, the build-up
     hist_nat_da = xr.DataArray(rng.standard_normal((5, 21)), dims=("member", "year"))
     ax = slides.plot_point_test(hist_nat_da, hist_nat_da + 1, change=1.0, pvalue=0.01, experiment="historical")
     assert "significant increase" in [text.get_text() for text in ax.texts]
-    with plt.rc_context(fr.SLIDES.rc):
+    with plt.rc_context(styles.SLIDES.rc):
         axes = _axes(3, 3, column_gap=0.1, row_gap=0.1)
         for i, shift in enumerate((-1.2, 0.0, 1.2)):
             for j, width in enumerate((0.65, 1.0, 1.5)):
-                slides.plot_joint_key_cell(shift, width, scales.joint.cmap(i * 3 + j), fill=i * 3 + j != 4,
+                slides.plot_joint_key_cell(shift, width, colour_scales.JOINT['cmap'](i * 3 + j), fill=i * 3 + j != 4,
                                            ax=axes[2 - i, j])
         series = {f: xr.DataArray(rng.standard_normal(10), dims="year", coords={"year": np.arange(1850, 1860)})
                   for f in ("hist-nat", "historical")}
@@ -452,9 +470,8 @@ def test_paper_figures_fit_the_page_and_ranges_are_checked(tmp_path):
     pytest.importorskip("cartopy")
     from PIL import Image
 
-    from extant.plots import antarctica, forced_response as fr
+    from extant.plots import antarctica, colour_scales, styles
 
-    scales = fr.colour_scales("tas")
     lat, lon = np.arange(-87.5, -39.9, 10.0), np.arange(-180.0, 180.0, 30.0)
     experiments = ["hist-GHG", "hist-aer", "hist-totalO3", "historical"]
     models = ["CanESM5", "GISS-E2-1-G", "HadGEM3-GC31-LL", "MIROC6", "MPI-ESM1-2-LR", "NorESM2-LM"]
@@ -463,21 +480,48 @@ def test_paper_figures_fit_the_page_and_ranges_are_checked(tmp_path):
                          coords={"experiment": experiments, "model": models, "lat": lat, "lon": lon})
     #(c): As notebook plot_05 draws them: maps as big as fit 183 mm, long model names across, letters; once trimmed of
     #(c): white space as when saved, no wider than the page
-    panel_size = antarctica.panel_size_to_fit(4, 6, 1, width=fr.PAGE_WIDTH, height=fr.PAGE_HEIGHT, title_height=0.35)
-    with plt.rc_context(fr.PAPER.rc):
+    panel_size = antarctica.panel_size_to_fit(4, 6, 1, width=styles.PAGE_WIDTH, height=styles.PAGE_HEIGHT, title_height=0.35)
+    with plt.rc_context(styles.PAPER.rc):
         fig = plt.figure(figsize=antarctica.map_figure_size(4, 6, 1, panel_size=panel_size, title_height=0.35),
                          layout="constrained")
         axes = antarctica.map_axes(fig, 4, 6)
         antarctica.heatmaps_of_antarctica(field, "experiment", "model", axes=axes,
                                           cax=antarctica.colorbar_axis_below(axes),
-                                          **scales.change.colours())
-        antarctica.label_columns(axes, models, fontsize=fr.PAPER.label_size)
-        antarctica.label_rows(axes, experiments, fontsize=fr.PAPER.label_size)
-        antarctica.tag_panels(axes, fontsize=fr.PAPER.tag_size)
-    png, _ = fr.save(fig, tmp_path, "page")[::-1]
+                                          **colour_scales.CHANGE)
+        antarctica.label_columns(axes, models, fontsize=styles.PAPER.label_size)
+        antarctica.label_rows(axes, experiments, fontsize=styles.PAPER.label_size)
+        antarctica.tag_panels(axes, fontsize=styles.PAPER.tag_size)
+    png, _ = styles.save(fig, tmp_path, "page")[::-1]
     width_mm = Image.open(png).size[0] / 300 * 25.4
     assert 160 < width_mm <= 183
 
-    shares = fr.saturation(field, scales.change)
+    shares = colour_scales.saturation(field, colour_scales.CHANGE)
     assert 0 < shares["above"] < 0.2 and 0 < shares["below"] < 0.2
-    assert fr.saturation(field.clip(-1, 1), scales.change) == {"below": 0.0, "above": 0.0}
+    assert colour_scales.saturation(field.clip(-1, 1), colour_scales.CHANGE) == {"below": 0.0, "above": 0.0}
+
+
+def test_fingerprinting_panels():
+    from extant import fingerprinting as fp
+    from extant.plots import fingerprinting as fpp
+
+    rng = np.random.default_rng(3)
+    table = xr.DataArray(rng.normal(size=(2, 2)), dims=("region", "season"),
+                         coords=dict(region=["R1", "R2"], season=["DJF", "JJA"]))
+    image = fpp.plot_entry_table(table, dict(levels=np.linspace(-1, 1, 5), cmap="RdBu_r", label="trend"))
+    assert image.get_array().shape == (2, 2)
+    betas = fp.fit_table({("2 signals", "ols"): {"beta": [1, 0.5], "lower": [0.5, 0], "upper": [1.5, 1]},
+                          ("2 signals", "tls"): {"beta": [1.1, 0.4], "lower": [0.4, -0.2], "upper": [1.8, 1.1]}},
+                         {"2 signals": ["ANT", "NAT"]})
+    fpp.plot_scaling_factors(betas.sel(set="2 signals"))
+    attributable = xr.Dataset({"trend": table.expand_dims(signal=["ANT", "NAT"])})
+    attributable = attributable.assign(lower=attributable["trend"] - 0.1, upper=attributable["trend"] + 0.1)
+    ax = fpp.plot_attributable_trends(table.sel(region="R1"), attributable.sel(region="R1"))
+    assert sorted(ax.get_legend_handles_labels()[1]) == ["ANT", "ERA5", "NAT"]
+    beta = betas.sel(set="2 signals", fit="tls")
+    each = xr.DataArray(rng.normal(size=(2, 2)), dims=("model", "signal"), coords=dict(model=["A", "B"],
+                                                                                         signal=["ANT", "NAT"]))
+    fpp.plot_model_betas(beta, each, each)
+    matrix = xr.DataArray(np.eye(2), dims=("signal", "signal_2"), coords=dict(signal=["ANT", "NAT"],
+                                                                               signal_2=["ANT", "NAT"]))
+    fpp.plot_correlations(matrix)
+    fpp.plot_residual_null({"statistic": 3.0, "null": rng.chisquare(4, 200), "pvalue": 0.4})

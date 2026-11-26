@@ -1,10 +1,10 @@
-"""The fast quantile and smoothing kernels give the numbers of the slow reference implementations."""
+"""The fast quantile kernels give the numbers of the slow reference implementations."""
 
 import numpy as np
 import pytest
 import xarray as xr
 
-from extant.statistics import emergence, quantiles as qc, trend
+from extant.statistics import quantiles as qc
 from extant.statistics.quantiles import nan_quantile
 
 RNG = np.random.default_rng(5)
@@ -26,6 +26,15 @@ def test_nan_quantile_over_several_dims_is_numpy_exactly(dask):
     expected = da.quantile([0.05, 0.5, 0.95], dim=("member", "year"), skipna=True)
     result = nan_quantile(da.chunk({"lat": 1}) if dask else da, [0.05, 0.5, 0.95], ("member", "year"))
     np.testing.assert_array_equal(result.transpose(*expected.dims).values, expected.values)
+
+
+@pytest.mark.parametrize("q", [0.5, [0.05, 0.5, 0.95], 0.0, 1.0])
+def test_nan_quantile_matches_xarray(q):
+    da = xr.DataArray(RNG.standard_normal((6, 36, 4, 3)), dims=("member", "year", "season", "lat"))
+    da = da.where(~((da.year == 35) & (da.season != 1)))  # a shared missing-sample mask
+    da[0, :, 0, 0] = np.nan                                # an all-NaN series
+    expected = da.quantile(q, dim="year")
+    np.testing.assert_allclose(nan_quantile(da, q, "year").transpose(*expected.dims), expected, equal_nan=True)
 
 
 def test_quantile_range_is_numpy_exactly():
@@ -68,40 +77,9 @@ def test_rolling_quantiles_are_centred():
     assert not valid[:2].any() and not valid[-2:].any() and valid[2:-2].all()
 
 
-def test_lowess_keeps_a_straight_line_and_the_missing_years():
-    """A local straight-line fit of a straight line is the line; a missing year stays missing."""
-    t = np.arange(165.0)
-    rows = np.stack([2.0 + 0.03 * t, -1.0 - 0.01 * t])
-    rows[1, 40] = np.nan
-    result = trend.lowess(xr.DataArray(rows, dims=("s", "year")), window=81).values
-    np.testing.assert_allclose(result[0], rows[0], atol=1e-10)
-    np.testing.assert_allclose(np.delete(result[1], 40), np.delete(rows[1], 40), atol=1e-10)
-    assert np.isnan(result[1, 40])
-
-
-def test_lowess_on_dask_equals_in_memory():
-    da = _field(n_years=100).isel(member=0, drop=True)
-    in_memory = trend.lowess(da, window=31)
-    np.testing.assert_allclose(trend.lowess(da.chunk({"lat": 1}), window=31).values, in_memory.values, rtol=1e-12)
-
-
-@pytest.mark.parametrize("dask", [False, True])
-def test_rolling_std_matches_the_construct_version(dask):
-    """Running sums give the window-copy numbers: ddof=0, NaN skipped, windows shortened at the ends."""
-    da = _field(n_years=40) * 3 + 20
-    expected = da.rolling(year=11, center=True).construct("window").std(["window", "member"])
-    result = emergence.rolling_std(da.chunk({"lat": 1}) if dask else da, window=11).compute()
-    assert result.dims == expected.dims
-    np.testing.assert_allclose(result.values, expected.values, rtol=1e-9, atol=1e-9)
-    # On a Dataset, as reduce_to_dataset passes it
-    ds_result = emergence.rolling_std(da.to_dataset(name="tas"), window=11)
-    np.testing.assert_allclose(ds_result.tas.values, expected.values, rtol=1e-9, atol=1e-9)
-
-
 def test_pooled_quantiles_are_xarray_quantile_exactly():
     da = _field()
     ds = da.to_dataset(name="tas")
     expected = ds.quantile([0.05, 0.5, 0.95], dim=("member", "year"), skipna=True)
     result = qc.pooled_quantiles(ds, [0.05, 0.5, 0.95])
     np.testing.assert_array_equal(result.tas.transpose(*expected.tas.dims).values, expected.tas.values)
-

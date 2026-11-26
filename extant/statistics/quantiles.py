@@ -2,7 +2,7 @@
 ``quantile_range``) and in a window centred on each year (``centred_rolling_quantiles``, numba).
 
 Functions here run on dask workers, so send the package to the cluster
-(``cluster.upload_package(client)``) after editing it.
+(``jasmin.upload_package(client)``) after editing it.
 
 The numba kernels are compiled twice: parallel over grid points for data in
 memory, and serial for dask blocks. Dask already runs the blocks in parallel,
@@ -14,7 +14,6 @@ import numpy as np
 import xarray as xr
 from numba import njit, prange
 
-from ..config import WINDOW
 from ..utils.datatree import skip_empty
 
 
@@ -74,7 +73,7 @@ def nan_quantile(da, q, dim):
 
 
 def pooled_quantiles(ds, quantiles, dims=("member", "year")):
-    """Quantiles of every variable over ``dims`` pooled, with ``stats.nan_quantile``.
+    """Quantiles of every variable over ``dims`` pooled, with ``nan_quantile``.
 
     The same numbers as ``ds.quantile(quantiles, dim=dims)``, whose NaN-skipping
     path loops over every series in Python (minutes on a full grid).
@@ -209,7 +208,7 @@ def _centred_rolling_quantiles_block(x, window, quantiles, parallel):
 
 
 @skip_empty
-def centred_rolling_quantiles(da, window=WINDOW, quantiles=(0.05, 0.5, 0.95)):
+def centred_rolling_quantiles(da, window, quantiles=(0.05, 0.5, 0.95)):
     """Quantiles of every member's values in the ``window`` years centred on each year.
 
     Year t pools years t - half to t + half of every member, with
@@ -235,7 +234,7 @@ def centred_rolling_quantiles(da, window=WINDOW, quantiles=(0.05, 0.5, 0.95)):
 
     Args:
         da (xr.DataArray | xr.Dataset): With ``member`` and ``year`` dims.
-        window (int): Window length in years (odd).
+        window (int): Window length in years (odd), e.g. ``config.WINDOW``.
         quantiles (Sequence[float]): Quantile levels.
 
     Returns:

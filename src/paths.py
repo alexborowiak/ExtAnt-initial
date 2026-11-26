@@ -8,7 +8,7 @@ from pathlib import Path
 #(t): JASMIN's scratch: notebook calc_01's seasonal means (seasonal/) and every notebook's results (results/)
 SCRATCH_DIR = Path('/work/scratch-pw4/aborow/ExtAnt')
 
-#(t): The monthly LESFMIP stores notebook calc_01 makes (section 1); calc_04 reads the sea-ice ones
+#(t): The monthly LESFMIP stores notebook calc_01 makes (section *LESFMIP Files to Monthly Stores*); calc_04 reads the sea-ice ones
 MONTHLY_DIR = Path('/work/scratch-pw4/aborow/LESFMIP/monthly_v2')
 
 #(t): The raw files: LESFMIP on the common 2.5° grid, ERA5's hourly fields, the SAM index, and CMIP6's sea ice on CEDA
@@ -18,7 +18,7 @@ SAM_RAW_DIR = Path('/gws/ssde/j25b/leader_epesc/wg1/monthly/NAM_SAM_new_update_L
 CEDA_DIRS = [Path('/badc/cmip6/data/CMIP6/DAMIP'), Path('/badc/cmip6/data/CMIP6/CMIP'),
              Path('/badc/cmip6/data/CMIP6Plus/LESFMIP')]
 
-#(t): The station observations (notebook plot_05, section 1)
+#(t): The station observations (notebook plot_05, section *Observed Warming and Stations*)
 OBS_PATH = Path('/gws/ssde/j25a/extant/users/rywill/Extremes_Database/Obs')
 
 RECON_PATH = Path('/gws/ssde/j25a/extant/users/aborow/recon_t2m_1958-2025_ano.final.nc')

@@ -1,168 +1,36 @@
 """Where and how each forcing changes the mean and the variability of temperature.
 
-Notebooks calc_02a to calc_02c calculate each part of the forced change step by step, with the
-pieces here; this module also puts the results side by side, each
-experiment's final ``WINDOW`` years against hist-nat, so the figures can
-answer the combined question: where has the mean shifted, where has the
-distribution widened or narrowed, which tail has stretched, and where have
-both happened.
+Notebooks calc_02a to calc_02c calculate each part of the forced change step by step, with the general statistics
+(``statistics/trend.forced_response``, ``statistics/significance``, ``statistics/quantiles``). Here is what is this
+analysis's own: putting the results side by side, each experiment's final ``WINDOW`` years against hist-nat, so the
+figures can answer the combined question: where has the mean shifted, where has the distribution widened or narrowed,
+which tail has stretched, and where have both happened.
 
-    the mean     the mean response, its member-block test (``member_block_pvalue``) and S/N
+    the mean     the mean response, its tests (``significance.bootstrap_mean``, ``significance.member_block_pvalue``) and S/N
     the width    the change in Q95 - Q05 and its hist-nat bootstrap test (``significance.bootstrap_qrange``)
     the tails    how each tail's length changes, measured from the median
 
 Sections
 --------
-1. Internal variability   the forced response, which notebook calc_02a removes from every member
-2. The mean response      the member-block permutation test of the change in the mean
-3. One summary dataset    every change and test on (model, experiment, season, lat, lon), and its
+1. One summary dataset    every change and test on (model, experiment, season, lat, lon), and its
                           split into mean, low and high extremes and width (``extreme_changes``);
                           the width split into its two tails (``width_parts``)
-4. Classifying changes    neither / mean only / width only / both
-5. Additivity             does historical equal the sum of the single forcings?
-6. Local distributions    samples, quantiles and quantile shifts at one grid point
+2. Classifying changes    neither / mean only / width only / both
+3. Additivity             does historical equal the sum of the single forcings?
+4. One grid point         where both changed most, and each experiment's values there
 """
 
 import numpy as np
 import xarray as xr
 
-from .config import WINDOW
-from .statistics.trend import lowess
-from .statistics.significance import resample_members
 from .statistics.spatial import area_mean
-from .utils.datatree import skip_empty
-
-#(t): How forced_response estimates the forced response across members before LOWESS smoothing:
-#(c): the median, as in draft_05's S/N, so what is removed is the shift of the middle (Q50)
-FORCED_CENTRE = "median"
-
-#(t): Default significance for the mean and width tests, and the S/N emergence threshold, as in their sections
-ALPHA = 0.05
-SN_THRESHOLD = 2
-
-#(t): Quantile levels for the quantile-shift curve
-SHIFT_QUANTILES = np.round(np.arange(0.05, 0.951, 0.05), 2)
 
 
 # ---------------------------------------------------------------------------
-# 1. Internal variability
+# 1. One summary dataset
 # ---------------------------------------------------------------------------
 
-@skip_empty
-def forced_response(members, window=81, centre=FORCED_CENTRE):
-    """The forced response: the ensemble median (or mean) in each year, smoothed with LOWESS.
-
-    Subtracted from every member, it leaves each member's internal
-    variability, so a quantile range of what is left is the variability, free
-    of any forced warming inside the analysis window. Smoothing matters:
-    subtracting the raw ensemble mean would also remove its sampling noise from
-    every member, shrinking the spread by sqrt(1 - 1/N), most for the smallest
-    ensembles. Forced year-to-year signals too quick for the smoother (a
-    volcanic eruption) stay in the members.
-
-    Args:
-        members (xr.Dataset | xr.DataArray): With ``member`` and ``year`` dims.
-        window (int): LOWESS window in years.
-        centre (str): "median" or "mean" across members.
-
-    Returns:
-        The same type, without ``member``.
-    """
-    forced = members.mean("member") if centre == "mean" else members.median("member")
-    if forced.chunks:
-        forced = forced.chunk({"year": -1})
-    return lowess(forced, core_dims="year", window=window)
-
-
-# ---------------------------------------------------------------------------
-# 2. The mean response: member-block permutation test
-# ---------------------------------------------------------------------------
-
-def permutation_weights(n_permutations, n_exp, n_nat, rng):
-    """Random relabellings of ``n_exp + n_nat`` members, each as a row of weights.
-
-    A row has +1/n_exp on the members relabelled as the experiment and
-    -1/n_nat on the rest, so ``weights @ member_means`` is each relabelling's
-    difference in means. The experiment's members come first in the pool.
-
-    Example: 3 experiment members and 2 hist-nat ones, pooled. The random
-    numbers [0.6, 0.2, 0.9, 0.1, 0.4] sort to the order [3, 1, 4, 0, 2], so
-    pooled members 3, 1 and 4 are relabelled as the experiment:
-    [-1/2, 1/3, -1/2, 1/3, 1/3]. Notebook calc_02b (section 1) checks the first row.
-
-    Returns:
-        np.ndarray: (n_permutations, n_exp + n_nat).
-    """
-    #(c): One random number per pooled member; their order shuffles the members
-    order = np.argsort(rng.random((n_permutations, n_exp + n_nat)), axis=1)
-    weights = np.full((n_permutations, n_exp + n_nat), -1 / n_nat)
-    #(c): The first n_exp members of each shuffle are relabelled as the experiment
-    np.put_along_axis(weights, order[:, :n_exp], 1 / n_exp, axis=1)
-    return weights
-
-
-def _member_block_pvalue(experiment, hist_nat, n_permutations, batch_size, seed):
-    """Two-sided permutation p-values of the difference in means, for arrays on (..., member)."""
-    n_exp, n_nat = experiment.shape[-1], hist_nat.shape[-1]
-    observed = experiment.mean(-1) - hist_nat.mean(-1)
-    pooled = np.nan_to_num(np.concatenate([experiment, hist_nat], axis=-1))
-    rng = np.random.default_rng(seed)
-    at_least = np.zeros(observed.shape)
-    at_most = np.zeros(observed.shape)
-    for start in range(0, n_permutations, batch_size):
-        weights = permutation_weights(min(batch_size, n_permutations - start), n_exp, n_nat, rng)
-        differences = pooled @ weights.T
-        at_least += (differences >= observed[..., None]).sum(-1)
-        at_most += (differences <= observed[..., None]).sum(-1)
-    pvalue = np.minimum(1, 2 * np.minimum(at_least + 1, at_most + 1) / (n_permutations + 1))
-    return np.where(np.isfinite(observed), pvalue, np.nan)
-
-
-@skip_empty
-def member_block_pvalue(experiment, hist_nat, n_permutations=5000, batch_size=500, seed=0):
-    """Permutation p-value of the difference in means, experiment minus hist-nat, permuting whole members.
-
-    Give it each member's mean over the years tested (e.g. the final
-    ``WINDOW`` years): permuting member means is permuting whole members, each
-    keeping its years together. A pooled t-test treats every member-year as
-    independent, but a member's years are serially correlated; members are
-    independent realisations, so this test respects that correlation.
-
-    Each permutation relabels the pooled members, as many as the experiment
-    has as the experiment and the rest as hist-nat (``permutation_weights``,
-    the experiment's members first), and takes the difference in means. The
-    p-value is two-sided, with the +1 correction, as in
-    ``significance.pvalue_two_sided``. The permutations are drawn in batches of
-    ``batch_size``, one matrix product each, from ``np.random.default_rng(seed)``.
-
-    Args:
-        experiment, hist_nat (xr.DataArray | xr.Dataset): Member means on (member, ...); the numbers of
-            members may differ.
-        n_permutations (int): Relabellings.
-        batch_size (int): Relabellings per matrix product.
-        seed (int): Random seed.
-
-    Returns:
-        The same type, without ``member``; NaN where the difference in means is NaN.
-    """
-    if experiment.chunks:
-        experiment = experiment.chunk({"member": -1})
-    if hist_nat.chunks:
-        hist_nat = hist_nat.chunk({"member": -1})
-    return xr.apply_ufunc(
-        _member_block_pvalue, experiment, hist_nat,
-        input_core_dims=[["member"], ["member"]], exclude_dims={"member"},
-        kwargs=dict(n_permutations=n_permutations, batch_size=batch_size, seed=seed),
-        dask="parallelized", output_dtypes=[float],
-    )
-
-
-# ---------------------------------------------------------------------------
-# 3. One summary dataset
-# ---------------------------------------------------------------------------
-
-def change_summary(mean_change, mean_pvalue, signal_to_noise, qrange_change, tails=None,
-                   alpha=ALPHA, sn_threshold=SN_THRESHOLD):
+def change_summary(mean_change, mean_pvalue, signal_to_noise, qrange_change, tails=None, *, alpha, sn_threshold):
     """Every change and its test in one Dataset, on the grid points and experiments all inputs share.
 
     Args:
@@ -176,7 +44,7 @@ def change_summary(mean_change, mean_pvalue, signal_to_noise, qrange_change, tai
             (final years against hist-nat's final years, tested by the hist-nat bootstrap).
         tails (xr.Dataset | None): Notebook calc_02a's ``tails_ds``: upper_tail_change, lower_tail_change,
             width_change, tail_asymmetry and q05/q50/q95_change.
-        alpha (float): Significance level for the mean test and the width test.
+        alpha (float): Significance level for the mean test and the width test (``config.ALPHA``).
         sn_threshold (float): |S/N| at which a mean change counts as emerged.
 
     Returns:
@@ -229,7 +97,7 @@ def extreme_changes(summary):
     residuals about the background climate (the smoothed ensemble mean),
     added back to it, so p10 - background is how far the low extremes sit
     from the middle. Here the extremes are Q05 and Q95 of the internal
-    variability (the members minus their ``forced_response``), measured from the median:
+    variability (the members minus their ``trend.forced_response``), measured from the median:
 
         mean_change          the mean response (their background climate)
         low_extreme_change   Δ(Q05 - Q50) > 0: the low extremes have moved up towards the middle
@@ -279,18 +147,11 @@ def width_parts(quantiles, low=0.05, high=0.95):
 
 
 # ---------------------------------------------------------------------------
-# 4. Classifying changes
+# 2. Classifying changes
 # ---------------------------------------------------------------------------
 
 #(t): What changed at each grid point
 CHANGE_CLASSES = {0: "neither", 1: "mean only", 2: "width only", 3: "mean and width"}
-
-#(t): Which test decides that the mean has changed
-MEAN_TESTS = {
-    "significant": "mean test p < alpha",
-    "emerged": "|S/N| ≥ threshold",
-    "robust": "mean test p < alpha and |S/N| ≥ threshold",
-}
 
 
 def joint_class(mean_sign, width_sign):
@@ -300,7 +161,7 @@ def joint_class(mean_sign, width_sign):
     e.g. from ``significance.significant_sign`` (one model) or
     ``significance.robust_sign`` (the models together). Class 0 is a lower
     mean and a narrower distribution, 4 no change in either, 8 a higher mean
-    and a wider distribution: the order of ``plots.forced_response.joint_scale``.
+    and a wider distribution: the order of ``plots.colour_scales.JOINT``.
     NaN where either sign is.
     """
     return 3 * (mean_sign + 1) + (width_sign + 1)
@@ -311,7 +172,8 @@ def change_class(summary, mean_test="robust"):
 
     Args:
         summary (xr.Dataset): Output of ``change_summary``.
-        mean_test (str): Key of ``MEAN_TESTS``: which test decides that the mean changed.
+        mean_test (str): Which test decides that the mean changed: "significant" (p < alpha), "emerged" (|S/N| at least
+            the threshold) or "robust" (both).
     """
     mean_changed = summary[f"mean_{mean_test}"].astype(int)
     width_changed = summary["width_significant"].astype(int)
@@ -341,7 +203,7 @@ def area_summary(summary, lat_max=-60.0, variables=AREA_SUMMARY_VARIABLES, mean_
         summary (xr.Dataset): Output of ``change_summary``.
         lat_max (float): Northern edge of the area averaged.
         variables (Sequence[str]): Variables averaged.
-        mean_test (str): Key of ``MEAN_TESTS``: which test decides that the mean changed, for the classes.
+        mean_test (str): Which test decides that the mean changed, as ``change_class``'s, for the classes.
 
     Returns:
         xr.Dataset: The area means of the ``variables`` present in ``summary``, and
@@ -357,7 +219,7 @@ def area_summary(summary, lat_max=-60.0, variables=AREA_SUMMARY_VARIABLES, mean_
 
 
 # ---------------------------------------------------------------------------
-# 5. Additivity
+# 3. Additivity
 # ---------------------------------------------------------------------------
 
 #(t): The single-forcing experiments whose responses should add up to historical
@@ -399,7 +261,7 @@ def additivity(changes, parts=ADDITIVE_PARTS, total="historical", min_total=0.25
 
 
 # ---------------------------------------------------------------------------
-# 6. Local distributions at one grid point
+# 4. One grid point
 # ---------------------------------------------------------------------------
 
 def strongest_joint_change(summary, model, experiment, season=None, lat_max=-60.0, mean_test="robust"):
@@ -426,12 +288,14 @@ def strongest_joint_change(summary, model, experiment, season=None, lat_max=-60.
     raise ValueError(f"no data for {model} {experiment} {season or 'in any season'}")
 
 
-def final_years(tree, model, experiments, point, season=None, years=WINDOW, variable="tas"):
+def final_years(tree, model, experiments, point, season=None, *, years, variable):
     """Each experiment's members over the final ``years`` at one point and season.
 
     Args:
         point (dict): ``lat`` and ``lon``, and ``season`` unless it is given on its own, as
             ``strongest_joint_change`` returns it.
+        years (int): How many final years, e.g. ``config.WINDOW``.
+        variable (str): The variable, e.g. ``VARIABLE.name``.
 
     Returns:
         dict[str, xr.DataArray]: Experiment -> data on (member, year), members
@@ -444,40 +308,3 @@ def final_years(tree, model, experiments, point, season=None, years=WINDOW, vari
         da = tree[model][experiment][variable].sel(location, method="nearest").sel(season=season)
         samples[experiment] = da.isel(year=slice(-years, None)).dropna("member", how="all").load()
     return samples
-
-
-def quantile_shift(experiment, reference, quantiles=SHIFT_QUANTILES, n_boot=1000, seed=0):
-    """Change in each quantile, experiment minus reference, pooling members and years, with a bootstrap range.
-
-    The bootstrap resamples whole members (with replacement) in both
-    ensembles, as in ``significance.resample_members``, so each member's years
-    stay together.
-
-    Args:
-        experiment, reference (xr.DataArray): Samples on (member, year), e.g. from ``final_years``.
-        quantiles (Sequence[float]): Quantile levels.
-        n_boot (int): Bootstrap resamples.
-        seed (int): Random seed.
-
-    Returns:
-        xr.Dataset:
-            experiment_quantiles, reference_quantiles   (quantile)
-            shift                                       (quantile) experiment minus reference
-            shift_lower, shift_upper                    (quantile) bootstrap 5-95% range
-    """
-    pool = ("member", "year")
-    rng = np.random.default_rng(seed)
-    exp_q = experiment.quantile(quantiles, dim=pool)
-    ref_q = reference.quantile(quantiles, dim=pool)
-    boot = (resample_members(experiment, n_boot, rng).quantile(quantiles, dim=pool)
-            - resample_members(reference, n_boot, rng).quantile(quantiles, dim=pool))
-    #(c): Move the quantile levels aside so xarray's (fast) quantile over trials can add its own dim
-    band = (boot.rename(quantile="level").quantile([0.05, 0.95], dim="trial")
-            .rename(quantile="bootstrap", level="quantile"))
-    return xr.Dataset({
-        "experiment_quantiles": exp_q,
-        "reference_quantiles": ref_q,
-        "shift": exp_q - ref_q,
-        "shift_lower": band.sel(bootstrap=0.05, drop=True),
-        "shift_upper": band.sel(bootstrap=0.95, drop=True),
-    })

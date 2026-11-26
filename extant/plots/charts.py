@@ -6,9 +6,9 @@ sized by ``chart_figure_size``. The GridSpec can be cut up as the figure needs: 
 (``grid[1]``), a block of panels next to a map (``grid[0].subgridspec(...)``). What goes on each panel is drawn at
 the call site, with this module's ``plot_...(..., ax=ax)`` and ``..._grid(..., axes=axes)``, another module's
 one-axis ``plot_...``, or ``ax.plot``. Each ``plot_...`` styles the panel it draws on (``style_chart_ax``). The
-text's sizes come from the style the figure is drawn in, ``forced_response.NOTEBOOK``, ``PAPER`` or ``SLIDES``: a
-notebook sets ``plt.rcParams.update(fr.NOTEBOOK.rc)`` once in its Setup, and a paper or slide figure is drawn inside
-``with plt.rc_context(fr.PAPER.rc):``. The lines that recur (each member, the ensemble mean, ERA5) have their
+text's sizes come from the style the figure is drawn in, ``styles.NOTEBOOK``, ``PAPER`` or ``SLIDES``: a
+notebook sets ``plt.rcParams.update(styles.NOTEBOOK.rc)`` once in its Setup, and a paper or slide figure is drawn inside
+``with plt.rc_context(styles.PAPER.rc):``. The lines that recur (each member, the ensemble mean, ERA5) have their
 settings here, passed with ``**``, so they look the same in every figure. For example, each model's seasonal cycle
 of sea-ice extent against ERA5's, in two rows of three: the models' members and their mean (a panel per model of
 /<model>/historical), then ERA5 on every panel::
@@ -64,7 +64,7 @@ import numpy as np
 import xarray as xr
 from matplotlib.lines import Line2D
 
-from .constants import FORCING_COLORS
+from .constants import ENSEMBLE_COLORS, ERA5_COLOR, FORCING_COLORS
 
 # ---------------------------------------------------------------------------
 # 1. Layout
@@ -74,7 +74,7 @@ from .constants import FORCING_COLORS
 #(t): columns (room for the y tick labels) and between rows (the x tick labels above and the title below); the room
 #(t): left of the panels (the y tick labels and label), above them (the figure's title and the first row's titles),
 #(t): under them (the x tick labels and label) and right of them; each legend's row; and each colour bar's row, its
-#(t): ticks and label included (as the maps')
+#(t): ticks and label included (those two under maps too: ``antarctica``)
 PANEL_WIDTH = 2.8
 PANEL_HEIGHT = 2.2
 COLUMN_GAP = 0.45
@@ -127,7 +127,7 @@ def panel_width_to_fit(n_cols, width):
 
     Args:
         n_cols (int): Columns of panels.
-        width (float): The figure's width (inches), e.g. ``forced_response.PAGE_WIDTH`` (7.2) for a two-column page.
+        width (float): The figure's width (inches), e.g. ``styles.PAGE_WIDTH`` (7.2) for a two-column page.
 
     Returns:
         float: E.g. 4 columns on a 7.2 in page: 1.24.
@@ -188,7 +188,7 @@ def style_chart_ax(ax):
     style from whatever is drawn on it first; call it yourself on a panel drawn only with ``ax.plot``. Set on the axis
     itself, so it holds whatever is drawn on it afterwards. A panel is styled once: one already styled (its top spine
     hidden) is left as it is, so a layer drawn later doesn't bring back gridlines an earlier one turned off. The text's
-    sizes and colours come from the style's rcParams (``forced_response.NOTEBOOK.rc``).
+    sizes and colours come from the style's rcParams (``styles.NOTEBOOK.rc``).
 
     Args:
         ax (matplotlib.axes.Axes): The axis.
@@ -201,13 +201,12 @@ def style_chart_ax(ax):
     ax.spines[['top', 'right']].set_visible(False)
 
 
-#(t): The lines that recur: each member (thin, light blue) and the ensemble mean (thick, dark blue), the ensemble's
-#(t): blues of era5_evaluation (ENSEMBLE['member'], ENSEMBLE['median']); ERA5 (black with dots, as in every figure:
-#(t): era5_evaluation.ERA5_COLOR, its ice edge dotted on the maps). Each has its label, so
-#(t): ``Line2D([], [], **MEMBER_LINE)`` is its legend entry
-MEMBER_LINE = dict(color='#86b6ef', linewidth=0.8, label='Each member')
-ENSEMBLE_MEAN_LINE = dict(color='#104281', linewidth=1.8, label='Ensemble mean')
-ERA5_LINE = dict(color='#111111', linewidth=1.8, marker='o', markersize=3, zorder=5, label='ERA5')
+#(t): The lines that recur: each member (thin, light blue) and the ensemble mean (thick, dark blue); ERA5 (black with
+#(t): dots, as in every figure, its ice edge dotted on the maps). Their colours are those of constants. Each has its
+#(t): label, so ``Line2D([], [], **MEMBER_LINE)`` is its legend entry
+MEMBER_LINE = dict(color=ENSEMBLE_COLORS['member'], linewidth=0.8, label='Each member')
+ENSEMBLE_MEAN_LINE = dict(color=ENSEMBLE_COLORS['median'], linewidth=1.8, label='Ensemble mean')
+ERA5_LINE = dict(color=ERA5_COLOR, linewidth=1.8, marker='o', markersize=3, zorder=5, label='ERA5')
 
 #(t): Each model's look, wherever models are told apart. The colour is the experiment's (FORCING_COLORS), and model k
 #(t): (in the order of the data) is its k-th shade, light to dark (model_shades), with marker MODEL_MARKERS[k], line
@@ -218,12 +217,6 @@ MODEL_MARKERS = ('o', 's', '^', 'D', 'v', 'P', 'X', '*')
 MODEL_LINESTYLES = ('solid', (0, (6, 2)), (0, (1, 1.5)), (0, (6, 2, 1, 2)), 'solid', (0, (3, 1.5)),
                     (0, (6, 2, 1, 2, 1, 2)), (0, (10, 3)))
 MODEL_LINEWIDTHS = (2.6, 1.4, 2.0, 1.2, 1.0, 1.8, 1.0, 2.2)
-
-#(t): Each signal of the attribution (notebooks plot_01d and fingerprinting): its forcing's colour, and for the combinations their nearest
-#(t): (ALL is historical's; ANT orange, apart from it; OTH, the forcings other than GHG, a blue-grey)
-SIGNAL_COLORS = {'ALL': FORCING_COLORS['historical'], 'ANT': '#d95f02', 'NAT': FORCING_COLORS['hist-nat'],
-                 'GHG': FORCING_COLORS['hist-GHG'], 'AER': FORCING_COLORS['hist-aer'],
-                 'O3': FORCING_COLORS['hist-totalO3'], 'OTH': '#5d6fb3'}
 
 
 def model_shades(color, n_models):

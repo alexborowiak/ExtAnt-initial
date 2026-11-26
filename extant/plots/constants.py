@@ -2,8 +2,8 @@
 
 Only things with a stable meaning *outside* any one figure belong here; a number that exists because one plot looks
 better with it is a default argument of that plot. Figure sizes and styles are not here either: every chart's layout
-is extant/plots/charts.py's, every map's antarctica.py's, and their text sizes the styles of forced_response
-(NOTEBOOK, PAPER, SLIDES).
+is extant/plots/charts.py's, every map's antarctica.py's, and their text sizes those of styles.py
+(NOTEBOOK, PAPER, SLIDES), and the maps' colour scales are in colour_scales.py.
 """
 
 # --------------------------------------------------------------------------
@@ -46,3 +46,31 @@ FORCING_LEGEND_LABELS = {
 assert set(FORCING_COLORS) == set(FORCING_REVEAL_ORDER) == set(FORCING_LEGEND_LABELS), (
     "the three forcing mappings have drifted apart"
 )
+
+# --------------------------------------------------------------------------
+# Colours every figure shares
+# --------------------------------------------------------------------------
+
+INK = "#0b0b0b"             # primary text
+INK_2 = "#52514e"           # secondary text
+MUTED = "#a3a29d"           # reference lines
+
+#(t): ERA5, black in every figure; and where ERA5 is outside the ensemble (an accent in the method figures)
+ERA5_COLOR = "#111111"
+OUTSIDE_COLOR = "#eb6834"
+
+#(t): The shading of the years ERA5 covers, behind a figure of the whole period
+ERA5_YEARS_COLOR = "#dbe9f6"
+
+#(t): One blue ramp for the ensemble, light (wide ranges) to dark (central values)
+ENSEMBLE_COLORS = {
+    "range": "#cde2fb",    # full member range
+    "outer": "#9ec5f4",    # 5-95%
+    "member": "#86b6ef",   # individual members
+    "inner": "#5598e7",    # central 75%, 12.5-87.5%
+    "pooled": "#1c5cab",   # pooled ensemble
+    "median": "#104281",   # ensemble median
+}
+
+#(t): What is not a forcing, drawn beside the forcings
+OTHER_COLORS = {"sum of parts": "#c49a00", "residual": "#c9c8c4", "ERA5": ERA5_COLOR}

@@ -1,12 +1,13 @@
-import matplotlib.pyplot as plt
-import numpy as np
-from matplotlib.colors import ListedColormap
+"""Making colormaps: bands of several colormaps in one bar (``banded_colormap``), a count of models
+(``count_colormap``) and a diverging one with set turning points (``make_diverging_colormap``).
+"""
 
-
-import matplotlib.pyplot as plt
-import numpy as np
 from typing import NamedTuple
-from matplotlib.colors import ListedColormap
+
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.colors import BoundaryNorm, ListedColormap
 
 
 class Band(NamedTuple):
@@ -65,3 +66,46 @@ def banded_colormap(bands, levels=None, extend="neither"):
     if len(colours) != len(middles) + (extend in ("min", "both")) + (extend in ("max", "both")):
         raise ValueError("Some steps fall outside every band")
     return levels, ListedColormap(colours)
+
+
+def count_colormap(n_models, base_cmap="Purples", add_white=True):
+    """Discrete colormap for a number of models: white for none, one step per model."""
+    base = plt.get_cmap(base_cmap)
+    length = n_models if add_white else (n_models+1)
+    colors = [base(x) for x in np.linspace(0, 1, length)]
+    if add_white: colors = ['white', *colors]
+    cmap = ListedColormap(colors)
+    return cmap, BoundaryNorm(np.arange(-0.5, n_models + 1.5), cmap.N)
+
+
+def make_diverging_colormap(bounds, purple_start=-100, red_start=100, white_centre=True):
+    bounds = np.asarray(bounds)
+    zero_idx = np.where(bounds == 0)[0][0]
+
+    n_neg = zero_idx
+    n_pos = len(bounds) - zero_idx - 1
+
+    neg_pos = abs(purple_start) / abs(bounds[0])
+    pos_pos = red_start / bounds[-1]
+
+    neg_cmap = mcolors.LinearSegmentedColormap.from_list(
+        "negative",
+        [(0, "#54278f"), (1 - neg_pos, "#2171b5"), (1, "#c6dbef")])
+
+    pos_cmap = mcolors.LinearSegmentedColormap.from_list(
+        "positive",
+        [(0, "#fff7bc"), (pos_pos, "#fe9929"), (1, "#7f0000")])
+
+    neg_colors = neg_cmap(np.linspace(0, 1, n_neg))
+    pos_colors = pos_cmap(np.linspace(0, 1, n_pos))
+
+    if white_centre:
+        neg_colors[-1] = mcolors.to_rgba("white")
+        pos_colors[0] = mcolors.to_rgba("white")
+
+    colors = np.vstack([neg_colors, pos_colors])
+
+    cmap = mcolors.ListedColormap(colors)
+    norm = mcolors.BoundaryNorm(bounds, cmap.N)
+
+    return cmap, norm

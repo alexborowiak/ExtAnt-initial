@@ -31,6 +31,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
 
+from ..probability_ratio import TAIL_SIGNS
+from ..utils.time_axis import SEASON_MIDDLE, decimal_year
 from . import charts
 from .constants import FORCING_COLORS, FORCING_LEGEND_LABELS, SEASON_COLORS, SEASONS
 
@@ -368,7 +370,6 @@ def plot_permutation_distribution(permutations, mean_change, experiment, bins=40
 
 #(t): Colours of the two tails in the probability-ratio figures
 TAIL_COLORS = {"warm": "#c0392b", "cold": "#2166ac"}
-TAIL_SIGNS = {"warm": 1, "cold": -1}
 
 
 def percentile_words(chance):
@@ -378,7 +379,7 @@ def percentile_words(chance):
 
 def _chance(values, level, tail):
     """The share of ``values`` beyond ``level`` on the ``tail`` side, in %."""
-    return 100 * np.mean(TAIL_SIGNS[tail] * (values - level) > 0)
+    return 100 * np.mean(TAIL_SIGNS.sel(tail=tail).item() * (values - level) > 0)
 
 
 def plot_thresholds(experiment_final, hist_nat_final, thresholds, experiment, bins=30, ax=None):
@@ -487,15 +488,6 @@ def plot_ratio_trials(trials, label, ax=None, **style):
 # 5. Following the data
 # ---------------------------------------------------------------------------
 
-def _decimal_year(time):
-    """Mid-month positions as decimal years, for any calendar."""
-    return time.dt.year.values + (time.dt.month.values - 0.5) / 12
-
-
-#(t): Where each season's months sit within its (year, season) label, as decimal-year offsets
-_SEASON_SPAN = {"DJF": (11, 14), "MAM": (2, 5), "JJA": (5, 8), "SON": (8, 11)}
-
-
 def plot_seasonal_means(monthly, seasonal, years, ax=None):
     """Monthly values (grey) and the seasonal means made from them (a bar across each season's months), for one
     member at one point.
@@ -513,12 +505,13 @@ def plot_seasonal_means(monthly, seasonal, years, ax=None):
         ax = charts.one_panel(panel_width=8.8, panel_height=2.6)
     charts.style_chart_ax(ax)
     months = monthly.sel(time=slice(str(years.start), str(years.stop)))
-    ax.plot(_decimal_year(months.time), months.values, color="0.6", lw=0.8, marker="o", ms=3, zorder=2)
+    ax.plot(decimal_year(months.time), months.values, color="0.6", lw=0.8, marker="o", ms=3, zorder=2)
     for year in range(years.start, years.stop):
         for season in SEASONS:
-            first, last = _SEASON_SPAN[season]
+            #(c): The season's three months: a month and a half either side of its middle
+            middle = year + SEASON_MIDDLE.sel(season=season).item()
             value = float(seasonal.sel(year=year, season=season))
-            ax.plot([year + first / 12, year + last / 12], [value, value], color=SEASON_COLORS[season], lw=3,
+            ax.plot([middle - 1.5 / 12, middle + 1.5 / 12], [value, value], color=SEASON_COLORS[season], lw=3,
                     solid_capstyle="butt", zorder=3)
     ax.legend(handles=[Line2D([], [], color="0.6", marker="o", ms=3, lw=0.8, label="Monthly means"),
                        *[Line2D([], [], color=SEASON_COLORS[s], lw=3, label=f"{s} mean") for s in SEASONS]],
@@ -540,14 +533,13 @@ def plot_seasons_in_time(seasonal, ax=None):
         ax = charts.one_panel()
     charts.style_chart_ax(ax)
     for season in SEASONS:
-        first, last = _SEASON_SPAN[season]
-        ax.scatter(seasonal["year"].values + (first + last) / 24, seasonal.sel(season=season).values, s=5,
-                   color=SEASON_COLORS[season])
+        ax.scatter(seasonal["year"].values + SEASON_MIDDLE.sel(season=season).item(),
+                   seasonal.sel(season=season).values, s=5, color=SEASON_COLORS[season])
     return ax
 
 
 def plot_seasons_split(seasonal, ax=None):
-    """The same seasonal means after ``split_time``: one series per season (year × season), in the season's colour.
+    """The same seasonal means after ``time_axis.split_time``: one series per season (year × season), in the season's colour.
 
     Args:
         seasonal (xr.DataArray): One member at one point on (year, season).

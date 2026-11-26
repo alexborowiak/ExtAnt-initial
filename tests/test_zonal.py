@@ -43,14 +43,14 @@ def width(tree):
     final_tree = tree.isel(year=slice(-YEARS_TESTED, None))
     final_qrange = datatree.reduce_to_dataset(final_tree, qc.quantile_range).tas
     hist_nat_qrange = final_qrange.sel(experiment="hist-nat", drop=True)
-    change = zonal.zonal_mean((final_qrange - hist_nat_qrange).drop_sel(experiment="hist-nat"))
-    trials = datatree.reduce_to_dataset(final_tree.match("*/hist-nat"), partial(sig.bootstrap_qrange, n_trials=200))
-    null = zonal.zonal_mean(trials.tas.sel(experiment="hist-nat", drop=True) - hist_nat_qrange)
+    change = (final_qrange - hist_nat_qrange).drop_sel(experiment="hist-nat").mean("lon")
+    trials = datatree.reduce_to_dataset(final_tree.match("*/hist-nat"), partial(sig.bootstrap_qrange, n_members=10, quantiles=(0.05, 0.95), n_trials=200, seed=0))
+    null = (trials.tas.sel(experiment="hist-nat", drop=True) - hist_nat_qrange).mean("lon")
     bounds = null.quantile([0.025, 0.975], dim="trial")
     return xr.Dataset({
         "width_change": change,
         "width_pvalue": sig.pvalue_two_sided(null, change),
-        "hist_nat_width": zonal.zonal_mean(hist_nat_qrange),
+        "hist_nat_width": hist_nat_qrange.mean("lon"),
         "null_lower": bounds.isel(quantile=0, drop=True),
         "null_upper": bounds.isel(quantile=1, drop=True),
     })
@@ -65,8 +65,8 @@ def test_zonal_mean_of_the_bootstrap_finds_the_widening_and_not_the_rest(width):
 
 
 def test_member_block_test_of_the_zonal_means(tree):
-    member_means = zonal.zonal_mean(tree.isel(year=slice(-YEARS_TESTED, None)).mean("year"))
-    pvalue_tree = xr.map_over_datasets(partial(rc.member_block_pvalue, n_permutations=500),
+    member_means = tree.isel(year=slice(-YEARS_TESTED, None)).mean("year").mean("lon")
+    pvalue_tree = xr.map_over_datasets(partial(sig.member_block_pvalue, n_permutations=500),
                                        member_means, datatree.hist_nat_like(member_means))
     pvalue = datatree.tree_to_dataset(pvalue_tree, dims=["model", "experiment"]).tas
     assert (pvalue.sel(experiment="historical") < 0.05).all()
@@ -81,7 +81,7 @@ def test_zonal_summary(tree, width):
     tails = xr.Dataset({name: xr.full_like(mean, value) for name, value in
                         (("upper_tail_change", 0.6), ("lower_tail_change", 0.4), ("width_change", 1.0),
                          ("tail_asymmetry", 0.2))})
-    summary = rc.change_summary(mean, pvalue, xr.full_like(mean, 3.0), qrange, tails)
+    summary = rc.change_summary(mean, pvalue, xr.full_like(mean, 3.0), qrange, tails, alpha=0.05, sn_threshold=2)
 
     out = zonal.zonal_summary(summary, mean_tested=xr.Dataset({"pvalue": pvalue.mean("lon")}), width_tested=width)
     assert list(rc.EXTREMES) == [name for name in out.data_vars][:4]

@@ -3,25 +3,29 @@ forced-response figures are made.
 
 Each ``plot_*(..., ax=None)`` styles one panel (``charts.style_chart_ax``) and draws on it; the notebook makes the
 figure and its axes (a GridSpec), draws each panel and labels them, as everywhere (``charts``), in the slides' style
-(``with plt.rc_context(fr.SLIDES.rc):``).
+(``with plt.rc_context(styles.SLIDES.rc):``).
 
 Sections
 --------
 1. The build-up: the forcings' lines revealed one at a time (``plot_buildup``), with a legend that has every forcing
-   from the first frame, the ones still to come faded (``plot_buildup_legend``)
+   from the first frame, the ones still to come faded (``plot_buildup_legend``); one y range for every frame
+   (``shared_ylim``), each frame saved at the figure's own size (``save_frame``)
 2. Labels: names at the end of lines, quantile levels at the edge of a plume
 3. How the figures are made: one model's test at a point (``plot_point_test``, which notebook plot_04 draws for every
    model before counting them), and one cell of the joint key drawn with a sketched distribution
    (``plot_joint_key_cell``)
 """
 
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
+import xarray as xr
 from matplotlib.lines import Line2D
 
+from ..statistics.kde import kde
 from . import charts
-from .era5_evaluation import INK, INK_2, MUTED
-from .constants import FORCING_COLORS, FORCING_LEGEND_LABELS
+from .constants import FORCING_COLORS, FORCING_LEGEND_LABELS, INK, INK_2, MUTED
 
 # ---------------------------------------------------------------------------
 # 1. The build-up
@@ -32,7 +36,7 @@ def plot_buildup(tas_by_forcing, revealed, ylim, fade_earlier=True, baseline=0.0
     earlier ones faded, and a dashed baseline.
 
     Every frame of a sequence takes the same ``ylim`` and ``xlim``, so the frames line up when flipped through
-    (``utils.shared_ylim`` gives one from every series).
+    (``shared_ylim`` gives one from every series).
 
     Args:
         tas_by_forcing (dict[str, xr.DataArray]): Forcing -> temperature series on 'year'.
@@ -81,6 +85,58 @@ def plot_buildup_legend(order, revealed, fig):
     return legend
 
 
+def shared_ylim(arrays, pad=0.05, include=()):
+    """Y limits spanning every array, so buildup frames line up exactly.
+
+    Compute this once from all the series and reuse it for every frame. Letting
+    each frame autoscale is what makes a buildup jump around on screen. It can
+    also change the y tick label widths, which under constrained layout moves
+    the axes as well, though that depends on the numbers.
+
+    Parameters
+    ----------
+    arrays : sequence of array_like
+        All the series that will ever appear, revealed or not.
+    pad : float
+        Margin above and below, as a fraction of the data range.
+    include : array_like
+        Extra values that must stay inside the limits, e.g. a baseline drawn as
+        a horizontal line rather than a series.
+
+    Returns
+    -------
+    (float, float)
+    """
+    parts = [np.asarray(a).ravel() for a in arrays]
+    if len(np.asarray(include).ravel()):
+        parts.append(np.asarray(include, dtype=float).ravel())
+
+    values = np.concatenate(parts)
+    values = values[np.isfinite(values)]
+    if not values.size:
+        raise ValueError("no finite values to take limits from")
+
+    lo, hi = values.min(), values.max()
+    margin = pad * (hi - lo)
+    return lo - margin, hi + margin
+
+
+def save_frame(fig, directory, index, name, close=True, facecolor="white", **kwargs):
+    """Write one buildup frame at the figure's own size; return its path.
+
+    Do not pass bbox_inches='tight': trimming to the drawn content changes the
+    canvas between frames, which is the jitter the fixed geometry exists to
+    prevent.
+    """
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{index:02d}_{name}.png"
+    fig.savefig(path, facecolor=facecolor, **kwargs)
+    if close:
+        plt.close(fig)
+    return path
+
+
 # ---------------------------------------------------------------------------
 # 2. Labels
 # ---------------------------------------------------------------------------
@@ -115,15 +171,6 @@ def label_band_edges(ax, da, pairs, x, color="0.45", quantile_dim="quantile", **
 # ---------------------------------------------------------------------------
 # 3. How the figures are made, for talks
 # ---------------------------------------------------------------------------
-
-def _density(values, x):
-    """Gaussian kernel density of the values (NaN skipped) at ``x``, Scott's bandwidth."""
-    values = np.asarray(values, dtype=float).ravel()
-    values = values[np.isfinite(values)]
-    bandwidth = values.std(ddof=1) * values.size ** (-1 / 5)
-    z = (x[:, None] - values[None, :]) / bandwidth
-    return np.exp(-0.5 * z ** 2).sum(1) / (values.size * bandwidth * np.sqrt(2 * np.pi))
-
 
 #(t): The verdict of a test at a point, by the sign of a significant change (0: not significant): its words and colour
 VERDICTS = {1: ("significant increase", "#b2182b"), -1: ("significant decrease", "#2166ac"), 0: ("not significant", MUTED)}
@@ -160,7 +207,9 @@ def plot_point_test(hist_nat_da, experiment_da, change, pvalue, experiment, ax=N
     x_arr = np.linspace(pooled_arr.min() - 0.1 * np.ptp(pooled_arr), pooled_arr.max() + 0.1 * np.ptp(pooled_arr), 300)
     for values_da, color, label in ((hist_nat_da, FORCING_COLORS["hist-nat"], "hist-nat"),
                                     (experiment_da, FORCING_COLORS.get(experiment, INK), experiment)):
-        density_arr = _density(values_da.values, x_arr)
+        #(c): Every value in one sample, whatever the dims
+        samples_da = xr.DataArray(np.ravel(values_da.values), dims="sample")
+        density_arr = kde(samples_da, xr.DataArray(x_arr, dims="x"), "sample").values
         ax.fill_between(x_arr, density_arr, color=color, alpha=0.25, lw=0)
         ax.plot(x_arr, density_arr, color=color, lw=1.6, label=label)
         ax.axvline(float(values_da.mean()), color=color, lw=1.2, ls=(0, (3, 2)))
@@ -183,7 +232,7 @@ def plot_joint_key_cell(shift, width, colour, fill=True, ax=None):
     shifted by ``shift`` and ``width`` times as wide, in the cell's colour, on the cell's colour faded.
 
     No data: a picture to explain the joint maps in a talk (notebook plot_04), one cell per class of
-    ``forced_response.joint_scale``.
+    ``colour_scales.JOINT``.
 
     Args:
         shift (float): The changed distribution's mean, hist-nat's being 0 with a standard deviation of 1.

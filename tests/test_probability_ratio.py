@@ -5,6 +5,7 @@ import scipy.stats
 import xarray as xr
 
 from extant import probability_ratio as pr
+from extant.statistics import significance as sig
 
 
 def _ensemble(rng, n_members=200, n_years=50, mean=0.0, std=1.0):
@@ -67,21 +68,6 @@ def test_member_exceedance_keeps_missing_data_missing():
     np.testing.assert_allclose(shares.sel(tail="cold").values, [0.5, np.nan])
 
 
-def test_bootstrap_member_mean():
-    rng = np.random.default_rng(2)
-    weights = pr.resample_weights(7, 100, rng)
-    np.testing.assert_allclose(weights.sum(axis=1), 1)
-    members = xr.DataArray(rng.normal(size=(30, 4)), dims=("member", "x"))
-    trials = pr.bootstrap_member_mean(members, n_trials=4000, seed=0)
-    assert trials.dims == ("trial", "x")
-    #(c): The trials centre on the ensemble mean, spread by its standard error
-    np.testing.assert_allclose(trials.mean("trial"), members.mean("member"), atol=0.02)
-    np.testing.assert_allclose(trials.std("trial"), members.std("member") / np.sqrt(30), rtol=0.1)
-    #(c): The same seed and number of members draw the same members
-    again = pr.bootstrap_member_mean(members * 2, n_trials=4000, seed=0)
-    xr.testing.assert_allclose(again, 2 * trials)
-
-
 def test_member_beyond_pools_the_seasons_of_one_phase():
     """Members with different numbers of seasons (one SAM phase): the pooled chance counts every season once."""
     values = xr.DataArray([[3.0, 3.0, 1.0, np.nan], [3.0, np.nan, np.nan, np.nan]], dims=("member", "year"))
@@ -93,9 +79,9 @@ def test_member_beyond_pools_the_seasons_of_one_phase():
     chance = beyond.sum("member") / values.count(["member", "year"])
     np.testing.assert_allclose(chance.sel(tail="warm"), 0.75)
     #(c): Bootstrapped with one seed, each trial's chance is pooled the same way
-    trials = (pr.bootstrap_member_mean(beyond, n_trials=50, seed=0)
-              / pr.bootstrap_member_mean(values.count("year"), n_trials=50, seed=0))
-    weights = pr.resample_weights(2, 50, np.random.default_rng(0))
+    trials = (sig.bootstrap_member_mean(beyond, n_trials=50, seed=0)
+              / sig.bootstrap_member_mean(values.count("year"), n_trials=50, seed=0))
+    weights = sig.resample_weights(2, 50, np.random.default_rng(0))
     expected = (weights @ beyond.sel(tail="warm").values) / (weights @ values.count("year").values)
     np.testing.assert_allclose(trials.sel(tail="warm"), expected)
     #(c): A missing threshold stays missing

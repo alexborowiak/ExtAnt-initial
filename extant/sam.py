@@ -1,10 +1,10 @@
 """The Southern Annular Mode (SAM): which phase each season is in, so every result can be split by it.
 
 The index is not computed here. LEADER-EPESC working group 1 made a monthly
-SAM index for every LESFMIP member (notebook calc_01's ``SAM_RAW_DIR``, the files
+SAM index for every LESFMIP member (``paths.SAM_RAW_DIR``, the files
 archive/draft_current_DAILY.ipynb opened): the zonal-mean index of Gong & Wang
 (1999), the difference between standardised zonal means at 40°S and 65°S, one
-file per member with ``SAM`` on (time_mm, level). Notebook calc_01 (section 6) turns
+file per member with ``SAM`` on (time_mm, level). Notebook calc_01 (section *SAM Index*) turns
 it into seasonal means; notebook calc_02a (*SAM Phases*) cuts it into phases:
 
     negative   the index below hist-nat's lower tercile
@@ -24,31 +24,21 @@ Sections
 3. A synthetic index, so the steps run on the sample data
 """
 
-import re
 from functools import partial
-from pathlib import Path
 
 import numpy as np
 import xarray as xr
 
+from .convert import member_from_path
 from .utils.datatree import skip_empty
 
 # ---------------------------------------------------------------------------
 # 1. Opening the index files
 # ---------------------------------------------------------------------------
 
-#(t): The member ID in a file name, e.g. SAM_zonal_mon_hist-nat_HadGEM3-GC31-LL_r10i1p1f3_interp.nc -> r10i1p1f3
-MEMBER_PATTERN = r"_(r\d+i\d+p\d+f\d+)_"
-
-
-def member_of(path, pattern=MEMBER_PATTERN):
-    """The member ID in a file's name."""
-    return re.search(pattern, Path(path).name).group(1)
-
-
 def _one_member(ds, level):
     """One file's index at one level, renamed ``sam`` on ``time``, with its member ID from the file name."""
-    member = member_of(ds.encoding["source"])
+    member = member_from_path(ds.encoding["source"])
     index = ds["SAM"].isel(level=level)
     level_value = index["level"].values.item() if "level" in index.coords else level
     return (index.drop_vars("level", errors="ignore").rename(time_mm="time").rename("sam")
