@@ -219,80 +219,81 @@ DIAGNOSTICS = {**MOMENTS, **STATISTICS, **RANKS}
 # ---------------------------------------------------------------------------
 # 4. Locating ERA5 among the members
 # ---------------------------------------------------------------------------
+from extant.statistics import quantiles as qc, spatial
 
-def locate(members, observed, member_dim='member', alpha=ALPHA):
-    """Where does ERA5's value of a statistic fall among the members' values?
 
-    If the model were perfect, ERA5 would be exchangeable with the members, so
-    its percentile among them would be uniform: every value from 0 to 100
-    equally likely, and outside the members' central (1 - alpha) range only
-    alpha of the time. A percentile near 0 or 100 (a small p-value) means ERA5
-    does not behave like a member for this statistic.
+def outside_member_quantile_range(members: xr.DataArray, observed: xr.DataArray,
+                                  lower_quantile: float = 0.05, upper_quantile: float = 0.95) -> xr.Dataset:
+    """Whether the observed value is outside the members' 5-95% quantile range, at every grid point.
 
-    With N members the smallest two-sided p-value is 2 / (N + 1), so at
-    alpha = 0.1 an ensemble needs at least 20 members to show anything.
+    Returns the members' quantiles, the observed value, and outside: 1 outside, 0 within, NaN where there is no
+    observed value.
 
-    Example::
-
-        members [1.0, 2.0, 3.0, 5.0], ERA5 = 3.0    2 less than ERA5, 1 equal: percentile 100 * (2 + 0.5) / 4 = 62.5
-        20 members, all less than ERA5              with ERA5 as one more member, 21 values; only ERA5 is at or
-                                                    greater than ERA5: upper tail (20 - 20 + 1) / 21 = 0.048,
-                                                    p = 2 * 0.048 = 0.095 < 0.1, so the verdict is +1
-        19 members, all less than ERA5              p = 2 / 20 = 0.1, not less than 0.1: nothing can be flagged
-
-    Notebook calc_03b goes through these steps one at a time, in section *Rank Histograms and Every Test at the Point* (*Every test in one table*, Sample plots).
-
-    Only the members with a value count, so several models can sit side by
-    side on one ``member`` dim, each padded with NaN to the largest ensemble
-    (as ``datatree.tree_to_dataset`` leaves them): N is each model's own.
-
-    Args:
-        members (xr.DataArray): The statistic for every member: the null distribution.
-        observed (xr.DataArray): The same statistic for ERA5.
-        member_dim (str): Member dimension of ``members``.
-        alpha (float): Two-sided significance level; 0.1 is the 5-95% range.
-
-    Returns:
-        xr.Dataset:
-            era5                  ERA5's value
-            members               every member's value (kept for plotting)
-            lower, median, upper  the members' alpha/2, 50% and 1 - alpha/2 quantiles
-            percentile            % of members below ERA5 (ties count half); 50 is ideal
-            pvalue                two-sided p-value: twice the smaller tail, with ERA5 counted as one
-                                  more member (the +1s), at most 1
-            verdict               -1 ERA5 significantly below the members, +1 above, 0 not flagged
-            testable              whether N is large enough for anything to be flagged at all;
-                                  where it is not, a verdict of 0 means "untestable", not "consistent"
+    Example: members 1, 2, ..., 20 have quantiles 1.95, 10.5 and 19.05, so 19.5 is outside and 19.0 is not.
     """
-    n = members.notnull().sum(member_dim)
-    below = (members < observed).sum(member_dim)
-    ties = (members == observed).sum(member_dim)
-    percentile = 100 * (below + 0.5 * ties) / n
-
-    bounds = nan_quantile(members, [alpha / 2, 0.5, 1 - alpha / 2], member_dim)
-    #(t): The two tails: the share of the members at or below ERA5, and at or above it
-    lower_tail = (below + ties + 1) / (n + 1)
-    upper_tail = (n - below + 1) / (n + 1)
-    pvalue = np.minimum(2 * np.minimum(lower_tail, upper_tail), 1)
-    verdict = xr.where(pvalue < alpha, np.sign(percentile - 50), 0)
-    #(c): The smallest possible two-sided p-value is 2 / (N + 1); if that is not below alpha nothing can be flagged
-    testable = (2 / (n + 1)) < alpha
-
-    result = xr.Dataset({
-        "era5": observed,
-        "members": members,
-        "lower": bounds.isel(quantile=0, drop=True),
-        "median": bounds.isel(quantile=1, drop=True),
-        "upper": bounds.isel(quantile=2, drop=True),
-        "percentile": percentile,
-        "pvalue": pvalue,
-        "verdict": verdict,
-        "testable": testable,
-    })
-    return result.where(observed.notnull())
+    quantiles_da = qc.nan_quantile(members, [lower_quantile, 0.5, upper_quantile], 'member')
+    #(c): NaN where the product has no value (e.g. Berkeley's gaps), so it isn't counted as outside
+    outside_da = ((observed < quantiles_da.sel(quantile=lower_quantile))
+                  | (observed > quantiles_da.sel(quantile=upper_quantile))).where(observed.notnull())
+    
+    return xr.Dataset({'quantiles': quantiles_da, 'observed': observed, 'outside': outside_da})
 
 
-# ---------------------------------------------------------------------------
+def percent_area_outside_member_range(outside: xr.DataArray) -> xr.DataArray:
+    """For the field significance: the % of the map (cos-latitude weighted) where the value is outside the members'
+    range.
+
+    Example: outside over points making up a quarter of the weighted area gives 25.
+    """
+    weights = spatial.area_weights(outside.lat)
+    return 100 * outside.weighted(weights).mean(['lat', 'lon'])
+
+
+def percent_area_outside_by_chance(members: xr.DataArray, lower_quantile: float = 0.05,
+                                   upper_quantile: float = 0.95) -> xr.DataArray:
+    """For the field significance: how much of the map a perfect model is outside its members' range by chance.
+
+    Each member in turn is left out of the ensemble, treated as the observed value and checked against the
+    other members' range, giving the % of the map where it is outside, on (member, ...).
+
+    Example: 40 members. Member 1 against members 2-40 is outside over 12% of the map, member 2 against
+    members 1 and 3-40 over 18%, and so on for all 40.
+    """
+    areas = []
+    for member in members['member'].values:
+        other_members = members.drop_sel(member=member)
+        member_as_observed = members.sel(member=member)
+        outside_ds = outside_member_quantile_range(other_members, member_as_observed, lower_quantile, upper_quantile)
+        member_area = percent_area_outside_member_range(outside_ds['outside'])
+        areas.append(member_area)
+    return xr.concat(areas, dim=members['member'])
+
+
+def outside_member_range_with_field_significance(members: xr.DataArray, observed: xr.DataArray,
+                                                 lower_quantile: float = 0.05, upper_quantile: float = 0.95,
+                                                 area_quantile: float = 0.9) -> xr.Dataset:
+    """Whether the observed value is outside the members' 5-95% range at every grid point, and whether it is
+    outside over more of the map than a perfect model would be by chance (field significance).
+
+    Field significant when the % of the map where the observed value is outside is greater than the 90% quantile
+    of the same % for each member treated as the observed value (percent_area_outside_by_chance).
+
+    Field significance as in Livezey and Chen (1983, Mon. Wea. Rev., 111, 46-59), with the members, each in turn
+    treated as the observations, as the chance reference.
+
+    Example: ERA5 outside over 30% of the map, and 90% of the members outside over at most 25%: field significant.
+    """
+    outside_ds = outside_member_quantile_range(members, observed, lower_quantile, upper_quantile)
+    observed_area_outside = percent_area_outside_member_range(outside_ds['outside'])
+    chance_areas_outside = percent_area_outside_by_chance(members, lower_quantile, upper_quantile)
+    #(c): drop the quantile label, which would clash with the members' quantile dim
+    chance_area_limit = chance_areas_outside.quantile(area_quantile, 'member').drop_vars('quantile')
+    return outside_ds.assign(
+        observed_area_outside=observed_area_outside,
+        chance_areas_outside=chance_areas_outside,
+        chance_area_limit=chance_area_limit,
+        field_significant=observed_area_outside > chance_area_limit,
+    )
 # 5. Field test
 # ---------------------------------------------------------------------------
 
